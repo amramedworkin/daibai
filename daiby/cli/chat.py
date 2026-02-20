@@ -34,6 +34,7 @@ class Colors:
     YELLOW = '\033[93m'
     RED = '\033[91m'
     BOLD = '\033[1m'
+    DIM = '\033[2m'
     UNDERLINE = '\033[4m'
     END = '\033[0m'
 
@@ -131,14 +132,16 @@ class ChatAgent:
         
         # Test LLM providers
         print(f"\n{Colors.YELLOW}LLM Providers:{Colors.END}")
+        test_prompt = "Say 'OK' if you can hear me."
         for llm_name in self.config.list_llm_providers():
             marker = " (current)" if llm_name == self.current_llm else ""
+            print(f"  {Colors.DIM}Prompt: \"{test_prompt}\"{Colors.END}")
             try:
                 self.agent.switch_llm(llm_name)
-                # Simple test prompt
-                response = self.agent.generate("Say 'OK' if you can hear me.", {})
+                response = self.agent.generate(test_prompt, {})
                 if response and response.text:
-                    print(f"  {Colors.GREEN}✓{Colors.END} {llm_name}{marker} - Connected")
+                    reply = response.text.strip().replace('\n', ' ')[:40]
+                    print(f"  {Colors.GREEN}✓{Colors.END} {llm_name}{marker} - \"{reply}\"")
                 else:
                     print(f"  {Colors.RED}✗{Colors.END} {llm_name}{marker} - No response")
             except Exception as e:
