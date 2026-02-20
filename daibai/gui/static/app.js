@@ -27,6 +27,9 @@ class DaiBaiApp {
         // Auto-copy defaults to true
         this.autoCopyCheckbox.checked = prefs.autoCopy !== false;
         
+        // Auto-CSV defaults to false
+        this.autoCsvCheckbox.checked = prefs.autoCsv === true;
+        
         // Execute checkbox
         this.executeCheckbox.checked = prefs.autoExecute === true;
         
@@ -39,6 +42,7 @@ class DaiBaiApp {
     savePreferences() {
         const prefs = {
             autoCopy: this.autoCopyCheckbox.checked,
+            autoCsv: this.autoCsvCheckbox.checked,
             autoExecute: this.executeCheckbox.checked,
             sidebarCollapsed: this.sidebar.classList.contains('collapsed'),
             database: this.databaseSelect.value,
@@ -56,6 +60,44 @@ class DaiBaiApp {
         }
     }
     
+    saveToCsv(results) {
+        if (!results || results.length === 0 || !this.autoCsvCheckbox.checked) {
+            return;
+        }
+        
+        // Generate CSV content
+        const columns = Object.keys(results[0]);
+        const csvRows = [];
+        
+        // Header row
+        csvRows.push(columns.map(col => `"${col}"`).join(','));
+        
+        // Data rows
+        for (const row of results) {
+            const values = columns.map(col => {
+                const val = row[col];
+                if (val === null || val === undefined) return '';
+                const str = String(val).replace(/"/g, '""');
+                return `"${str}"`;
+            });
+            csvRows.push(values.join(','));
+        }
+        
+        const csvContent = csvRows.join('\n');
+        
+        // Generate filename with timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const filename = `daibai_results_${timestamp}.csv`;
+        
+        // Download file
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+    
     bindElements() {
         // Navigation
         this.sidebarToggle = document.getElementById('sidebarToggle');
@@ -64,6 +106,7 @@ class DaiBaiApp {
         this.llmSelect = document.getElementById('llmSelect');
         this.modeSelect = document.getElementById('modeSelect');
         this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
+        this.autoCsvCheckbox = document.getElementById('autoCsvCheckbox');
         this.schemaBtn = document.getElementById('schemaBtn');
         this.schemaModal = document.getElementById('schemaModal');
         this.schemaModalClose = document.getElementById('schemaModalClose');
@@ -99,6 +142,7 @@ class DaiBaiApp {
         });
         this.modeSelect.addEventListener('change', () => this.savePreferences());
         this.autoCopyCheckbox.addEventListener('change', () => this.savePreferences());
+        this.autoCsvCheckbox.addEventListener('change', () => this.savePreferences());
         this.executeCheckbox.addEventListener('change', () => this.savePreferences());
         
         // Schema modal
@@ -323,6 +367,7 @@ class DaiBaiApp {
                 
             case 'results':
                 this.appendResultsToLastMessage(data);
+                this.saveToCsv(data.content);
                 break;
                 
             case 'error':
@@ -397,6 +442,7 @@ class DaiBaiApp {
             
             this.renderAssistantMessage(data.sql, data.results);
             this.copyToClipboard(data.sql);
+            this.saveToCsv(data.results);
             
             await this.loadConversations();
         } catch (error) {
@@ -551,6 +597,7 @@ class DaiBaiApp {
                     
                     if (response.ok) {
                         this.appendResultsToLastMessage({ content: data.results });
+                        this.saveToCsv(data.results);
                     } else {
                         this.renderErrorMessage(data.detail || 'Execution failed');
                     }
