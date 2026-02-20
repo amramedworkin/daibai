@@ -1,8 +1,8 @@
 """
-Configuration system for Daiby.
+Configuration system for DaiBai.
 
 Loads configuration from:
-1. daiby.yaml (or ~/.daiby/daiby.yaml) for structure
+1. daibai.yaml (or ~/.daibai/daibai.yaml) for structure
 2. .env for secrets (API keys, passwords)
 
 Supports ${VAR} placeholder resolution from environment.
@@ -59,8 +59,8 @@ class Config:
     
     # User preferences
     clipboard: bool = True
-    exports_dir: Path = field(default_factory=lambda: Path.home() / ".daiby" / "exports")
-    memory_dir: Path = field(default_factory=lambda: Path.home() / ".daiby" / "memory")
+    exports_dir: Path = field(default_factory=lambda: Path.home() / ".daibai" / "exports")
+    memory_dir: Path = field(default_factory=lambda: Path.home() / ".daibai" / "memory")
     
     def get_database(self, name: Optional[str] = None) -> DatabaseConfig:
         """Get database config by name or default."""
@@ -101,12 +101,12 @@ def _resolve_env_vars(value: Any) -> Any:
 
 
 def _find_config_file() -> Optional[Path]:
-    """Find daiby.yaml in standard locations."""
+    """Find daibai.yaml in standard locations."""
     locations = [
-        Path.cwd() / "daiby.yaml",
-        Path.cwd() / ".daiby.yaml",
-        Path.home() / ".daiby" / "daiby.yaml",
-        Path.home() / ".config" / "daiby" / "daiby.yaml",
+        Path.cwd() / "daibai.yaml",
+        Path.cwd() / ".daibai.yaml",
+        Path.home() / ".daibai" / "daibai.yaml",
+        Path.home() / ".config" / "daibai" / "daibai.yaml",
     ]
     for loc in locations:
         if loc.exists():
@@ -158,7 +158,7 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
     Load configuration from YAML and environment.
     
     Args:
-        config_path: Path to daiby.yaml (auto-detected if not provided)
+        config_path: Path to daibai.yaml (auto-detected if not provided)
         env_path: Path to .env file (auto-detected if not provided)
     
     Returns:
@@ -169,7 +169,7 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
         load_dotenv(env_path)
     else:
         # Try standard locations
-        for loc in [Path.cwd() / ".env", Path.home() / ".daiby" / ".env"]:
+        for loc in [Path.cwd() / ".env", Path.home() / ".daibai" / ".env"]:
             if loc.exists():
                 load_dotenv(loc)
                 break
@@ -206,8 +206,8 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
     default_llm = config_data.get("llm", {}).get("default") or (list(llm_providers.keys())[0] if llm_providers else None)
     
     # Parse paths
-    exports_dir = Path(config_data.get("exports_dir", Path.home() / ".daiby" / "exports"))
-    memory_dir = Path(config_data.get("memory_dir", Path.home() / ".daiby" / "memory"))
+    exports_dir = Path(config_data.get("exports_dir", Path.home() / ".daibai" / "exports"))
+    memory_dir = Path(config_data.get("memory_dir", Path.home() / ".daibai" / "memory"))
     
     return Config(
         databases=databases,
@@ -221,7 +221,7 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
 
 
 # User preferences (persisted separately)
-_USER_PREFS_FILE = Path.home() / ".daiby" / "preferences.json"
+_USER_PREFS_FILE = Path.home() / ".daibai" / "preferences.json"
 
 
 def load_user_preferences() -> Dict[str, Any]:

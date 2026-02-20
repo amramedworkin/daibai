@@ -1,5 +1,5 @@
-# Daiby Configuration Example
-# Copy this file to daiby.yaml and fill in your settings
+# DaiBai Configuration Example
+# Copy this file to daibai.yaml and fill in your settings
 
 # LLM Provider Configuration
 llm:
@@ -71,5 +71,5 @@ databases:
 
 # Optional settings
 clipboard: true
-exports_dir: ~/.daiby/exports
-memory_dir: ~/.daiby/memory
+exports_dir: ~/.daibai/exports
+memory_dir: ~/.daibai/memory

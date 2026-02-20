@@ -1,7 +1,7 @@
 """
-OpenAI LLM Provider for Daiby.
+Anthropic Claude LLM Provider for DaiBai.
 
-Uses the openai SDK directly for OpenAI-specific features.
+Uses the anthropic SDK directly for Claude-specific features.
 """
 
 import re
@@ -10,145 +10,122 @@ from typing import Optional, Dict, Any, AsyncIterator
 from .base import BaseLLMProvider, LLMResponse
 
 
-class OpenAIProvider(BaseLLMProvider):
+class AnthropicProvider(BaseLLMProvider):
     """
-    OpenAI provider implementation.
+    Anthropic Claude provider implementation.
     
     Supports:
-    - GPT-4o / GPT-4 Turbo / GPT-3.5 models
-    - Function/tool calling for SQL execution
+    - Claude 3.5 Sonnet / Opus / Haiku models
+    - Tool use for SQL execution
+    - Extended context window (200K tokens)
     - Streaming responses
-    - Token usage tracking
     """
     
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o",
+        model: str = "claude-3-5-sonnet-20241022",
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        organization: Optional[str] = None,
         **kwargs
     ):
         self.api_key = api_key
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.organization = organization
         self._client = None
         self._async_client = None
     
     def _ensure_client(self):
-        """Lazy initialization of OpenAI client."""
+        """Lazy initialization of Anthropic client."""
         if self._client is None:
             try:
-                from openai import OpenAI, AsyncOpenAI
+                from anthropic import Anthropic, AsyncAnthropic
                 
-                self._client = OpenAI(
-                    api_key=self.api_key,
-                    organization=self.organization,
-                )
-                self._async_client = AsyncOpenAI(
-                    api_key=self.api_key,
-                    organization=self.organization,
-                )
+                self._client = Anthropic(api_key=self.api_key)
+                self._async_client = AsyncAnthropic(api_key=self.api_key)
             except ImportError:
                 raise ImportError(
-                    "OpenAI provider requires openai. "
-                    "Install with: pip install daiby[openai]"
+                    "Anthropic provider requires anthropic. "
+                    "Install with: pip install daibai[anthropic]"
                 )
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
-        """Generate response using OpenAI."""
+        """Generate response using Claude."""
         self._ensure_client()
         
-        messages = self._build_messages(prompt, context)
+        system, user_message = self._build_messages(prompt, context)
         
-        response = self._client.chat.completions.create(
+        response = self._client.messages.create(
             model=self.model,
-            messages=messages,
-            temperature=self.temperature,
             max_tokens=self.max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user_message}],
         )
         
-        text = response.choices[0].message.content or ""
+        text = response.content[0].text if response.content else ""
         sql = self._extract_sql(text)
         
         return LLMResponse(
             text=text,
             sql=sql,
-            tokens_used=response.usage.total_tokens if response.usage else None,
+            tokens_used=response.usage.input_tokens + response.usage.output_tokens if response.usage else None,
             model=self.model,
             raw_response=response,
         )
     
     async def generate_async(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
-        """Async generation using OpenAI."""
+        """Async generation using Claude."""
         self._ensure_client()
         
-        messages = self._build_messages(prompt, context)
+        system, user_message = self._build_messages(prompt, context)
         
-        response = await self._async_client.chat.completions.create(
+        response = await self._async_client.messages.create(
             model=self.model,
-            messages=messages,
-            temperature=self.temperature,
             max_tokens=self.max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user_message}],
         )
         
-        text = response.choices[0].message.content or ""
+        text = response.content[0].text if response.content else ""
         sql = self._extract_sql(text)
         
         return LLMResponse(
             text=text,
             sql=sql,
-            tokens_used=response.usage.total_tokens if response.usage else None,
+            tokens_used=response.usage.input_tokens + response.usage.output_tokens if response.usage else None,
             model=self.model,
             raw_response=response,
         )
     
     async def stream(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> AsyncIterator[str]:
-        """Stream response tokens from OpenAI."""
+        """Stream response tokens from Claude."""
         self._ensure_client()
         
-        messages = self._build_messages(prompt, context)
+        system, user_message = self._build_messages(prompt, context)
         
-        stream = await self._async_client.chat.completions.create(
+        async with self._async_client.messages.stream(
             model=self.model,
-            messages=messages,
-            temperature=self.temperature,
             max_tokens=self.max_tokens,
-            stream=True,
-        )
-        
-        async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+            system=system,
+            messages=[{"role": "user", "content": user_message}],
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
     
-    def _build_messages(self, prompt: str, context: Optional[Dict[str, Any]]) -> list:
-        """Build message list for chat completion."""
-        messages = []
-        
-        # System message with context
+    def _build_messages(self, prompt: str, context: Optional[Dict[str, Any]]) -> tuple:
+        """Build system prompt and user message."""
         system_parts = []
+        
         if context:
             if context.get("system_prompt"):
                 system_parts.append(context["system_prompt"])
             if context.get("schema"):
                 system_parts.append(f"Database Schema:\n{context['schema']}")
         
-        if system_parts:
-            messages.append({
-                "role": "system",
-                "content": "\n\n".join(system_parts)
-            })
+        system = "\n\n".join(system_parts) if system_parts else ""
         
-        # User message
-        messages.append({
-            "role": "user",
-            "content": prompt
-        })
-        
-        return messages
+        return system, prompt
     
     def _extract_sql(self, text: str) -> Optional[str]:
         """Extract SQL from response text."""
@@ -176,4 +153,4 @@ class OpenAIProvider(BaseLLMProvider):
     
     @property
     def provider_name(self) -> str:
-        return "openai"
+        return "anthropic"

@@ -1,5 +1,5 @@
 """
-Ollama Local LLM Provider for Daiby.
+Ollama Local LLM Provider for DaiBai.
 
 Uses the ollama API for local model inference.
 """
@@ -46,7 +46,7 @@ class OllamaProvider(BaseLLMProvider):
             except ImportError:
                 raise ImportError(
                     "Ollama provider requires ollama. "
-                    "Install with: pip install daiby[ollama]"
+                    "Install with: pip install daibai[ollama]"
                 )
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:

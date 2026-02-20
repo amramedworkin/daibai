@@ -1,4 +1,4 @@
-"""Entry point for python -m daiby."""
+"""Entry point for python -m daibai."""
 
 from .cli.chat import main
 

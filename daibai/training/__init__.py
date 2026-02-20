@@ -1,4 +1,4 @@
-"""Training module for Daiby knowledge base."""
+"""Training module for DaiBai knowledge base."""
 
 from .trainer import train_database
 

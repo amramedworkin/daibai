@@ -1,5 +1,5 @@
 """
-Daiby Agent - Core AI Database Assistant.
+DaiBai Agent - Core AI Database Assistant.
 
 Orchestrates LLM providers and database connections for natural language SQL generation.
 """
@@ -134,9 +134,9 @@ class DatabaseRunner:
             self._connection = None
 
 
-class DaibyAgent:
+class DaiBaiAgent:
     """
-    Daiby AI Database Assistant.
+    DaiBai AI Database Assistant.
     
     Provides natural language to SQL capabilities using configurable LLM providers
     and database connections.
@@ -145,11 +145,11 @@ class DaibyAgent:
     def __init__(self, config: Optional[Config] = None, config_path: Optional[Path] = None, 
                  auto_train: bool = True, verbose: bool = False):
         """
-        Initialize the Daiby agent.
+        Initialize the DaiBai agent.
         
         Args:
             config: Pre-loaded Config object
-            config_path: Path to daiby.yaml (used if config not provided)
+            config_path: Path to daibai.yaml (used if config not provided)
             auto_train: Auto-train schema if not cached or stale
             verbose: Print training messages
         """
@@ -522,6 +522,6 @@ Return the SQL in a ```sql code block. Do not execute it."""
 
 
 # Convenience function for quick usage
-def create_agent(config_path: Optional[Path] = None) -> DaibyAgent:
-    """Create a DaibyAgent with configuration from file."""
-    return DaibyAgent(config_path=config_path)
+def create_agent(config_path: Optional[Path] = None) -> DaiBaiAgent:
+    """Create a DaiBaiAgent with configuration from file."""
+    return DaiBaiAgent(config_path=config_path)

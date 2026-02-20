@@ -1,5 +1,5 @@
 """
-Google Gemini LLM Provider for Daiby.
+Google Gemini LLM Provider for DaiBai.
 
 Uses the google-generativeai SDK directly for Gemini-specific features.
 """
@@ -53,7 +53,7 @@ class GeminiProvider(BaseLLMProvider):
             except ImportError:
                 raise ImportError(
                     "Gemini provider requires google-generativeai. "
-                    "Install with: pip install daiby[gemini]"
+                    "Install with: pip install daibai[gemini]"
                 )
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:

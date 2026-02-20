@@ -2,12 +2,12 @@
 
 import pytest
 
-from daiby.llm import (
+from daibai.llm import (
     get_provider_class,
     list_available_providers,
     PROVIDER_MODULES,
 )
-from daiby.llm.base import BaseLLMProvider
+from daibai.llm.base import BaseLLMProvider
 
 
 def test_list_available_providers():

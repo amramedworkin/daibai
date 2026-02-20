@@ -1,5 +1,5 @@
 """
-Daiby Knowledge Base Trainer.
+DaiBai Knowledge Base Trainer.
 
 Trains the agent on database schemas and domain knowledge.
 """
@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.config import load_config, Config
-from ..core.agent import DaibyAgent
+from ..core.agent import DaiBaiAgent
 
 
 def train_database(
-    agent: DaibyAgent,
+    agent: DaiBaiAgent,
     db_name: Optional[str] = None,
     verbose: bool = False
 ) -> dict:
@@ -21,7 +21,7 @@ def train_database(
     Train the agent on a database schema.
     
     Args:
-        agent: DaibyAgent instance
+        agent: DaiBaiAgent instance
         db_name: Database name to train on (uses default if not provided)
         verbose: Print progress
     
@@ -57,9 +57,9 @@ def main():
     """CLI entry point for training."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Train Daiby on database schemas")
+    parser = argparse.ArgumentParser(description="Train DaiBai on database schemas")
     parser.add_argument("-d", "--database", help="Database to train on")
-    parser.add_argument("-c", "--config", help="Path to daiby.yaml")
+    parser.add_argument("-c", "--config", help="Path to daibai.yaml")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
@@ -68,7 +68,7 @@ def main():
     if args.config:
         config = load_config(Path(args.config))
     
-    agent = DaibyAgent(config)
+    agent = DaiBaiAgent(config)
     
     if args.database:
         agent.switch_database(args.database)

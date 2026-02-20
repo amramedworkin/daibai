@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import os
 
-from daiby.core.config import (
+from daibai.core.config import (
     load_config,
     Config,
     DatabaseConfig,
@@ -91,7 +91,7 @@ databases:
 """
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        config_path = Path(tmpdir) / "daiby.yaml"
+        config_path = Path(tmpdir) / "daibai.yaml"
         config_path.write_text(yaml_content)
         
         config = load_config(config_path)

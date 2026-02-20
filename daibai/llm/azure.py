@@ -1,5 +1,5 @@
 """
-Azure OpenAI LLM Provider for Daiby.
+Azure OpenAI LLM Provider for DaiBai.
 
 Uses the openai SDK with Azure-specific configuration.
 """
@@ -59,7 +59,7 @@ class AzureProvider(BaseLLMProvider):
             except ImportError:
                 raise ImportError(
                     "Azure provider requires openai. "
-                    "Install with: pip install daiby[azure]"
+                    "Install with: pip install daibai[azure]"
                 )
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:

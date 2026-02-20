@@ -1,4 +1,4 @@
-"""CLI components for Daiby."""
+"""CLI components for DaiBai."""
 
 from .chat import ChatAgent, main
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Daiby Interactive Chat Agent.
+DaiBai Interactive Chat Agent.
 
 An interactive REPL for querying databases using natural language.
 Supports multiple LLM providers and database connections.
 
 Usage:
-    daiby                    # Interactive mode
-    daiby "query"           # Single query mode
-    daiby -v "query"        # Verbose mode
+    daibai                    # Interactive mode
+    daibai "query"           # Single query mode
+    daibai -v "query"        # Verbose mode
 """
 
 import sys
@@ -22,7 +22,7 @@ from pathlib import Path
 from tabulate import tabulate
 
 from ..core.config import load_config, load_user_preferences, save_user_preferences, Config
-from ..core.agent import DaibyAgent
+from ..core.agent import DaiBaiAgent
 
 
 class Colors:
@@ -50,7 +50,7 @@ class ChatAgent:
         
         # Load configuration
         self.config = config or load_config()
-        self.agent = DaibyAgent(self.config)
+        self.agent = DaiBaiAgent(self.config)
         
         # Load user preferences
         prefs = load_user_preferences()
@@ -318,7 +318,7 @@ class ChatAgent:
         """Print welcome banner."""
         print(f"""
 {Colors.CYAN}╔══════════════════════════════════════════════════════════════╗
-║              {Colors.BOLD}Daiby - AI Database Assistant{Colors.END}{Colors.CYAN}                 ║
+║              {Colors.BOLD}DaiBai - AI Database Assistant{Colors.END}{Colors.CYAN}                 ║
 ║                Multi-LLM Text-to-SQL Tool                      ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.END}
 """)
@@ -795,10 +795,10 @@ def main():
     """Main entry point."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Daiby - AI Database Assistant")
+    parser = argparse.ArgumentParser(description="DaiBai - AI Database Assistant")
     parser.add_argument("query", nargs="?", help="Single query to run")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
-    parser.add_argument("-c", "--config", help="Path to daiby.yaml config file")
+    parser.add_argument("-c", "--config", help="Path to daibai.yaml config file")
     
     args = parser.parse_args()
     

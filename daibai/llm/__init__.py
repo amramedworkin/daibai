@@ -1,5 +1,5 @@
 """
-LLM Provider Registry for Daiby.
+LLM Provider Registry for DaiBai.
 
 Each provider has its own specific implementation - no abstraction layer.
 """
@@ -11,11 +11,11 @@ if TYPE_CHECKING:
 
 # Provider registry - maps provider type to module path
 PROVIDER_MODULES = {
-    "gemini": "daiby.llm.gemini",
-    "openai": "daiby.llm.openai_provider",
-    "azure": "daiby.llm.azure",
-    "anthropic": "daiby.llm.anthropic_provider",
-    "ollama": "daiby.llm.ollama",
+    "gemini": "daibai.llm.gemini",
+    "openai": "daibai.llm.openai_provider",
+    "azure": "daibai.llm.azure",
+    "anthropic": "daibai.llm.anthropic_provider",
+    "ollama": "daibai.llm.ollama",
 }
 
 # Cache for loaded provider classes
@@ -63,7 +63,7 @@ def get_provider_class(provider_type: str) -> Type["BaseLLMProvider"]:
     except ImportError as e:
         raise ImportError(
             f"Provider '{provider_type}' requires additional dependencies. "
-            f"Install with: pip install daiby[{provider_type}]\n"
+            f"Install with: pip install daibai[{provider_type}]\n"
             f"Original error: {e}"
         )
 

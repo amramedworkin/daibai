@@ -1,5 +1,5 @@
 """
-Daiby API Module (Future).
+DaiBai API Module (Future).
 
 This module will contain the REST API server for GUI support.
 """

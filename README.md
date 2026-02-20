@@ -1,6 +1,6 @@
-# Daiby - AI Database Assistant
+# DaiBai - AI Database Assistant
 
-Daiby is an AI-powered natural language database assistant that converts your questions into SQL queries. It supports multiple LLM providers (Gemini, OpenAI, Azure, Anthropic, Ollama) and multiple database connections.
+DaiBai is an AI-powered natural language database assistant that converts your questions into SQL queries. It supports multiple LLM providers (Gemini, OpenAI, Azure, Anthropic, Ollama) and multiple database connections.
 
 ## Features
 
@@ -31,19 +31,19 @@ Daiby is an AI-powered natural language database assistant that converts your qu
 
 ```bash
 # Basic installation (no LLM providers)
-pip install daiby
+pip install daibai
 
 # With specific LLM provider
-pip install daiby[gemini]
-pip install daiby[openai]
-pip install daiby[anthropic]
+pip install daibai[gemini]
+pip install daibai[openai]
+pip install daibai[anthropic]
 
 # With all providers
-pip install daiby[all]
+pip install daibai[all]
 
 # Development installation
-git clone https://github.com/amramedworkin/daiby.git
-cd daiby
+git clone https://github.com/amramedworkin/daibai.git
+cd daibai
 pip install -e ".[gemini]"
 ```
 
@@ -51,7 +51,7 @@ pip install -e ".[gemini]"
 
 ### 1. Create Configuration
 
-Create a `daiby.yaml` file:
+Create a `daibai.yaml` file:
 
 ```yaml
 llm:
@@ -82,27 +82,27 @@ DB_USER=your_user
 DB_PASSWORD=your_password
 ```
 
-### 3. Run Daiby
+### 3. Run DaiBai
 
 ```bash
-daiby
+daibai
 ```
 
 ---
 
 ## Interactive Chat Interface
 
-The interactive chat interface is the primary way to use Daiby. Start it with:
+The interactive chat interface is the primary way to use DaiBai. Start it with:
 
 ```bash
-daiby
+daibai
 # or
-python -m daiby
+python -m daibai
 ```
 
 ### Basic SQL Generation
 
-By default, Daiby generates SQL but does not execute it:
+By default, DaiBai generates SQL but does not execute it:
 
 ```
 [mydb:sql:gemini] > list all customers with their orders
@@ -149,7 +149,7 @@ Export results to a CSV file:
 Generated SQL:
 SELECT * FROM orders WHERE date >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH);
 
-✓ Saved 142 rows to: ~/.daiby/exports/orders_last_month.csv
+✓ Saved 142 rows to: ~/.daibai/exports/orders_last_month.csv
 ```
 
 ### Markdown Table Output
@@ -276,32 +276,32 @@ LLM Providers:
 
 ## Command Line Interface
 
-Daiby also supports single-query mode for scripting and automation.
+DaiBai also supports single-query mode for scripting and automation.
 
 ### Single Query Execution
 
 ```bash
 # Generate SQL (no execution)
-daiby "join customers and orders"
+daibai "join customers and orders"
 
 # With verbose output
-daiby -v "count users by status"
+daibai -v "count users by status"
 
 # Using specific config file
-daiby -c /path/to/daiby.yaml "list all tables"
+daibai -c /path/to/daibai.yaml "list all tables"
 ```
 
 ### Piping and Scripting
 
 ```bash
 # Generate SQL and save to file
-daiby "create view for monthly sales" > monthly_sales.sql
+daibai "create view for monthly sales" > monthly_sales.sql
 
 # Chain with other commands
-daiby "select all active users" | mysql -u user -p mydb
+daibai "select all active users" | mysql -u user -p mydb
 
 # Use in shell scripts
-SQL=$(daiby "count orders by status")
+SQL=$(daibai "count orders by status")
 echo "Generated: $SQL"
 ```
 
@@ -310,9 +310,9 @@ echo "Generated: $SQL"
 Add to your `~/.bashrc`:
 
 ```bash
-# Daiby AI Database Assistant
+# DaiBai AI Database Assistant
 chatb() {
-    local project_dir="/path/to/daiby"
+    local project_dir="/path/to/daibai"
     local venv_dir="$project_dir/.venv"
     
     cd "$project_dir" || { echo "Cannot cd to $project_dir"; return 1; }
@@ -326,7 +326,7 @@ chatb() {
         source "$venv_dir/bin/activate"
     fi
     
-    python3 -m daiby "$@"
+    python3 -m daibai "$@"
 }
 ```
 
@@ -403,22 +403,22 @@ You can prefix any query with a mode:
 
 ### Config File Locations
 
-Daiby searches for configuration in order:
+DaiBai searches for configuration in order:
 
-1. `./daiby.yaml`
-2. `./.daiby.yaml`
-3. `~/.daiby/daiby.yaml`
-4. `~/.config/daiby/daiby.yaml`
+1. `./daibai.yaml`
+2. `./.daibai.yaml`
+3. `~/.daibai/daibai.yaml`
+4. `~/.config/daibai/daibai.yaml`
 
 ### Environment Files
 
 1. `./.env`
-2. `~/.daiby/.env`
+2. `~/.daibai/.env`
 
 ### Full Configuration Example
 
 ```yaml
-# daiby.yaml
+# daibai.yaml
 
 llm:
   default: gemini
@@ -461,8 +461,8 @@ databases:
 
 # User preferences
 clipboard: true
-exports_dir: ~/.daiby/exports
-memory_dir: ~/.daiby/memory
+exports_dir: ~/.daibai/exports
+memory_dir: ~/.daibai/memory
 ```
 
 ---
@@ -540,7 +540,7 @@ A web-based user interface is planned for future releases.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         DAIBY WEB UI                                │
+│                         DAIBAI WEB UI                                │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
 │  │  Query Input  │  │  Schema Tree  │  │   Results / Charts    │   │
 │  └───────────────┘  └───────────────┘  └───────────────────────┘   │
@@ -548,7 +548,7 @@ A web-based user interface is planned for future releases.
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                       DAIBY API SERVER                              │
+│                       DAIBAI API SERVER                              │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
 │  │   REST API    │  │   WebSocket   │  │   Session Manager     │   │
 │  └───────────────┘  └───────────────┘  └───────────────────────┘   │
@@ -556,7 +556,7 @@ A web-based user interface is planned for future releases.
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          DAIBY CORE                                 │
+│                          DAIBAI CORE                                 │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
 │  │  LLM Manager  │  │   DB Manager  │  │    Schema Cache       │   │
 │  └───────┬───────┘  └───────┬───────┘  └───────────────────────┘   │
@@ -578,10 +578,10 @@ A web-based user interface is planned for future releases.
 
 ```bash
 # Install with UI dependencies
-pip install daiby[gui]
+pip install daibai[gui]
 
 # Start the server
-daiby-server
+daibai-server
 
 # Open in browser
 open http://localhost:8080
@@ -595,8 +595,8 @@ open http://localhost:8080
 
 ```bash
 # Clone the repository
-git clone https://github.com/amramedworkin/daiby.git
-cd daiby
+git clone https://github.com/amramedworkin/daibai.git
+cd daibai
 
 # Create virtual environment
 python -m venv .venv
@@ -616,12 +616,12 @@ black --check .
 ### Project Structure
 
 ```
-daiby/
-├── daiby/
+daibai/
+├── daibai/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── core/
-│   │   ├── agent.py       # Main DaibyAgent class
+│   │   ├── agent.py       # Main DaiBaiAgent class
 │   │   └── config.py      # Configuration system
 │   ├── cli/
 │   │   └── chat.py        # Interactive REPL
@@ -638,7 +638,7 @@ daiby/
 │   └── gui/               # Future: Web UI
 ├── tests/
 ├── pyproject.toml
-├── daiby.yaml.example
+├── daibai.yaml.example
 └── README.md
 ```
 
@@ -660,5 +660,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/amramedworkin/daiby/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/amramedworkin/daiby/discussions)
+- **Issues**: [GitHub Issues](https://github.com/amramedworkin/daibai/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/amramedworkin/daibai/discussions)

@@ -37,11 +37,11 @@ env/
 .env
 .env.local
 .env.*.local
-daiby.yaml
+daibai.yaml
 
 # Daiby data
 exports/
-.daiby/
+.daibai/
 
 # Testing
 .pytest_cache/
