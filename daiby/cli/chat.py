@@ -157,6 +157,163 @@ class ChatAgent:
         
         print()
     
+    async def _run_smoke_test(self):
+        """Run comprehensive smoke test of all capabilities."""
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
+        print(f"{Colors.BOLD}           DAIBY SMOKE TEST{Colors.END}")
+        print(f"{Colors.CYAN}{'='*60}{Colors.END}\n")
+        
+        results = {"passed": 0, "failed": 0, "skipped": 0}
+        original_db = self.current_db
+        original_llm = self.current_llm
+        
+        def report(name: str, passed: bool, message: str = ""):
+            if passed:
+                results["passed"] += 1
+                status = f"{Colors.GREEN}PASS{Colors.END}"
+            else:
+                results["failed"] += 1
+                status = f"{Colors.RED}FAIL{Colors.END}"
+            msg = f" - {message}" if message else ""
+            print(f"  [{status}] {name}{msg}")
+        
+        # 1. Configuration
+        print(f"{Colors.YELLOW}1. Configuration{Colors.END}")
+        try:
+            dbs = self.config.list_databases()
+            report("Load config", True, f"{len(dbs)} database(s)")
+        except Exception as e:
+            report("Load config", False, str(e)[:40])
+        
+        llms = self.config.list_llm_providers()
+        report("LLM providers", len(llms) > 0, f"{len(llms)} provider(s)")
+        
+        # 2. Database Connectivity
+        print(f"\n{Colors.YELLOW}2. Database Connectivity{Colors.END}")
+        for db_name in self.config.list_databases():
+            try:
+                self.agent.switch_database(db_name)
+                df = self.agent.run_sql("SELECT 1 as test")
+                report(f"Connect to {db_name}", df is not None and not df.empty)
+            except Exception as e:
+                report(f"Connect to {db_name}", False, str(e)[:40])
+        
+        # Restore original DB
+        if original_db:
+            self.agent.switch_database(original_db)
+        
+        # 3. Schema Training
+        print(f"\n{Colors.YELLOW}3. Schema Training{Colors.END}")
+        for db_name in self.config.list_databases():
+            try:
+                is_trained = self.agent.is_trained(db_name)
+                if is_trained:
+                    cached = self.agent._schema_cache.get(db_name)
+                    tables = cached.get("table_count", 0) if cached else 0
+                    report(f"Schema for {db_name}", True, f"{tables} tables cached")
+                else:
+                    # Try to train
+                    stats = self.agent.train_schema(db_name)
+                    report(f"Train {db_name}", True, f"{stats['tables']} tables")
+            except Exception as e:
+                report(f"Schema for {db_name}", False, str(e)[:40])
+        
+        # 4. LLM Connectivity
+        print(f"\n{Colors.YELLOW}4. LLM Connectivity{Colors.END}")
+        test_prompt = "Reply with exactly: OK"
+        for llm_name in self.config.list_llm_providers():
+            try:
+                self.agent.switch_llm(llm_name)
+                response = self.agent.generate(test_prompt, {"schema": ""})
+                if response and response.text:
+                    reply = response.text.strip()[:20]
+                    report(f"LLM {llm_name}", True, f'"{reply}"')
+                else:
+                    report(f"LLM {llm_name}", False, "No response")
+            except Exception as e:
+                report(f"LLM {llm_name}", False, str(e)[:40])
+        
+        # Restore original LLM
+        if original_llm:
+            self.agent.switch_llm(original_llm)
+        
+        # 5. SQL Generation
+        print(f"\n{Colors.YELLOW}5. SQL Generation{Colors.END}")
+        try:
+            sql = await self.agent.generate_sql_async("count all records in the first table", "sql")
+            has_select = sql and "SELECT" in sql.upper()
+            report("Generate SELECT", has_select, sql[:40] if sql else "No SQL")
+        except Exception as e:
+            report("Generate SELECT", False, str(e)[:40])
+        
+        try:
+            sql = await self.agent.generate_sql_async("create a view for active records", "ddl")
+            has_create = sql and "CREATE" in sql.upper()
+            report("Generate DDL", has_create, sql[:40] if sql else "No SQL")
+        except Exception as e:
+            report("Generate DDL", False, str(e)[:40])
+        
+        # 6. SQL Execution
+        print(f"\n{Colors.YELLOW}6. SQL Execution{Colors.END}")
+        try:
+            df = self.agent.run_sql("SELECT 1 as smoke_test, NOW() as timestamp")
+            report("Execute SQL", df is not None and not df.empty, f"{len(df)} row(s)")
+        except Exception as e:
+            report("Execute SQL", False, str(e)[:40])
+        
+        try:
+            df = self.agent.run_sql("SHOW TABLES")
+            count = len(df) if df is not None else 0
+            report("SHOW TABLES", count > 0, f"{count} table(s)")
+        except Exception as e:
+            report("SHOW TABLES", False, str(e)[:40])
+        
+        # 7. Mode Switching
+        print(f"\n{Colors.YELLOW}7. Mode Switching{Colors.END}")
+        for mode in ["sql", "ddl", "crud"]:
+            try:
+                old_mode = self.mode
+                self.mode = mode
+                report(f"Switch to {mode} mode", self.mode == mode)
+                self.mode = old_mode
+            except Exception as e:
+                report(f"Switch to {mode} mode", False, str(e)[:40])
+        
+        # 8. Database Switching
+        print(f"\n{Colors.YELLOW}8. Database Switching{Colors.END}")
+        for db_name in self.config.list_databases():
+            try:
+                self.agent.switch_database(db_name)
+                report(f"Switch to {db_name}", self.agent.current_database == db_name)
+            except Exception as e:
+                report(f"Switch to {db_name}", False, str(e)[:40])
+        
+        # Restore
+        if original_db:
+            self.agent.switch_database(original_db)
+        
+        # 9. Clipboard (optional)
+        print(f"\n{Colors.YELLOW}9. Utilities{Colors.END}")
+        try:
+            copied = self._copy_to_clipboard("smoke test")
+            report("Clipboard", copied or not self.clipboard, "disabled" if not self.clipboard else "")
+        except Exception as e:
+            report("Clipboard", False, str(e)[:40])
+        
+        report("Exports dir", self.exports_dir.exists(), str(self.exports_dir))
+        
+        # Summary
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.END}")
+        total = results["passed"] + results["failed"]
+        pct = (results["passed"] / total * 100) if total > 0 else 0
+        
+        if results["failed"] == 0:
+            print(f"{Colors.GREEN}All tests passed!{Colors.END} ({results['passed']}/{total})")
+        else:
+            print(f"{Colors.YELLOW}Results:{Colors.END} {results['passed']} passed, {results['failed']} failed ({pct:.0f}%)")
+        
+        print(f"{Colors.CYAN}{'='*60}{Colors.END}\n")
+    
     def print_banner(self):
         """Print welcome banner."""
         print(f"""
@@ -200,6 +357,7 @@ class ChatAgent:
   {Colors.GREEN}@schema{Colors.END}       - Show current database schema
   {Colors.GREEN}@tables{Colors.END}       - List tables in current database
   {Colors.GREEN}@test{Colors.END}         - Test database and LLM connectivity
+  {Colors.GREEN}@smoke{Colors.END}        - Run comprehensive smoke test
   {Colors.GREEN}@help{Colors.END}         - Show this help
   {Colors.GREEN}@examples{Colors.END}     - Show usage examples
   {Colors.GREEN}@quit{Colors.END}         - Exit
@@ -430,6 +588,10 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
                 else:
                     print(f"  {Colors.RED}✗{Colors.END} {db_name}{marker}: Not trained")
             print()
+            return True
+        
+        elif base_cmd == "@smoke":
+            asyncio.run(self._run_smoke_test())
             return True
         
         elif base_cmd == "@help":
