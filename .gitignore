@@ -37,6 +37,7 @@ env/
 .env
 .env.local
 .env.*.local
+daiby.yaml
 
 # Daiby data
 exports/
