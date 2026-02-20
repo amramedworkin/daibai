@@ -26,7 +26,7 @@ class GeminiProvider(BaseLLMProvider):
         api_key: str,
         model: str = "gemini-2.5-pro",
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int = 65536,
         **kwargs
     ):
         self.api_key = api_key
