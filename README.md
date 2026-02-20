@@ -538,45 +538,40 @@ A web-based user interface is planned for future releases.
 
 ### Architecture Preview
 
-```mermaid
-flowchart TB
-    subgraph UI [Daiby Web UI]
-        QueryInput[Query Input]
-        SchemaTree[Schema Tree]
-        Results[Results / Charts]
-    end
-
-    subgraph API [Daiby API Server]
-        REST[REST API]
-        WebSocket[WebSocket]
-        Session[Session Manager]
-    end
-
-    subgraph Core [Daiby Core]
-        LLM[LLM Manager]
-        DB[DB Manager]
-        Cache[Schema Cache]
-    end
-
-    UI --> API
-    API --> Core
-
-    subgraph Providers [LLM Providers]
-        Gemini[Gemini]
-        OpenAI[OpenAI]
-        Azure[Azure]
-        Anthropic[Anthropic]
-        Ollama[Ollama]
-    end
-
-    subgraph Databases [Databases]
-        MySQL[(MySQL)]
-        PostgreSQL[(PostgreSQL)]
-        SQLite[(SQLite)]
-    end
-
-    LLM --> Providers
-    DB --> Databases
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DAIBY WEB UI                                │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
+│  │  Query Input  │  │  Schema Tree  │  │   Results / Charts    │   │
+│  └───────────────┘  └───────────────┘  └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       DAIBY API SERVER                              │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
+│  │   REST API    │  │   WebSocket   │  │   Session Manager     │   │
+│  └───────────────┘  └───────────────┘  └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                          DAIBY CORE                                 │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
+│  │  LLM Manager  │  │   DB Manager  │  │    Schema Cache       │   │
+│  └───────┬───────┘  └───────┬───────┘  └───────────────────────┘   │
+└──────────┼──────────────────┼───────────────────────────────────────┘
+           │                  │
+           ▼                  ▼
+┌──────────────────┐  ┌──────────────────┐
+│  LLM PROVIDERS   │  │    DATABASES     │
+├──────────────────┤  ├──────────────────┤
+│  • Gemini        │  │  • MySQL         │
+│  • OpenAI        │  │  • PostgreSQL    │
+│  • Azure         │  │  • SQLite        │
+│  • Anthropic     │  │                  │
+│  • Ollama        │  │                  │
+└──────────────────┘  └──────────────────┘
 ```
 
 ### Running the UI (Future)
