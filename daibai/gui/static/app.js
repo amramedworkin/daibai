@@ -7,16 +7,53 @@ class DaiBaiApp {
         this.conversationId = null;
         this.ws = null;
         this.isLoading = false;
+        this.lastGeneratedSql = null;
         
         this.init();
     }
     
     async init() {
         this.bindElements();
+        this.loadPreferences();
         this.bindEvents();
         await this.loadSettings();
         await this.loadConversations();
         this.connectWebSocket();
+    }
+    
+    loadPreferences() {
+        const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
+        
+        // Auto-copy defaults to true
+        this.autoCopyCheckbox.checked = prefs.autoCopy !== false;
+        
+        // Execute checkbox
+        this.executeCheckbox.checked = prefs.autoExecute === true;
+        
+        // Sidebar state
+        if (prefs.sidebarCollapsed) {
+            this.sidebar.classList.add('collapsed');
+        }
+    }
+    
+    savePreferences() {
+        const prefs = {
+            autoCopy: this.autoCopyCheckbox.checked,
+            autoExecute: this.executeCheckbox.checked,
+            sidebarCollapsed: this.sidebar.classList.contains('collapsed'),
+            database: this.databaseSelect.value,
+            llm: this.llmSelect.value,
+            mode: this.modeSelect.value
+        };
+        localStorage.setItem('daibai_preferences', JSON.stringify(prefs));
+    }
+    
+    copyToClipboard(text) {
+        if (text && this.autoCopyCheckbox.checked) {
+            navigator.clipboard.writeText(text).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
     }
     
     bindElements() {
@@ -26,6 +63,7 @@ class DaiBaiApp {
         this.databaseSelect = document.getElementById('databaseSelect');
         this.llmSelect = document.getElementById('llmSelect');
         this.modeSelect = document.getElementById('modeSelect');
+        this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
         this.schemaBtn = document.getElementById('schemaBtn');
         this.schemaModal = document.getElementById('schemaModal');
         this.schemaModalClose = document.getElementById('schemaModalClose');
@@ -47,11 +85,21 @@ class DaiBaiApp {
         // Sidebar toggle
         this.sidebarToggle.addEventListener('click', () => {
             this.sidebar.classList.toggle('collapsed');
+            this.savePreferences();
         });
         
         // Settings changes
-        this.databaseSelect.addEventListener('change', () => this.updateSettings());
-        this.llmSelect.addEventListener('change', () => this.updateSettings());
+        this.databaseSelect.addEventListener('change', () => {
+            this.updateSettings();
+            this.savePreferences();
+        });
+        this.llmSelect.addEventListener('change', () => {
+            this.updateSettings();
+            this.savePreferences();
+        });
+        this.modeSelect.addEventListener('change', () => this.savePreferences());
+        this.autoCopyCheckbox.addEventListener('change', () => this.savePreferences());
+        this.executeCheckbox.addEventListener('change', () => this.savePreferences());
         
         // Schema modal
         this.schemaBtn.addEventListener('click', () => this.showSchema());
@@ -106,19 +154,27 @@ class DaiBaiApp {
         try {
             const response = await fetch('/api/settings');
             const settings = await response.json();
+            const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
             
             // Populate database dropdown
+            const savedDb = prefs.database && settings.databases.includes(prefs.database) 
+                ? prefs.database : settings.current_database;
             this.databaseSelect.innerHTML = settings.databases
-                .map(db => `<option value="${db}" ${db === settings.current_database ? 'selected' : ''}>${db}</option>`)
+                .map(db => `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`)
                 .join('');
             
             // Populate LLM dropdown
+            const savedLlm = prefs.llm && settings.llm_providers.includes(prefs.llm)
+                ? prefs.llm : settings.current_llm;
             this.llmSelect.innerHTML = settings.llm_providers
-                .map(llm => `<option value="${llm}" ${llm === settings.current_llm ? 'selected' : ''}>${llm}</option>`)
+                .map(llm => `<option value="${llm}" ${llm === savedLlm ? 'selected' : ''}>${llm}</option>`)
                 .join('');
             
-            // Set mode
-            this.modeSelect.value = settings.current_mode || 'sql';
+            // Set mode from preferences or default
+            this.modeSelect.value = prefs.mode || settings.current_mode || 'sql';
+            
+            // Always sync settings to server to ensure database/LLM is correct
+            await this.updateSettings();
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
@@ -260,7 +316,9 @@ class DaiBaiApp {
                 
             case 'sql':
                 this.removeLoadingIndicator();
+                this.lastGeneratedSql = data.content;
                 this.renderAssistantMessage(data.content);
+                this.copyToClipboard(data.content);
                 break;
                 
             case 'results':
@@ -335,8 +393,10 @@ class DaiBaiApp {
             
             this.removeLoadingIndicator();
             this.conversationId = data.conversation_id;
+            this.lastGeneratedSql = data.sql;
             
             this.renderAssistantMessage(data.sql, data.results);
+            this.copyToClipboard(data.sql);
             
             await this.loadConversations();
         } catch (error) {
@@ -508,13 +568,25 @@ class DaiBaiApp {
         const messageEl = document.createElement('div');
         messageEl.className = 'message assistant';
         
+        // Extract error message from various formats
+        let errorMsg = 'Unknown error';
+        if (typeof error === 'string') {
+            errorMsg = error;
+        } else if (error && error.message) {
+            errorMsg = error.message;
+        } else if (error && error.detail) {
+            errorMsg = error.detail;
+        } else if (error && typeof error === 'object') {
+            errorMsg = JSON.stringify(error);
+        }
+        
         messageEl.innerHTML = `
             <div class="message-avatar" style="background: var(--error);">!</div>
             <div class="message-content">
                 <div class="message-header">
                     <span class="message-role">Error</span>
                 </div>
-                <div class="message-text" style="color: var(--error);">${this.escapeHtml(error)}</div>
+                <div class="message-text" style="color: var(--error);">${this.escapeHtml(errorMsg)}</div>
             </div>
         `;
         

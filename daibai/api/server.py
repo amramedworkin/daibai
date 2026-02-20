@@ -219,12 +219,16 @@ async def query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=error_msg)
 
 
+class ExecuteRequest(BaseModel):
+    sql: str
+
+
 @app.post("/api/execute")
-async def execute_sql(sql: str):
+async def execute_sql(request: ExecuteRequest):
     """Execute SQL directly."""
     agent = get_agent()
     try:
-        df = agent.run_sql(sql)
+        df = agent.run_sql(request.sql)
         if df is not None:
             return {
                 "results": df.to_dict(orient="records"),
