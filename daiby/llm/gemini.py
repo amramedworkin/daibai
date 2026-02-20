@@ -65,8 +65,9 @@ class GeminiProvider(BaseLLMProvider):
         
         response = self._model_instance.generate_content(full_prompt)
         
-        text = response.text
-        sql = self._extract_sql(text)
+        # Handle blocked or empty responses
+        text = self._extract_text(response)
+        sql = self._extract_sql(text) if text else None
         
         return LLMResponse(
             text=text,
@@ -74,6 +75,34 @@ class GeminiProvider(BaseLLMProvider):
             model=self.model,
             raw_response=response,
         )
+    
+    def _extract_text(self, response) -> str:
+        """Safely extract text from Gemini response."""
+        # Check if response has candidates
+        if not response.candidates:
+            return "[No response generated]"
+        
+        candidate = response.candidates[0]
+        
+        # Check finish reason (1=STOP is good, 2=MAX_TOKENS, 3=SAFETY, 4=RECITATION, 5=OTHER)
+        finish_reason = getattr(candidate, 'finish_reason', None)
+        if finish_reason and finish_reason != 1:
+            reason_names = {2: "MAX_TOKENS", 3: "SAFETY", 4: "RECITATION", 5: "OTHER"}
+            reason_name = reason_names.get(finish_reason, f"UNKNOWN({finish_reason})")
+            
+            # Try to get partial content if available
+            if candidate.content and candidate.content.parts:
+                parts_text = "".join(p.text for p in candidate.content.parts if hasattr(p, 'text'))
+                if parts_text:
+                    return f"{parts_text}\n\n[Response truncated: {reason_name}]"
+            
+            return f"[Response blocked: {reason_name}]"
+        
+        # Normal case - extract text from parts
+        if candidate.content and candidate.content.parts:
+            return "".join(p.text for p in candidate.content.parts if hasattr(p, 'text'))
+        
+        return "[Empty response]"
     
     async def generate_async(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         """Async generation using Gemini."""
@@ -83,8 +112,9 @@ class GeminiProvider(BaseLLMProvider):
         
         response = await self._model_instance.generate_content_async(full_prompt)
         
-        text = response.text
-        sql = self._extract_sql(text)
+        # Handle blocked or empty responses
+        text = self._extract_text(response)
+        sql = self._extract_sql(text) if text else None
         
         return LLMResponse(
             text=text,
