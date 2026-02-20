@@ -103,6 +103,57 @@ class ChatAgent:
         except Exception:
             return False
     
+    def _test_connectivity(self):
+        """Test database and LLM connectivity."""
+        print(f"\n{Colors.CYAN}Testing Connectivity...{Colors.END}\n")
+        
+        # Test databases
+        print(f"{Colors.YELLOW}Databases:{Colors.END}")
+        for db_name in self.config.list_databases():
+            marker = " (current)" if db_name == self.current_db else ""
+            try:
+                self.agent.switch_database(db_name)
+                df = self.agent.run_sql("SELECT 1 as test")
+                if df is not None and not df.empty:
+                    print(f"  {Colors.GREEN}✓{Colors.END} {db_name}{marker} - Connected")
+                else:
+                    print(f"  {Colors.RED}✗{Colors.END} {db_name}{marker} - No response")
+            except Exception as e:
+                error_msg = str(e)[:50]
+                print(f"  {Colors.RED}✗{Colors.END} {db_name}{marker} - {error_msg}")
+        
+        # Restore current database
+        if self.current_db:
+            try:
+                self.agent.switch_database(self.current_db)
+            except Exception:
+                pass
+        
+        # Test LLM providers
+        print(f"\n{Colors.YELLOW}LLM Providers:{Colors.END}")
+        for llm_name in self.config.list_llm_providers():
+            marker = " (current)" if llm_name == self.current_llm else ""
+            try:
+                self.agent.switch_llm(llm_name)
+                # Simple test prompt
+                response = self.agent.generate("Say 'OK' if you can hear me.", {})
+                if response and response.text:
+                    print(f"  {Colors.GREEN}✓{Colors.END} {llm_name}{marker} - Connected")
+                else:
+                    print(f"  {Colors.RED}✗{Colors.END} {llm_name}{marker} - No response")
+            except Exception as e:
+                error_msg = str(e)[:50]
+                print(f"  {Colors.RED}✗{Colors.END} {llm_name}{marker} - {error_msg}")
+        
+        # Restore current LLM
+        if self.current_llm:
+            try:
+                self.agent.switch_llm(self.current_llm)
+            except Exception:
+                pass
+        
+        print()
+    
     def print_banner(self):
         """Print welcome banner."""
         print(f"""
@@ -140,6 +191,7 @@ class ChatAgent:
 {Colors.YELLOW}Exploration:{Colors.END}
   {Colors.GREEN}@schema{Colors.END}       - Show current database schema
   {Colors.GREEN}@tables{Colors.END}       - List tables in current database
+  {Colors.GREEN}@test{Colors.END}         - Test database and LLM connectivity
   {Colors.GREEN}@help{Colors.END}         - Show this help
   {Colors.GREEN}@examples{Colors.END}     - Show usage examples
   {Colors.GREEN}@quit{Colors.END}         - Exit
@@ -327,6 +379,10 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
                     print(tabulate(df, headers='keys', tablefmt='simple', showindex=False))
             except Exception as e:
                 print(f"{Colors.RED}Error: {e}{Colors.END}")
+            return True
+        
+        elif base_cmd == "@test":
+            self._test_connectivity()
             return True
         
         elif base_cmd == "@help":
