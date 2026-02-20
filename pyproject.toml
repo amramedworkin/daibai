@@ -81,10 +81,10 @@ daiby = "daiby.cli.chat:main"
 daiby-train = "daiby.training.trainer:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/daiby"
-Documentation = "https://github.com/yourusername/daiby#readme"
-Repository = "https://github.com/yourusername/daiby"
-Issues = "https://github.com/yourusername/daiby/issues"
+Homepage = "https://github.com/amramedworkin/daiby"
+Documentation = "https://github.com/amramedworkin/daiby#readme"
+Repository = "https://github.com/amramedworkin/daiby"
+Issues = "https://github.com/amramedworkin/daiby/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["daiby"]

@@ -229,7 +229,7 @@ ollama:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/daiby.git
+git clone https://github.com/amramedworkin/daiby.git
 cd daiby
 
 # Create virtual environment
