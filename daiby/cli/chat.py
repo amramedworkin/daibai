@@ -591,8 +591,7 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
             return True
         
         elif base_cmd == "@smoke":
-            asyncio.run(self._run_smoke_test())
-            return True
+            return "@smoke"
         
         elif base_cmd == "@help":
             self.print_help()
@@ -772,7 +771,11 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
                     continue
                 
                 if user_input.startswith("@"):
-                    if self.handle_command(user_input):
+                    result = self.handle_command(user_input)
+                    if result == "@smoke":
+                        await self._run_smoke_test()
+                        continue
+                    elif result:
                         continue
                 
                 await self.handle_query(user_input)
