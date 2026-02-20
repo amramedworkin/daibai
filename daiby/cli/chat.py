@@ -191,6 +191,11 @@ class ChatAgent:
   {Colors.GREEN}@clipboard{Colors.END}    - Toggle clipboard copy (currently: {clip_status})
   {Colors.GREEN}@verbose{Colors.END}      - Toggle verbose mode
 
+{Colors.YELLOW}Schema Training:{Colors.END}
+  {Colors.GREEN}@train [db]{Colors.END}   - Train/index schema (auto-runs on first use)
+  {Colors.GREEN}@refresh [db]{Colors.END} - Force refresh schema from database
+  {Colors.GREEN}@status{Colors.END}       - Show training status for all databases
+
 {Colors.YELLOW}Exploration:{Colors.END}
   {Colors.GREEN}@schema{Colors.END}       - Show current database schema
   {Colors.GREEN}@tables{Colors.END}       - List tables in current database
@@ -386,6 +391,45 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
         
         elif base_cmd == "@test":
             self._test_connectivity()
+            return True
+        
+        elif base_cmd == "@train":
+            db = arg if arg else self.current_db
+            if db:
+                print(f"{Colors.CYAN}Training schema for {db}...{Colors.END}")
+                try:
+                    stats = self.agent.train_schema(db, verbose=True)
+                    print(f"{Colors.GREEN}✓ Trained: {stats['tables']} tables, {stats['schema_size']} chars{Colors.END}")
+                except Exception as e:
+                    print(f"{Colors.RED}Error: {e}{Colors.END}")
+            else:
+                print(f"{Colors.YELLOW}No database selected{Colors.END}")
+            return True
+        
+        elif base_cmd == "@refresh":
+            db = arg if arg else self.current_db
+            if db:
+                print(f"{Colors.CYAN}Refreshing schema for {db}...{Colors.END}")
+                try:
+                    stats = self.agent.refresh_schema(db)
+                    print(f"{Colors.GREEN}✓ Refreshed: {stats['tables']} tables, {stats['schema_size']} chars{Colors.END}")
+                except Exception as e:
+                    print(f"{Colors.RED}Error: {e}{Colors.END}")
+            else:
+                print(f"{Colors.YELLOW}No database selected{Colors.END}")
+            return True
+        
+        elif base_cmd == "@status":
+            status = self.agent.get_training_status()
+            print(f"\n{Colors.YELLOW}Training Status:{Colors.END}")
+            for db_name, info in status.items():
+                marker = " (current)" if db_name == self.current_db else ""
+                if info.get("trained"):
+                    mem = "in-memory" if info.get("in_memory") else "cached"
+                    print(f"  {Colors.GREEN}✓{Colors.END} {db_name}{marker}: {info['tables']} tables ({mem})")
+                else:
+                    print(f"  {Colors.RED}✗{Colors.END} {db_name}{marker}: Not trained")
+            print()
             return True
         
         elif base_cmd == "@help":

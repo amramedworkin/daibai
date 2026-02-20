@@ -6,7 +6,10 @@ Orchestrates LLM providers and database connections for natural language SQL gen
 
 import os
 import re
+import json
+import hashlib
 import asyncio
+from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 from pathlib import Path
 
@@ -15,6 +18,66 @@ import pandas as pd
 from .config import Config, load_config, DatabaseConfig, LLMProviderConfig
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse
+
+
+class SchemaCache:
+    """Persistent schema cache with staleness detection."""
+    
+    def __init__(self, cache_dir: Path):
+        self.cache_dir = cache_dir
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _cache_path(self, db_name: str) -> Path:
+        return self.cache_dir / f"{db_name}_schema.json"
+    
+    def get(self, db_name: str) -> Optional[Dict[str, Any]]:
+        """Get cached schema data if exists."""
+        path = self._cache_path(db_name)
+        if path.exists():
+            try:
+                with open(path, "r") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return None
+    
+    def save(self, db_name: str, schema: str, table_count: int) -> None:
+        """Save schema to cache with metadata."""
+        schema_hash = hashlib.md5(schema.encode()).hexdigest()
+        data = {
+            "schema": schema,
+            "table_count": table_count,
+            "schema_hash": schema_hash,
+            "cached_at": datetime.now().isoformat(),
+            "version": 1,
+        }
+        path = self._cache_path(db_name)
+        with open(path, "w") as f:
+            json.dump(data, f)
+    
+    def is_stale(self, db_name: str, current_table_count: int = 0, max_age_hours: int = 24) -> bool:
+        """Check if cache is stale based on age (table count is informational only)."""
+        cached = self.get(db_name)
+        if not cached:
+            return True
+        
+        # Check age
+        cached_at = cached.get("cached_at")
+        if cached_at:
+            try:
+                cache_time = datetime.fromisoformat(cached_at)
+                if datetime.now() - cache_time > timedelta(hours=max_age_hours):
+                    return True
+            except ValueError:
+                return True
+        
+        return False
+    
+    def clear(self, db_name: str) -> None:
+        """Clear cache for a database."""
+        path = self._cache_path(db_name)
+        if path.exists():
+            path.unlink()
 
 
 class DatabaseRunner:
@@ -79,15 +142,19 @@ class DaibyAgent:
     and database connections.
     """
     
-    def __init__(self, config: Optional[Config] = None, config_path: Optional[Path] = None):
+    def __init__(self, config: Optional[Config] = None, config_path: Optional[Path] = None, 
+                 auto_train: bool = True, verbose: bool = False):
         """
         Initialize the Daiby agent.
         
         Args:
             config: Pre-loaded Config object
             config_path: Path to daiby.yaml (used if config not provided)
+            auto_train: Auto-train schema if not cached or stale
+            verbose: Print training messages
         """
         self.config = config or load_config(config_path)
+        self.verbose = verbose
         
         # Database runners (lazy initialized)
         self._runners: Dict[str, DatabaseRunner] = {}
@@ -97,8 +164,16 @@ class DaibyAgent:
         self._providers: Dict[str, BaseLLMProvider] = {}
         self._current_llm: Optional[str] = self.config.default_llm
         
-        # Schema cache
-        self._schema_cache: Dict[str, str] = {}
+        # Schema cache (in-memory)
+        self._schema_memory: Dict[str, str] = {}
+        
+        # Persistent schema cache
+        self._schema_cache = SchemaCache(self.config.memory_dir / "schemas")
+        
+        # Auto-train on init if needed
+        self._trained_dbs: set = set()
+        if auto_train and self._current_db:
+            self._ensure_trained(self._current_db)
     
     @property
     def current_database(self) -> Optional[str]:
@@ -160,6 +235,110 @@ class DaibyAgent:
             raise ValueError(f"LLM '{llm_name}' not found. Available: {self.config.list_llm_providers()}")
         self._current_llm = llm_name
     
+    def _get_table_count(self, db_name: Optional[str] = None) -> int:
+        """Get current table count from database."""
+        try:
+            df = self.run_sql("SHOW TABLES", db_name)
+            return len(df) if df is not None else 0
+        except Exception:
+            return 0
+    
+    def _ensure_trained(self, db_name: str) -> None:
+        """Ensure schema is trained/cached for a database."""
+        if db_name in self._trained_dbs:
+            return
+        
+        # Check if we have cached schema
+        cached = self._schema_cache.get(db_name)
+        
+        if cached:
+            # Check if stale
+            current_count = self._get_table_count(db_name)
+            if not self._schema_cache.is_stale(db_name, current_count):
+                # Use cached schema
+                self._schema_memory[db_name] = cached["schema"]
+                self._trained_dbs.add(db_name)
+                if self.verbose:
+                    print(f"Loaded cached schema for {db_name} ({cached['table_count']} tables)")
+                return
+            else:
+                if self.verbose:
+                    print(f"Schema cache stale for {db_name} (tables: {cached['table_count']} -> {current_count})")
+        
+        # Need to train/refresh
+        self.train_schema(db_name)
+    
+    def train_schema(self, db_name: Optional[str] = None, verbose: Optional[bool] = None) -> Dict[str, Any]:
+        """
+        Train/index the schema for a database.
+        
+        Args:
+            db_name: Database to train (uses current if not specified)
+            verbose: Print progress (uses self.verbose if not specified)
+        
+        Returns:
+            Training statistics
+        """
+        name = db_name or self._current_db
+        if not name:
+            raise ValueError("No database specified")
+        
+        show_progress = verbose if verbose is not None else self.verbose
+        
+        if show_progress:
+            print(f"Training schema for {name}...")
+        
+        # Fetch fresh schema from database
+        schema = self._fetch_schema_from_db(name)
+        table_count = schema.count("-- Table:")
+        
+        # Save to persistent cache
+        self._schema_cache.save(name, schema, table_count)
+        
+        # Update in-memory cache
+        self._schema_memory[name] = schema
+        self._trained_dbs.add(name)
+        
+        if show_progress:
+            print(f"Trained: {table_count} tables, {len(schema)} chars")
+        
+        return {
+            "database": name,
+            "tables": table_count,
+            "schema_size": len(schema),
+        }
+    
+    def refresh_schema(self, db_name: Optional[str] = None) -> Dict[str, Any]:
+        """Force refresh schema for a database."""
+        name = db_name or self._current_db
+        if name:
+            self._trained_dbs.discard(name)
+            self._schema_cache.clear(name)
+        return self.train_schema(name, verbose=True)
+    
+    def is_trained(self, db_name: Optional[str] = None) -> bool:
+        """Check if database schema is trained."""
+        name = db_name or self._current_db
+        if not name:
+            return False
+        return name in self._trained_dbs or self._schema_cache.get(name) is not None
+    
+    def get_training_status(self) -> Dict[str, Any]:
+        """Get training status for all databases."""
+        status = {}
+        for db_name in self.config.list_databases():
+            cached = self._schema_cache.get(db_name)
+            if cached:
+                status[db_name] = {
+                    "trained": True,
+                    "tables": cached.get("table_count", 0),
+                    "cached_at": cached.get("cached_at"),
+                    "in_memory": db_name in self._trained_dbs,
+                }
+            else:
+                status[db_name] = {"trained": False}
+        return status
+    
     def run_sql(self, sql: str, db_name: Optional[str] = None) -> Optional[pd.DataFrame]:
         """Execute SQL and return results."""
         runner = self._get_runner(db_name)
@@ -170,18 +349,12 @@ class DaibyAgent:
         runner = self._get_runner(db_name)
         return await runner.run_sql_async(sql)
     
-    def get_schema(self, db_name: Optional[str] = None, refresh: bool = False) -> str:
-        """Get database schema as text."""
-        name = db_name or self._current_db
-        
-        if name in self._schema_cache and not refresh:
-            return self._schema_cache[name]
-        
-        # Fetch schema from database
+    def _fetch_schema_from_db(self, db_name: str) -> str:
+        """Fetch fresh schema from database."""
         schema_parts = []
         
         # Get tables
-        tables_df = self.run_sql("SHOW TABLES", name)
+        tables_df = self.run_sql("SHOW TABLES", db_name)
         if tables_df is not None and not tables_df.empty:
             table_col = tables_df.columns[0]
             tables = tables_df[table_col].tolist()
@@ -189,7 +362,7 @@ class DaibyAgent:
             for table in tables[:50]:  # Limit to 50 tables
                 schema_parts.append(f"\n-- Table: {table}")
                 try:
-                    create_df = self.run_sql(f"SHOW CREATE TABLE `{table}`", name)
+                    create_df = self.run_sql(f"SHOW CREATE TABLE `{table}`", db_name)
                     if create_df is not None and not create_df.empty:
                         # Use iloc[row, col] for positional access
                         create_sql = create_df.iloc[0, 1]  # Second column has CREATE statement
@@ -197,9 +370,23 @@ class DaibyAgent:
                 except Exception:
                     pass
         
-        schema = "\n".join(schema_parts)
-        self._schema_cache[name] = schema
-        return schema
+        return "\n".join(schema_parts)
+    
+    def get_schema(self, db_name: Optional[str] = None, refresh: bool = False) -> str:
+        """Get database schema as text (uses cache if available)."""
+        name = db_name or self._current_db
+        if not name:
+            return ""
+        
+        # Force refresh if requested
+        if refresh:
+            self.train_schema(name)
+        
+        # Ensure trained (will use cache if available)
+        self._ensure_trained(name)
+        
+        # Return from in-memory cache
+        return self._schema_memory.get(name, "")
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         """Generate LLM response for a prompt."""
