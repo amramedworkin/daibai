@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./daibai_logo.png" alt="DaiBai" width="400"/>
+  <img src="./dabai_logo.png" alt="DaiBai" width="400"/>
 </p>
 
 <h1 align="center">DaiBai - AI Database Assistant</h1>
