@@ -191,7 +191,8 @@ class DaibyAgent:
                 try:
                     create_df = self.run_sql(f"SHOW CREATE TABLE `{table}`", name)
                     if create_df is not None and not create_df.empty:
-                        create_sql = create_df.iloc[0][1]  # Second column has CREATE statement
+                        # Use iloc[row, col] for positional access
+                        create_sql = create_df.iloc[0, 1]  # Second column has CREATE statement
                         schema_parts.append(create_sql)
                 except Exception:
                     pass
