@@ -1,4 +1,20 @@
-# DaiBai - AI Database Assistant
+<p align="center">
+  <img src="./daibai_logo.png" alt="DaiBai" width="400"/>
+</p>
+
+<h1 align="center">DaiBai - AI Database Assistant</h1>
+
+<p align="center">
+  <strong>Natural Language to SQL with Multi-LLM Support</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square" alt="Python 3.10+"/>
+  <img src="https://img.shields.io/badge/Gemini-Supported-4285F4?style=flat-square" alt="Gemini"/>
+  <img src="https://img.shields.io/badge/OpenAI-Supported-412991?style=flat-square" alt="OpenAI"/>
+  <img src="https://img.shields.io/badge/Anthropic-Supported-D4A574?style=flat-square" alt="Anthropic"/>
+  <img src="https://img.shields.io/badge/MySQL-Supported-4479A1?style=flat-square" alt="MySQL"/>
+</p>
 
 DaiBai is an AI-powered natural language database assistant that converts your questions into SQL queries. It supports multiple LLM providers (Gemini, OpenAI, Azure, Anthropic, Ollama) and multiple database connections.
 
@@ -25,6 +41,7 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 - [LLM Providers](#llm-providers)
 - [Web UI (Coming Soon)](#web-ui-coming-soon)
 - [Development](#development)
+- [Resources](#resources)
 - [License](#license)
 
 ## Installation
@@ -649,6 +666,38 @@ daibai/
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+---
+
+## Resources
+
+### LLM Providers
+
+| Provider | Documentation | API Reference |
+|----------|---------------|---------------|
+| **Google Gemini** | [AI Studio](https://aistudio.google.com/) | [Gemini API](https://ai.google.dev/docs) |
+| **OpenAI** | [Platform](https://platform.openai.com/) | [API Reference](https://platform.openai.com/docs/api-reference) |
+| **Azure OpenAI** | [Azure AI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) | [REST API](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference) |
+| **Anthropic** | [Claude](https://www.anthropic.com/claude) | [API Docs](https://docs.anthropic.com/en/api/getting-started) |
+| **Ollama** | [Ollama](https://ollama.ai/) | [API Reference](https://github.com/ollama/ollama/blob/main/docs/api.md) |
+
+### Core Dependencies
+
+| Package | Purpose | Documentation |
+|---------|---------|---------------|
+| **pandas** | DataFrame handling for query results | [pandas.pydata.org](https://pandas.pydata.org/) |
+| **PyYAML** | Configuration file parsing | [pyyaml.org](https://pyyaml.org/) |
+| **mysql-connector-python** | MySQL database connectivity | [MySQL Connector](https://dev.mysql.com/doc/connector-python/en/) |
+| **tabulate** | Pretty-printing tables in CLI | [tabulate](https://github.com/astanin/python-tabulate) |
+| **python-dotenv** | Environment variable management | [python-dotenv](https://github.com/theskumar/python-dotenv) |
+
+### Development Tools
+
+| Tool | Purpose |
+|------|---------|
+| **pytest** | Testing framework |
+| **black** | Code formatting |
+| **ruff** | Fast linting |
 
 ---
 
