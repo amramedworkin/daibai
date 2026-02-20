@@ -1,7 +1,9 @@
 """
-DaiBai GUI Module (Future).
+DaiBai GUI module - Web-based user interface.
 
-This module will contain the graphical user interface.
+Static files are served from the 'static' subdirectory.
 """
 
-# Placeholder for future GUI implementation
+from pathlib import Path
+
+STATIC_DIR = Path(__file__).parent / "static"

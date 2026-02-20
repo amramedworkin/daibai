@@ -67,7 +67,8 @@ all = [
 ]
 gui = [
     "fastapi>=0.100.0",
-    "uvicorn>=0.22.0",
+    "uvicorn[standard]>=0.22.0",
+    "websockets>=11.0.0",
 ]
 dev = [
     "pytest>=7.0.0",
@@ -79,6 +80,7 @@ dev = [
 [project.scripts]
 daibai = "daibai.cli.chat:main"
 daibai-train = "daibai.training.trainer:main"
+daibai-server = "daibai.api.server:run_server"
 
 [project.urls]
 Homepage = "https://github.com/amramedworkin/daibai"

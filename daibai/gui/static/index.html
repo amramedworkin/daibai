@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DaiBai - AI Database Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Top Navigation Bar -->
+        <header class="top-nav">
+            <div class="nav-left">
+                <button class="sidebar-toggle" id="sidebarToggle">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <div class="logo">
+                    <img src="/static/logo.png" alt="DaiBai" onerror="this.style.display='none'">
+                    <span>DaiBai</span>
+                </div>
+            </div>
+            
+            <div class="nav-center">
+                <div class="nav-dropdowns">
+                    <div class="dropdown">
+                        <label>Database</label>
+                        <select id="databaseSelect">
+                            <option value="">Loading...</option>
+                        </select>
+                    </div>
+                    <div class="dropdown">
+                        <label>LLM</label>
+                        <select id="llmSelect">
+                            <option value="">Loading...</option>
+                        </select>
+                    </div>
+                    <div class="dropdown">
+                        <label>Mode</label>
+                        <select id="modeSelect">
+                            <option value="sql">SQL</option>
+                            <option value="ddl">DDL</option>
+                            <option value="crud">CRUD</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="nav-right">
+                <button class="icon-btn" id="schemaBtn" title="View Schema">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                </button>
+                <button class="icon-btn" id="settingsBtn" title="Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="main-container">
+            <!-- Left Sidebar - Conversation History -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-header">
+                    <button class="new-chat-btn" id="newChatBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New Chat
+                    </button>
+                </div>
+                <div class="conversation-list" id="conversationList">
+                    <!-- Conversations will be populated here -->
+                </div>
+            </aside>
+
+            <!-- Main Chat Area -->
+            <main class="chat-area">
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Welcome message -->
+                    <div class="welcome-message" id="welcomeMessage">
+                        <div class="welcome-logo">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                            </svg>
+                        </div>
+                        <h1>How can I help you today?</h1>
+                        <p>Ask me questions about your database in natural language, and I'll generate SQL for you.</p>
+                        <div class="example-prompts">
+                            <button class="example-prompt" data-prompt="Show me all customers who made a purchase this month">
+                                Show me all customers who made a purchase this month
+                            </button>
+                            <button class="example-prompt" data-prompt="Count the total orders grouped by status">
+                                Count the total orders grouped by status
+                            </button>
+                            <button class="example-prompt" data-prompt="List the top 10 products by revenue">
+                                List the top 10 products by revenue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="input-area">
+                    <div class="input-container">
+                        <div class="input-options">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="executeCheckbox">
+                                <span>Execute SQL</span>
+                            </label>
+                        </div>
+                        <div class="input-wrapper">
+                            <textarea 
+                                id="promptInput" 
+                                placeholder="Ask me about your database..."
+                                rows="1"
+                                autofocus
+                            ></textarea>
+                            <button class="send-btn" id="sendBtn" disabled>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="input-footer">
+                            <span class="hint">Press Enter to send, Shift+Enter for new line</span>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Schema Modal -->
+        <div class="modal" id="schemaModal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h2>Database Schema</h2>
+                    <button class="modal-close" id="schemaModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="schema-content" id="schemaContent">
+                        Loading schema...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

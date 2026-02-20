@@ -1,7 +1,7 @@
 """
-DaiBai API Module (Future).
-
-This module will contain the REST API server for GUI support.
+DaiBai API module - REST API and WebSocket endpoints.
 """
 
-# Placeholder for future API implementation
+from .server import app, run_server
+
+__all__ = ["app", "run_server"]
