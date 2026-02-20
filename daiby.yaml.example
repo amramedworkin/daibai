@@ -1,0 +1,75 @@
+# Daiby Configuration Example
+# Copy this file to daiby.yaml and fill in your settings
+
+# LLM Provider Configuration
+llm:
+  # Default provider to use
+  default: gemini
+  
+  providers:
+    # Google Gemini
+    gemini:
+      type: gemini
+      model: gemini-2.5-pro
+      api_key: ${GEMINI_API_KEY}
+      temperature: 0.7
+    
+    # OpenAI GPT
+    openai:
+      type: openai
+      model: gpt-4o
+      api_key: ${OPENAI_API_KEY}
+      organization: ${OPENAI_ORG}  # Optional
+    
+    # Azure OpenAI
+    azure:
+      type: azure
+      deployment: my-gpt4-deployment
+      endpoint: https://myresource.openai.azure.com
+      api_key: ${AZURE_OPENAI_KEY}
+      api_version: "2024-02-01"
+    
+    # Anthropic Claude
+    anthropic:
+      type: anthropic
+      model: claude-3-5-sonnet-20241022
+      api_key: ${ANTHROPIC_API_KEY}
+      max_tokens: 4096
+    
+    # Local Ollama (no API key needed)
+    ollama:
+      type: ollama
+      model: codellama:13b
+      host: http://localhost:11434
+
+# Database Configuration
+databases:
+  # Default database
+  default: production
+  
+  production:
+    host: ${DB_PROD_HOST}
+    port: 3306
+    name: myapp
+    user: ${DB_PROD_USER}
+    password: ${DB_PROD_PASSWORD}
+    ssl: false
+  
+  staging:
+    host: localhost
+    port: 3306
+    name: staging_db
+    user: ${DB_STAGING_USER}
+    password: ${DB_STAGING_PASSWORD}
+  
+  development:
+    host: localhost
+    port: 3306
+    name: dev_db
+    user: root
+    password: ${DB_DEV_PASSWORD}
+
+# Optional settings
+clipboard: true
+exports_dir: ~/.daiby/exports
+memory_dir: ~/.daiby/memory
