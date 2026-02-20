@@ -32,6 +32,7 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 
 ## Table of Contents
 
+- [Architecture](#architecture)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Interactive Chat Interface](#interactive-chat-interface)
@@ -43,6 +44,118 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 - [Development](#development)
 - [Resources](#resources)
 - [License](#license)
+
+---
+
+## Architecture
+
+DaiBai uses a modular architecture that separates concerns into distinct layers.
+
+### System Overview
+
+```mermaid
+flowchart LR
+    subgraph User["👤 User"]
+        CLI["CLI / Chat"]
+        Query["Natural Language Query"]
+    end
+
+    subgraph DaiBai["🧠 DaiBai Core"]
+        Config["Configuration<br/>daibai.yaml + .env"]
+        Agent["DaiBai Agent"]
+        
+        subgraph Processing["Processing Pipeline"]
+            Schema["Schema Context"]
+            Prompt["Prompt Builder"]
+            Parser["SQL Parser"]
+        end
+    end
+
+    subgraph External["🌐 External Services"]
+        LLM["LLM Provider<br/>(Gemini, OpenAI, etc.)"]
+        DB["Database<br/>(MySQL, PostgreSQL)"]
+    end
+
+    Query --> Agent
+    Config --> Agent
+    Agent --> Schema
+    Schema --> Prompt
+    Prompt --> LLM
+    LLM --> Parser
+    Parser --> Agent
+    Agent --> DB
+    DB --> Agent
+    Agent --> CLI
+```
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as CLI
+    participant A as DaiBai Agent
+    participant L as LLM Provider
+    participant D as Database
+
+    U->>C: "Show me all active customers"
+    C->>A: Process query
+    A->>A: Load schema from cache
+    A->>A: Build prompt with schema context
+    A->>L: Send prompt
+    L->>A: Return SQL
+    A->>C: Display generated SQL
+    
+    alt User requests execution
+        C->>A: Execute SQL
+        A->>D: Run query
+        D->>A: Return results
+        A->>C: Format as table
+        C->>U: Display results
+    end
+```
+
+### Module Structure
+
+```mermaid
+graph TB
+    subgraph Package["daibai/"]
+        subgraph core["core/"]
+            config["config.py<br/>Configuration loading"]
+            agent["agent.py<br/>Main orchestration"]
+        end
+        
+        subgraph llm["llm/"]
+            base["base.py<br/>Abstract provider"]
+            gemini["gemini.py"]
+            openai_p["openai_provider.py"]
+            azure["azure.py"]
+            anthropic_p["anthropic_provider.py"]
+            ollama_p["ollama.py"]
+        end
+        
+        subgraph cli["cli/"]
+            chat["chat.py<br/>Interactive REPL"]
+        end
+        
+        subgraph training["training/"]
+            trainer["trainer.py<br/>Schema indexing"]
+        end
+        
+        subgraph future["(Future)"]
+            api["api/<br/>REST endpoints"]
+            gui["gui/<br/>Web interface"]
+        end
+    end
+
+    config --> agent
+    agent --> base
+    base --> gemini & openai_p & azure & anthropic_p & ollama_p
+    chat --> agent
+    trainer --> agent
+```
+
+---
 
 ## Installation
 
@@ -555,40 +668,48 @@ A web-based user interface is planned for future releases.
 
 ### Architecture Preview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         DAIBAI WEB UI                                │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
-│  │  Query Input  │  │  Schema Tree  │  │   Results / Charts    │   │
-│  └───────────────┘  └───────────────┘  └───────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       DAIBAI API SERVER                              │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
-│  │   REST API    │  │   WebSocket   │  │   Session Manager     │   │
-│  └───────────────┘  └───────────────┘  └───────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          DAIBAI CORE                                 │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────┐   │
-│  │  LLM Manager  │  │   DB Manager  │  │    Schema Cache       │   │
-│  └───────┬───────┘  └───────┬───────┘  └───────────────────────┘   │
-└──────────┼──────────────────┼───────────────────────────────────────┘
-           │                  │
-           ▼                  ▼
-┌──────────────────┐  ┌──────────────────┐
-│  LLM PROVIDERS   │  │    DATABASES     │
-├──────────────────┤  ├──────────────────┤
-│  • Gemini        │  │  • MySQL         │
-│  • OpenAI        │  │  • PostgreSQL    │
-│  • Azure         │  │  • SQLite        │
-│  • Anthropic     │  │                  │
-│  • Ollama        │  │                  │
-└──────────────────┘  └──────────────────┘
+```mermaid
+flowchart TB
+    subgraph UI["🖥️ DAIBAI WEB UI"]
+        QueryInput["Query Input"]
+        SchemaTree["Schema Tree"]
+        Results["Results / Charts"]
+    end
+
+    subgraph API["⚡ DAIBAI API SERVER"]
+        REST["REST API"]
+        WebSocket["WebSocket"]
+        Sessions["Session Manager"]
+    end
+
+    subgraph Core["🧠 DAIBAI CORE"]
+        Agent["DaiBai Agent"]
+        LLMManager["LLM Manager"]
+        DBManager["DB Manager"]
+        SchemaCache["Schema Cache"]
+    end
+
+    subgraph LLMs["🤖 LLM PROVIDERS"]
+        Gemini["Gemini"]
+        OpenAI["OpenAI"]
+        Azure["Azure OpenAI"]
+        Anthropic["Anthropic"]
+        Ollama["Ollama"]
+    end
+
+    subgraph DBs["🗄️ DATABASES"]
+        MySQL["MySQL"]
+        PostgreSQL["PostgreSQL"]
+        SQLite["SQLite"]
+    end
+
+    UI --> API
+    API --> Core
+    Agent --> LLMManager
+    Agent --> DBManager
+    Agent --> SchemaCache
+    LLMManager --> LLMs
+    DBManager --> DBs
 ```
 
 ### Running the UI (Future)
