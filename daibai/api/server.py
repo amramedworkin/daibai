@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
@@ -63,6 +63,7 @@ class QueryResponse(BaseModel):
 class SettingsResponse(BaseModel):
     databases: List[str]
     llm_providers: List[str]
+    llm_provider_configs: Optional[Dict[str, Dict[str, Any]]] = None
     modes: List[str]
     current_database: Optional[str]
     current_llm: Optional[str]
@@ -73,6 +74,16 @@ class SettingsUpdate(BaseModel):
     database: Optional[str] = None
     llm: Optional[str] = None
     mode: Optional[str] = None
+
+
+class ConfigUpdate(BaseModel):
+    """Nested config matching daibai.yaml structure for future-proofing."""
+    account: Optional[Dict[str, Any]] = None
+    llm: Optional[Dict[str, Any]] = None
+    llm_providers: Optional[Dict[str, Dict[str, Any]]] = None
+    databases: Optional[Dict[str, Any]] = None
+    preferences: Optional[Dict[str, Any]] = None
+    data_privacy: Optional[Dict[str, Any]] = None
 
 
 class ConversationSummary(BaseModel):
@@ -102,6 +113,7 @@ async def get_settings():
     return SettingsResponse(
         databases=config.list_databases(),
         llm_providers=config.list_llm_providers(),
+        llm_provider_configs=config.get_llm_provider_configs_for_ui(),
         modes=["sql", "ddl", "crud"],
         current_database=agent.current_database,
         current_llm=agent.current_llm,
@@ -120,6 +132,21 @@ async def update_settings(settings: SettingsUpdate):
         agent.switch_llm(settings.llm)
     
     return {"status": "ok"}
+
+
+@app.put("/api/config")
+async def update_config(config: ConfigUpdate):
+    """Update config (nested JSON matching daibai.yaml structure).
+    Frontend sends complete object; backend persists when Stripe/user storage is ready."""
+    # TODO: Persist to user storage / Stripe when auth is implemented
+    return {"status": "ok"}
+
+
+@app.post("/api/test-llm")
+async def test_llm_connection(body: Dict[str, Any] = Body(default={})):
+    """Test LLM provider connectivity. Returns success/error."""
+    # TODO: Implement actual connectivity test per provider
+    return {"success": True, "message": "Connection test not yet implemented"}
 
 
 @app.get("/api/conversations", response_model=List[ConversationSummary])

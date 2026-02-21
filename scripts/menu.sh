@@ -9,14 +9,11 @@
 # --- Paths & Files ---
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
-VENV_DIR="$PROJECT_DIR/.venv"
-DAIBAI_DATA_DIR="${DAIBAI_DATA_DIR:-$HOME/.daibai}"
-DAIBAI_PID_FILE="$DAIBAI_DATA_DIR/daibai-server.pid"
-DAIBAI_LOG_FILE="$DAIBAI_DATA_DIR/daibai-server.log"
 
-# Source common utilities (colors, menu helpers, status)
+# Source common utilities (colors, menu helpers, status, actions)
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/status.sh"
+source "$SCRIPT_DIR/lib/actions.sh"
 
 # --- Menu Header ---
 show_header() {
@@ -28,83 +25,17 @@ show_header() {
     echo ""
 }
 
-# --- Run with venv if present ---
-run_daibai() {
-    if [[ -f "$VENV_DIR/bin/daibai" ]]; then
-        "$VENV_DIR/bin/daibai" "$@"
-    else
-        daibai "$@"
-    fi
-}
-
-run_daibai_server() {
-    if [[ -f "$VENV_DIR/bin/daibai-server" ]]; then
-        "$VENV_DIR/bin/daibai-server" "$@"
-    else
-        daibai-server "$@"
-    fi
-}
-
-run_daibai_train() {
-    if [[ -f "$VENV_DIR/bin/daibai-train" ]]; then
-        "$VENV_DIR/bin/daibai-train" "$@"
-    else
-        daibai-train "$@"
-    fi
-}
-
-# --- Start chat service in background ---
-start_chat_service_background() {
-    mkdir -p "$DAIBAI_DATA_DIR"
-
+# --- Toggle start/stop chat service from main menu ---
+handle_start_stop_chat_service() {
+    clear
     if chat_service_is_running; then
-        echo -e "${YELLOW}Chat service is already running at http://localhost:${DAIBAI_PORT:-8080}${NC}"
-        return 0
-    fi
-
-    echo -e "${CYAN}Starting DaiBai web server in background...${NC}"
-    run_daibai_server >> "$DAIBAI_LOG_FILE" 2>&1 &
-    local pid=$!
-    echo "$pid" > "$DAIBAI_PID_FILE"
-    echo -e "${DIM}PID: $pid  Log: $DAIBAI_LOG_FILE${NC}"
-    echo ""
-
-    echo -n "  Checking"
-    local max_seconds=15
-    local elapsed=0
-    while ! chat_service_is_running; do
-        echo -n "."
-        sleep 1
-        elapsed=$((elapsed + 1))
-        if [[ $elapsed -ge $max_seconds ]]; then
-            echo ""
-            echo -e "${RED}Server failed to start within ${max_seconds} seconds.${NC}"
-            echo -e "${DIM}Check log: $DAIBAI_LOG_FILE${NC}"
-            rm -f "$DAIBAI_PID_FILE"
-            return 1
-        fi
-    done
-    echo -e " ${GREEN}ok${NC}"
-    echo -e "${GREEN}Server started at http://localhost:${DAIBAI_PORT:-8080}${NC}"
-    return 0
-}
-
-# --- Stop chat service (if we started it) ---
-stop_chat_service() {
-    if [[ -f "$DAIBAI_PID_FILE" ]]; then
-        local pid
-        pid=$(cat "$DAIBAI_PID_FILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null
-            echo -e "${GREEN}Stopped chat service (PID $pid)${NC}"
-        else
-            echo -e "${YELLOW}Process $pid not running${NC}"
-        fi
-        rm -f "$DAIBAI_PID_FILE"
+        stop_chat_service
     else
-        echo -e "${YELLOW}No PID file. Server may have been started outside this menu.${NC}"
-        echo -e "${DIM}To stop, find the process: pgrep -f daibai-server${NC}"
+        start_chat_service_background
     fi
+    echo ""
+    echo "Press Enter to continue..."
+    read -r
 }
 
 # =============================================================================
@@ -123,6 +54,8 @@ show_main_menu() {
         "single-query mode, daibai-train"
     print_submenu_option "4" "Support & Utilities" \
         "config, docs, environment"
+    echo ""
+    print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle)${NC}"
     echo ""
     print_action_option "0" "Exit"
     echo ""
@@ -330,6 +263,8 @@ show_support_menu() {
     print_action_option "4" "Open Azure Deployment Guide ${YELLOW}${DIM}(docs/AZURE_GUIDE.md)${NC}"
     print_submenu_option "5" "Environment" \
         "check .env, preferences"
+    print_action_option "6" "CLI Usage ${YELLOW}${DIM}(scripts/cli.sh)${NC}"
+    print_action_option "7" "Quick Commit & Push ${YELLOW}${DIM}(gitqik.sh)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -408,6 +343,38 @@ handle_support_menu() {
                 ;;
             5)
                 handle_support_env_menu
+                ;;
+            6)
+                clear
+                "$SCRIPT_DIR/cli.sh" help
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            7)
+                clear
+                echo -e "${CYAN}Quick Commit & Push${NC}"
+                echo ""
+                echo "This will: pull → add -A → commit → push"
+                echo ""
+                echo -e "${BOLD}Current changes:${NC}"
+                git status -s 2>/dev/null || echo "  (no changes)"
+                echo ""
+                echo -n "Enter commit message (or 'c' to cancel): "
+                read -r commit_msg
+                if [[ "$commit_msg" == "c" ]] || [[ -z "$commit_msg" ]]; then
+                    echo -e "${YELLOW}Cancelled${NC}"
+                elif [[ ! -x "$HOME/.local/bin/gitqik.sh" ]]; then
+                    echo -e "${YELLOW}gitqik.sh not found at ~/.local/bin/gitqik.sh${NC}"
+                else
+                    echo ""
+                    echo -e "${CYAN}Running gitqik.sh...${NC}"
+                    echo ""
+                    "$HOME/.local/bin/gitqik.sh" "$commit_msg"
+                fi
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
                 ;;
             0) return ;;
             *) ;;
@@ -488,6 +455,7 @@ while true; do
         2) handle_interactive_cli_menu ;;
         3) handle_command_line_menu ;;
         4) handle_support_menu ;;
+        s|S) handle_start_stop_chat_service ;;
         0)
             echo ""
             echo -e "${BLUE}Exiting.${NC}"

@@ -62,8 +62,15 @@ anthropic = [
 ollama = [
     "ollama>=0.2.0",
 ]
+# OpenAI-compatible providers (Groq, DeepSeek, Mistral, Nvidia, Alibaba, Meta) use openai SDK
+groq = ["openai>=1.0.0"]
+deepseek = ["openai>=1.0.0"]
+mistral = ["openai>=1.0.0"]
+nvidia = ["openai>=1.0.0"]
+alibaba = ["openai>=1.0.0"]
+meta = ["openai>=1.0.0"]
 all = [
-    "daibai[gemini,openai,azure,anthropic,ollama]",
+    "daibai[gemini,openai,azure,anthropic,ollama,groq,deepseek,mistral,nvidia,alibaba,meta]",
 ]
 gui = [
     "fastapi>=0.100.0",

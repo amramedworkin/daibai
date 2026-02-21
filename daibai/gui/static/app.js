@@ -2,6 +2,39 @@
  * DaiBai GUI - Main Application JavaScript
  */
 
+// Supported LLM providers (order for display)
+const SUPPORTED_LLM_PROVIDERS = [
+    'ollama', 'openai', 'anthropic', 'gemini', 'azure',
+    'groq', 'deepseek', 'mistral', 'nvidia', 'alibaba', 'meta'
+];
+
+// UI Templates for settings modal (switch/case logic)
+const LLM_TEMPLATES = {
+    ollama: { label: 'Ollama', fields: ['endpoint'], endpointDefault: 'http://localhost:11434', needsApiKey: false },
+    openai: { label: 'OpenAI', fields: ['api_key', 'model'], needsApiKey: true },
+    anthropic: { label: 'Anthropic', fields: ['api_key', 'model'], needsApiKey: true },
+    gemini: { label: 'Google Gemini', fields: ['api_key', 'model'], needsApiKey: true },
+    azure: { label: 'Azure OpenAI', fields: ['api_key', 'endpoint', 'deployment'], needsApiKey: true },
+    groq: { label: 'Groq', fields: ['api_key', 'model'], needsApiKey: true },
+    deepseek: { label: 'DeepSeek', fields: ['api_key', 'model'], needsApiKey: true },
+    mistral: { label: 'Mistral AI', fields: ['api_key', 'model'], needsApiKey: true },
+    nvidia: { label: 'Nvidia NIM', fields: ['api_key', 'model'], needsApiKey: true },
+    alibaba: { label: 'Alibaba Cloud', fields: ['api_key', 'model', 'endpoint'], needsApiKey: true, endpointDefault: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' },
+    meta: { label: 'Meta (Llama)', fields: ['api_key', 'model', 'endpoint'], needsApiKey: true }
+};
+
+const DB_TEMPLATES = {
+    mysql: { fields: ['host', 'port', 'user', 'password', 'database'], defaultPort: 3306 },
+    postgres: { fields: ['host', 'port', 'user', 'password', 'database'], defaultPort: 5432 },
+    oracle: { fields: ['host', 'port', 'service_name', 'user', 'password'], defaultPort: 1521 },
+    sqlserver: { fields: ['host', 'port', 'user', 'password', 'database'], defaultPort: 1433 }
+};
+
+const CLOUD_PROVIDERS = {
+    aws: { fields: ['region', 'secret_arn'] },
+    azure: { fields: ['region', 'instance'] }
+};
+
 class DaiBaiApp {
     constructor() {
         this.conversationId = null;
@@ -111,6 +144,12 @@ class DaiBaiApp {
         this.schemaModal = document.getElementById('schemaModal');
         this.schemaModalClose = document.getElementById('schemaModalClose');
         this.schemaContent = document.getElementById('schemaContent');
+        this.settingsBtn = document.getElementById('settingsBtn');
+        this.settingsModal = document.getElementById('settingsModal');
+        this.settingsModalClose = document.getElementById('settingsModalClose');
+        this.settingsContent = document.getElementById('settingsContent');
+        this.settingsSave = document.getElementById('settingsSave');
+        this.settingsCancel = document.getElementById('settingsCancel');
         
         // Sidebar
         this.newChatBtn = document.getElementById('newChatBtn');
@@ -154,6 +193,38 @@ class DaiBaiApp {
             if (e.target === this.schemaModal) {
                 this.schemaModal.classList.remove('active');
             }
+        });
+
+        // Settings modal
+        if (this.settingsBtn) {
+            this.settingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.showSettings();
+            });
+        }
+        this.settingsModalClose.addEventListener('click', () => this.closeSettings());
+        this.settingsCancel.addEventListener('click', () => this.closeSettings());
+        this.settingsSave.addEventListener('click', () => this.saveSettings());
+        this.settingsModal.addEventListener('click', (e) => {
+            if (e.target === this.settingsModal) this.closeSettings();
+            const navItem = e.target.closest('.settings-nav-item');
+            if (navItem && this.settingsActiveTab === 'llm_providers') {
+                const provider = navItem.dataset.provider;
+                if (!provider) return;
+                const main = document.getElementById('settingsLLMMain');
+                const selected = this.settingsState?.selected_llm_provider;
+                if (selected && main) {
+                    this.settingsState.llm_providers = this.settingsState.llm_providers || {};
+                    this.settingsState.llm_providers[selected] = this.readLLMFormValues();
+                }
+                this.settingsState.selected_llm_provider = provider;
+                this.settingsModal.querySelectorAll('.settings-nav-item').forEach(n => n.classList.toggle('active', n.dataset.provider === provider));
+                if (main) main.innerHTML = this.renderLLMProviderForm(provider, this.settingsState?.llm_providers?.[provider] || {});
+                this.bindSettingsDynamicHandlers();
+            }
+        });
+        this.settingsModal.querySelectorAll('.settings-tab').forEach(tab => {
+            tab.addEventListener('click', () => this.switchSettingsTab(tab.dataset.tab));
         });
         
         // New chat
@@ -676,6 +747,459 @@ class DaiBaiApp {
             this.schemaContent.textContent = data.schema || 'No schema available';
         } catch (error) {
             this.schemaContent.textContent = 'Failed to load schema: ' + error.message;
+        }
+    }
+
+    async showSettings() {
+        if (!this.settingsModal) return;
+        this.settingsActiveTab = this.settingsActiveTab || 'account';
+        try {
+            this.settingsState = await this.loadSettingsState();
+        } catch (e) {
+            this.settingsState = {};
+        }
+        this.settingsModal.classList.add('active');
+        this.renderSettingsContent(this.settingsActiveTab);
+        this.settingsModal.querySelectorAll('.settings-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === this.settingsActiveTab);
+        });
+    }
+
+    async loadSettingsState() {
+        try {
+            const [settingsRes, prefs] = await Promise.all([
+                fetch('/api/settings'),
+                Promise.resolve(JSON.parse(localStorage.getItem('daibai_preferences') || '{}'))
+            ]);
+            const settings = await settingsRes.json();
+            const configured = settings.llm_providers || [];
+            const apiConfigs = settings.llm_provider_configs || {};
+            const llm_providers = {};
+            for (const p of SUPPORTED_LLM_PROVIDERS) {
+                const c = apiConfigs[p];
+                llm_providers[p] = c ? { api_key: c.api_key, model: c.model, endpoint: c.endpoint, deployment: c.deployment } : {};
+            }
+            return {
+                account: { email: '', user_id: '', plan: 'Free' },
+                llm: { provider: settings.current_llm || 'gemini' },
+                configured_llm_providers: configured,
+                llm_providers,
+                selected_llm_provider: configured[0] || SUPPORTED_LLM_PROVIDERS[0],
+                databases: { type: 'mysql', hostType: 'local', current: settings.current_database },
+                data_privacy: { save_history: true, query_caching: false },
+                preferences: { theme: 'system', auto_charts: false, ...prefs }
+            };
+        } catch (e) {
+            return {};
+        }
+    }
+
+    closeSettings() {
+        this.settingsModal.classList.remove('active');
+    }
+
+    switchSettingsTab(tabId) {
+        this.settingsActiveTab = tabId;
+        this.settingsModal.querySelectorAll('.settings-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === tabId);
+        });
+        this.renderSettingsContent(tabId);
+    }
+
+    renderSettingsContent(tabId) {
+        const content = this.settingsContent;
+        switch (tabId) {
+            case 'account':
+                content.innerHTML = this.renderAccountTab();
+                break;
+            case 'llm_providers':
+                content.innerHTML = this.renderLLMProvidersTab();
+                break;
+            case 'databases':
+                content.innerHTML = this.renderDatabaseConnectionsTab();
+                break;
+            case 'data':
+                content.innerHTML = this.renderDataPrivacyTab();
+                break;
+            case 'preferences':
+                content.innerHTML = this.renderPreferencesTab();
+                break;
+            default:
+                content.innerHTML = '';
+        }
+        this.bindSettingsDynamicHandlers();
+    }
+
+    renderAccountTab() {
+        const auth = this.settingsState?.account || {};
+        return `
+            <div class="settings-group">
+                <div class="settings-group-title">User Identity</div>
+                <div class="settings-field">
+                    <label>Email</label>
+                    <input type="text" id="settingsEmail" value="${this.escapeHtml(auth.email || '')}" placeholder="Not signed in" readonly>
+                </div>
+                <div class="settings-field">
+                    <label>User ID</label>
+                    <input type="text" id="settingsUserId" value="${this.escapeHtml(auth.user_id || '')}" placeholder="—" readonly>
+                </div>
+            </div>
+            <div class="settings-group">
+                <div class="settings-group-title">Plan Management</div>
+                <div class="settings-field">
+                    <label>Current Plan</label>
+                    <input type="text" id="settingsPlan" value="${this.escapeHtml(auth.plan || 'Free')}" readonly>
+                </div>
+            </div>
+            <div class="settings-group">
+                <div class="settings-group-title">Billing</div>
+                <button class="btn-secondary" id="settingsManageSubscription">Manage Subscription</button>
+            </div>
+        `;
+    }
+
+    renderLLMProvidersTab() {
+        const configured = this.settingsState?.configured_llm_providers || [];
+        const providers = this.settingsState?.llm_providers || {};
+        const selected = this.settingsState?.selected_llm_provider || (configured[0] || SUPPORTED_LLM_PROVIDERS[0]);
+        const navItems = SUPPORTED_LLM_PROVIDERS.map(p => {
+            const isPopulated = configured.includes(p);
+            const isActive = p === selected;
+            const label = (LLM_TEMPLATES[p] || {}).label || p.charAt(0).toUpperCase() + p.slice(1);
+            return `<button type="button" class="settings-nav-item ${isActive ? 'active' : ''}" data-provider="${p}">
+                <span class="status-dot ${isPopulated ? 'populated' : 'empty'}">${isPopulated ? '●' : '○'}</span>
+                <span>${this.escapeHtml(label)}</span>
+            </button>`;
+        }).join('');
+        const formHtml = this.renderLLMProviderForm(selected, providers[selected] || {});
+        return `
+            <div class="settings-split">
+                <nav class="settings-nav">
+                    <div class="settings-group-title" style="padding:0 16px 8px;margin-bottom:0">Provider</div>
+                    ${navItems}
+                </nav>
+                <div class="settings-main" id="settingsLLMMain">
+                    ${formHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    renderLLMProviderForm(provider, values = {}) {
+        const t = LLM_TEMPLATES[provider] || LLM_TEMPLATES.gemini;
+        const label = t.label || provider.charAt(0).toUpperCase() + provider.slice(1);
+        let connectivityHtml = '';
+        if (t.endpointDefault !== undefined) {
+            connectivityHtml += `<div class="settings-field"><label>Endpoint URL</label><input type="url" id="settingsLLMEndpoint" value="${this.escapeHtml(values.endpoint || t.endpointDefault)}"></div>`;
+        }
+        if (t.needsApiKey) {
+            connectivityHtml += `<div class="settings-field"><label>API Key</label><input type="password" id="settingsLLMApiKey" value="${this.escapeHtml(values.api_key || '')}" placeholder="••••••••"></div>`;
+        }
+        if (t.fields.includes('deployment')) {
+            connectivityHtml += `<div class="settings-field"><label>Deployment</label><input type="text" id="settingsLLMDeployment" value="${this.escapeHtml(values.deployment || '')}" placeholder="deployment name"></div>`;
+        }
+        const modelSection = t.fields.includes('model') ? `
+            <div class="settings-group">
+                <div class="settings-group-title">Model & Behavior</div>
+                <div class="settings-field">
+                    <label>Default Model</label>
+                    <input type="text" id="settingsLLMModel" value="${this.escapeHtml(values.model || '')}" placeholder="e.g. gpt-4o, gemini-2.5-pro">
+                </div>
+            </div>
+        ` : '';
+        return `
+            <input type="hidden" id="settingsLLMProvider" value="${this.escapeHtml(provider)}">
+            <div class="settings-group">
+                <div class="settings-group-title">Connectivity</div>
+                ${connectivityHtml}
+            </div>
+            ${modelSection}
+            <button type="button" class="btn-secondary" id="settingsLLMTest">Test Connection</button>
+        `;
+    }
+
+    renderDatabaseConnectionsTab() {
+        const db = this.settingsState?.databases || { type: 'mysql', hostType: 'local' };
+        const dbOptions = ['mysql', 'postgres', 'oracle', 'sqlserver'];
+        const dbHtml = this.renderDBTemplate(db.type || 'mysql', db.hostType || 'local', db.cloudProvider || 'aws', db);
+        return `
+            <div class="settings-group">
+                <div class="settings-group-title">Database Type</div>
+                <div class="settings-field">
+                    <label>Type</label>
+                    <select id="settingsDBType">
+                        ${dbOptions.map(d => `<option value="${d}" ${(db.type || 'mysql') === d ? 'selected' : ''}>${d.charAt(0).toUpperCase() + d.slice(1)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="settings-field">
+                    <label>Host Type</label>
+                    <select id="settingsHostType">
+                        <option value="local" ${(db.hostType || 'local') === 'local' ? 'selected' : ''}>Local</option>
+                        <option value="cloud" ${(db.hostType || 'local') === 'cloud' ? 'selected' : ''}>Cloud</option>
+                    </select>
+                </div>
+                <div id="settingsDBCloudProvider" style="${(db.hostType || 'local') === 'cloud' ? '' : 'display:none'}">
+                    <div class="settings-field">
+                        <label>Cloud Provider</label>
+                        <select id="settingsCloudProvider">
+                            <option value="aws" ${(db.cloudProvider || 'aws') === 'aws' ? 'selected' : ''}>AWS</option>
+                            <option value="azure" ${(db.cloudProvider || 'aws') === 'azure' ? 'selected' : ''}>Azure</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="settingsDBDynamicFields">${dbHtml}</div>
+            </div>
+        `;
+    }
+
+    renderLLMTemplate(provider, values = {}) {
+        const t = LLM_TEMPLATES[provider] || LLM_TEMPLATES.gemini;
+        let html = '';
+        if (t.endpointDefault !== undefined) {
+            html += `<div class="settings-field"><label>Endpoint URL</label><input type="url" id="settingsLLMEndpoint" value="${this.escapeHtml(values.endpoint || t.endpointDefault)}"></div>`;
+        }
+        if (t.needsApiKey) {
+            html += `<div class="settings-field"><label>API Key</label><input type="password" id="settingsLLMApiKey" value="${this.escapeHtml(values.api_key || '')}" placeholder="••••••••"></div>`;
+            html += `<div class="settings-field"><label>Model Version</label><input type="text" id="settingsLLMModel" value="${this.escapeHtml(values.model || '')}" placeholder="e.g. gpt-4o"></div>`;
+        }
+        return html || '';
+    }
+
+    renderDBTemplate(dbType, hostType, cloudProvider, values = {}) {
+        const t = DB_TEMPLATES[dbType] || DB_TEMPLATES.mysql;
+        const port = values.port || t.defaultPort || 3306;
+        let html = '';
+        if (hostType === 'cloud') {
+            const cloud = CLOUD_PROVIDERS[cloudProvider] || CLOUD_PROVIDERS.aws;
+            cloud.fields.forEach(f => {
+                const val = values[f] || '';
+                html += `<div class="settings-field"><label>${f.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</label><input type="text" id="settingsDB${f}" value="${this.escapeHtml(val)}"></div>`;
+            });
+        } else {
+            t.fields.forEach(f => {
+                const val = values[f] || (f === 'port' ? port : '');
+                const inputType = f === 'password' ? 'password' : 'text';
+                html += `<div class="settings-field"><label>${f.charAt(0).toUpperCase() + f.slice(1).replace(/_/g, ' ')}</label><input type="${inputType}" id="settingsDB${f}" value="${this.escapeHtml(val)}" ${f === 'port' ? `placeholder="${port}"` : ''}></div>`;
+            });
+        }
+        return html;
+    }
+
+    renderDataPrivacyTab() {
+        const data = this.settingsState?.data_privacy || {};
+        return `
+            <div class="settings-group">
+                <div class="settings-group-title">History Control</div>
+                <div class="settings-toggle">
+                    <label>Save Session History</label>
+                    <input type="checkbox" id="settingsSaveHistory" ${(data.save_history !== false) ? 'checked' : ''}>
+                </div>
+                <button class="btn-danger" id="settingsClearConversations">Clear All Conversations</button>
+            </div>
+            <div class="settings-group">
+                <div class="settings-group-title">RAG & Caching</div>
+                <div class="settings-toggle">
+                    <label>Semantic Query Caching</label>
+                    <input type="checkbox" id="settingsQueryCaching" ${(data.query_caching === true) ? 'checked' : ''}>
+                </div>
+                <button class="btn-secondary" id="settingsIndexRefresh" style="margin-top:12px">Index Refresh</button>
+            </div>
+        `;
+    }
+
+    renderPreferencesTab() {
+        const prefs = this.settingsState?.preferences || {};
+        return `
+            <div class="settings-group">
+                <div class="settings-group-title">Appearance</div>
+                <div class="settings-field">
+                    <label>Theme</label>
+                    <select id="settingsTheme">
+                        <option value="light" ${(prefs.theme || 'system') === 'light' ? 'selected' : ''}>Light</option>
+                        <option value="dark" ${(prefs.theme || 'system') === 'dark' ? 'selected' : ''}>Dark</option>
+                        <option value="system" ${(prefs.theme || 'system') === 'system' ? 'selected' : ''}>System</option>
+                    </select>
+                </div>
+            </div>
+            <div class="settings-group">
+                <div class="settings-group-title">Output Default</div>
+                <div class="settings-toggle">
+                    <label>Auto-generate Charts</label>
+                    <input type="checkbox" id="settingsAutoCharts" ${(prefs.auto_charts === true) ? 'checked' : ''}>
+                </div>
+                <div class="settings-field" style="margin-top:8px">
+                    <span class="hint">When unchecked, output is raw data only</span>
+                </div>
+            </div>
+        `;
+    }
+
+    readLLMFormValues() {
+        const getVal = id => document.getElementById(id)?.value ?? '';
+        return {
+            endpoint: getVal('settingsLLMEndpoint'),
+            api_key: getVal('settingsLLMApiKey'),
+            model: getVal('settingsLLMModel'),
+            deployment: getVal('settingsLLMDeployment')
+        };
+    }
+
+    bindSettingsDynamicHandlers() {
+        const testBtn = document.getElementById('settingsLLMTest');
+        if (testBtn) {
+            testBtn.onclick = () => this.testLLMConnection();
+        }
+        const dbTypeSelect = document.getElementById('settingsDBType');
+        const hostTypeSelect = document.getElementById('settingsDBHostType') || document.getElementById('settingsHostType');
+        const cloudProviderSelect = document.getElementById('settingsCloudProvider');
+        const cloudDiv = document.getElementById('settingsDBCloudProvider');
+        const dbFieldsDiv = document.getElementById('settingsDBDynamicFields');
+        if (hostTypeSelect) {
+            hostTypeSelect.onchange = () => {
+                const isCloud = hostTypeSelect.value === 'cloud';
+                if (cloudDiv) cloudDiv.style.display = isCloud ? '' : 'none';
+                if (dbFieldsDiv) dbFieldsDiv.innerHTML = this.renderDBTemplate(dbTypeSelect?.value || 'mysql', hostTypeSelect.value, cloudProviderSelect?.value || 'aws', {});
+            };
+        }
+        if (dbTypeSelect && dbFieldsDiv) {
+            dbTypeSelect.onchange = () => {
+                dbFieldsDiv.innerHTML = this.renderDBTemplate(dbTypeSelect.value, hostTypeSelect?.value || 'local', cloudProviderSelect?.value || 'aws', {});
+            };
+        }
+        if (cloudProviderSelect && dbFieldsDiv) {
+            cloudProviderSelect.onchange = () => {
+                dbFieldsDiv.innerHTML = this.renderDBTemplate(dbTypeSelect?.value || 'mysql', 'cloud', cloudProviderSelect.value, {});
+            };
+        }
+        const clearBtn = document.getElementById('settingsClearConversations');
+        if (clearBtn) {
+            clearBtn.onclick = () => this.clearAllConversations();
+        }
+        const indexBtn = document.getElementById('settingsIndexRefresh');
+        if (indexBtn) {
+            indexBtn.onclick = () => this.refreshIndex();
+        }
+        const manageBtn = document.getElementById('settingsManageSubscription');
+        if (manageBtn) {
+            manageBtn.onclick = () => this.openStripePortal();
+        }
+    }
+
+    async clearAllConversations() {
+        if (!confirm('Clear all conversations? This cannot be undone.')) return;
+        try {
+            const response = await fetch('/api/conversations');
+            const conversations = await response.json();
+            for (const c of conversations) {
+                await fetch(`/api/conversations/${c.id}`, { method: 'DELETE' });
+            }
+            this.startNewChat();
+            await this.loadConversations();
+            this.closeSettings();
+        } catch (e) {
+            console.error('Failed to clear conversations:', e);
+        }
+    }
+
+    async refreshIndex() {
+        try {
+            await fetch('/api/schema'); // Triggers schema load; backend could add /api/refresh-index
+            alert('Index refresh requested.');
+        } catch (e) {
+            console.error('Failed to refresh index:', e);
+        }
+    }
+
+    openStripePortal() {
+        // TODO: Fetch Stripe portal URL from backend when implemented
+        window.open('#', '_blank');
+    }
+
+    async testLLMConnection() {
+        const provider = this.settingsState?.selected_llm_provider || document.getElementById('settingsLLMProvider')?.value;
+        const values = this.readLLMFormValues();
+        try {
+            const res = await fetch('/api/test-llm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider, ...values })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                alert(data.success ? 'Connection successful' : (data.error || 'Connection failed'));
+            } else {
+                alert('Connection test failed');
+            }
+        } catch (e) {
+            alert('Connection test failed: ' + (e.message || 'Network error'));
+        }
+    }
+
+    buildConfigPayload() {
+        const getVal = id => document.getElementById(id)?.value ?? '';
+        const account = {
+            email: getVal('settingsEmail'),
+            user_id: getVal('settingsUserId'),
+            plan: getVal('settingsPlan') || 'Free'
+        };
+        const selected = this.settingsState?.selected_llm_provider || 'gemini';
+        if (selected) {
+            this.settingsState.llm_providers = this.settingsState.llm_providers || {};
+            this.settingsState.llm_providers[selected] = this.readLLMFormValues();
+        }
+        const llm = { provider: selected };
+        const llm_providers = this.settingsState?.llm_providers || {};
+        const dbType = getVal('settingsDBType') || 'mysql';
+        const hostType = getVal('settingsHostType') || 'local';
+        const databases = {
+            type: dbType,
+            hostType: hostType,
+            cloudProvider: getVal('settingsCloudProvider') || 'aws',
+            host: getVal('settingsDBhost'),
+            port: getVal('settingsDBport'),
+            user: getVal('settingsDBuser'),
+            password: getVal('settingsDBpassword'),
+            database: getVal('settingsDBdatabase'),
+            service_name: getVal('settingsDBservice_name'),
+            region: getVal('settingsDBregion'),
+            secret_arn: getVal('settingsDBsecret_arn'),
+            instance: getVal('settingsDBinstance')
+        };
+        const data_privacy = {
+            save_history: document.getElementById('settingsSaveHistory')?.checked ?? true,
+            query_caching: document.getElementById('settingsQueryCaching')?.checked ?? false
+        };
+        const preferences = {
+            theme: getVal('settingsTheme') || 'system',
+            auto_charts: document.getElementById('settingsAutoCharts')?.checked ?? false
+        };
+        return { account, llm, llm_providers, databases, data_privacy, preferences };
+    }
+
+    async saveSettings() {
+        const payload = this.buildConfigPayload();
+        try {
+            const response = await fetch('/api/config', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                this.settingsState = {
+                    ...payload,
+                    configured_llm_providers: Object.keys(payload.llm_providers || {}).filter(p => {
+                        const v = payload.llm_providers[p];
+                        return v && (v.api_key || v.endpoint || v.model);
+                    }),
+                    selected_llm_provider: payload.llm?.provider || this.settingsState?.selected_llm_provider
+                };
+                this.closeSettings();
+                await this.loadSettings();
+            } else {
+                console.error('Failed to save settings');
+            }
+        } catch (e) {
+            console.error('Failed to save settings:', e);
         }
     }
     

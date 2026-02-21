@@ -73,29 +73,34 @@
                         <rect x="3" y="14" width="7" height="7"></rect>
                     </svg>
                 </button>
-                <button class="icon-btn" id="settingsBtn" title="Settings">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                    </svg>
-                </button>
             </div>
         </header>
 
         <div class="main-container">
             <!-- Left Sidebar - Conversation History -->
             <aside class="sidebar" id="sidebar">
-                <div class="sidebar-header">
-                    <button class="new-chat-btn" id="newChatBtn">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        New Chat
-                    </button>
+                <div class="nav-top">
+                    <div class="sidebar-header">
+                        <button class="new-chat-btn" id="newChatBtn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            New Chat
+                        </button>
+                    </div>
+                    <div class="conversation-list" id="conversationList">
+                        <!-- Conversations will be populated here -->
+                    </div>
                 </div>
-                <div class="conversation-list" id="conversationList">
-                    <!-- Conversations will be populated here -->
+                <div class="nav-footer">
+                    <button type="button" id="settingsBtn" class="sidebar-icon" title="Settings">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                        <span class="label">Settings</span>
+                    </button>
                 </div>
             </aside>
 
@@ -152,6 +157,30 @@
                     </div>
                 </div>
             </main>
+        </div>
+
+        <!-- Settings Modal -->
+        <div class="modal" id="settingsModal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h2>Settings</h2>
+                    <button class="modal-close" id="settingsModalClose">&times;</button>
+                </div>
+                <div class="settings-tabs">
+                    <button class="settings-tab active" data-tab="account">My Account</button>
+                    <button class="settings-tab" data-tab="llm_providers">LLM Providers</button>
+                    <button class="settings-tab" data-tab="databases">Database Connections</button>
+                    <button class="settings-tab" data-tab="data">Data & Privacy</button>
+                    <button class="settings-tab" data-tab="preferences">Preferences</button>
+                </div>
+                <div class="modal-body" id="settingsContent">
+                    <!-- Content swapped via JS based on active tab -->
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="settingsCancel">Cancel</button>
+                    <button class="btn-primary" id="settingsSave">Save</button>
+                </div>
+            </div>
         </div>
 
         <!-- Schema Modal -->

@@ -41,6 +41,46 @@ llm:
       type: ollama
       model: codellama:13b
       host: http://localhost:11434
+    
+    # Groq (OpenAI-compatible, fast inference)
+    groq:
+      type: groq
+      model: llama-3.1-70b-versatile
+      api_key: ${GROQ_API_KEY}
+    
+    # DeepSeek (OpenAI-compatible)
+    deepseek:
+      type: deepseek
+      model: deepseek-chat
+      api_key: ${DEEPSEEK_API_KEY}
+    
+    # Mistral AI (OpenAI-compatible)
+    mistral:
+      type: mistral
+      model: mistral-large-latest
+      api_key: ${MISTRAL_API_KEY}
+    
+    # Nvidia NIM (Nvidia Inference Microservices)
+    nvidia:
+      type: nvidia
+      model: meta/llama-3.1-70b-instruct-v2
+      api_key: ${NVIDIA_API_KEY}
+    
+    # Alibaba Cloud DashScope (Qwen)
+    alibaba:
+      type: alibaba
+      model: qwen-max
+      api_key: ${DASHSCOPE_API_KEY}
+      # endpoint: https://dashscope-intl.aliyuncs.com/compatible-mode/v1  # Singapore
+      # endpoint: https://dashscope-us.aliyuncs.com/compatible-mode/v1   # Virginia
+      # endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1     # Beijing
+    
+    # Meta Llama (via partner - endpoint required)
+    meta:
+      type: meta
+      model: llama-3.1-70b
+      api_key: ${META_API_KEY}
+      endpoint: https://your-meta-provider.com/v1  # e.g. Groq, Azure AI, etc.
 
 # Database Configuration
 databases:

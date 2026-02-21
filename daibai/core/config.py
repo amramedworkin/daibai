@@ -37,9 +37,14 @@ class DatabaseConfig:
 
 @dataclass
 class LLMProviderConfig:
-    """Configuration for a single LLM provider."""
+    """Configuration for a single LLM provider.
+    
+    Supported provider_type: gemini, openai, azure, anthropic, ollama,
+    groq, deepseek, mistral, nvidia, alibaba, meta.
+    API keys resolved from env via ${DEEPSEEK_API_KEY}, ${MISTRAL_API_KEY}, etc.
+    """
     name: str
-    provider_type: str  # gemini, openai, azure, anthropic, ollama
+    provider_type: str
     model: str
     api_key: Optional[str] = None
     endpoint: Optional[str] = None
@@ -83,6 +88,18 @@ class Config:
     def list_llm_providers(self) -> List[str]:
         """List available LLM provider names."""
         return list(self.llm_providers.keys())
+
+    def get_llm_provider_configs_for_ui(self) -> Dict[str, Dict[str, Any]]:
+        """Return provider configs for UI pre-population (API keys masked)."""
+        result = {}
+        for name, cfg in self.llm_providers.items():
+            result[name] = {
+                "model": cfg.model or "",
+                "endpoint": cfg.endpoint or "",
+                "api_key": "••••••" if cfg.api_key else "",
+                "deployment": cfg.extra.get("deployment", ""),
+            }
+        return result
 
 
 def _resolve_env_vars(value: Any) -> Any:

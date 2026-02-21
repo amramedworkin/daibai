@@ -28,6 +28,8 @@ class OpenAIProvider(BaseLLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         organization: Optional[str] = None,
+        base_url: Optional[str] = None,
+        endpoint: Optional[str] = None,
         **kwargs
     ):
         self.api_key = api_key
@@ -35,6 +37,7 @@ class OpenAIProvider(BaseLLMProvider):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.organization = organization
+        self.base_url = base_url or endpoint
         self._client = None
         self._async_client = None
     
@@ -44,14 +47,15 @@ class OpenAIProvider(BaseLLMProvider):
             try:
                 from openai import OpenAI, AsyncOpenAI
                 
-                self._client = OpenAI(
-                    api_key=self.api_key,
-                    organization=self.organization,
-                )
-                self._async_client = AsyncOpenAI(
-                    api_key=self.api_key,
-                    organization=self.organization,
-                )
+                client_kwargs = {
+                    "api_key": self.api_key,
+                    "organization": self.organization,
+                }
+                if self.base_url:
+                    client_kwargs["base_url"] = self.base_url
+                
+                self._client = OpenAI(**client_kwargs)
+                self._async_client = AsyncOpenAI(**client_kwargs)
             except ImportError:
                 raise ImportError(
                     "OpenAI provider requires openai. "
