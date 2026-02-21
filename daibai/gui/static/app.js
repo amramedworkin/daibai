@@ -10,7 +10,7 @@ const SUPPORTED_LLM_PROVIDERS = [
 
 // UI Templates for settings modal (switch/case logic)
 const LLM_TEMPLATES = {
-    ollama: { label: 'Ollama', fields: ['endpoint'], endpointDefault: 'http://localhost:11434', needsApiKey: false },
+    ollama: { label: 'Ollama', fields: ['endpoint', 'model'], endpointDefault: 'http://localhost:11434', needsApiKey: false },
     openai: { label: 'OpenAI', fields: ['api_key', 'model'], needsApiKey: true },
     anthropic: { label: 'Anthropic', fields: ['api_key', 'model'], needsApiKey: true },
     gemini: { label: 'Google Gemini', fields: ['api_key', 'model'], needsApiKey: true },
@@ -903,7 +903,11 @@ class DaiBaiApp {
                 <div class="settings-group-title">Model & Behavior</div>
                 <div class="settings-field">
                     <label>Default Model</label>
-                    <input type="text" id="settingsLLMModel" value="${this.escapeHtml(values.model || '')}" placeholder="e.g. gpt-4o, gemini-2.5-pro">
+                    <div class="model-fetch-container">
+                        <input type="text" id="settingsLLMModel" list="settingsLLMModelList" value="${this.escapeHtml(values.model || '')}" placeholder="e.g. gpt-4o, gemini-2.5-pro">
+                        <datalist id="settingsLLMModelList"></datalist>
+                        <button type="button" class="btn-secondary btn-fetch-models" id="settingsLLMGetModels" title="Fetch available models from provider">Get Models</button>
+                    </div>
                 </div>
             </div>
         ` : '';
@@ -1049,6 +1053,10 @@ class DaiBaiApp {
         if (testBtn) {
             testBtn.onclick = () => this.testLLMConnection();
         }
+        const getModelsBtn = document.getElementById('settingsLLMGetModels');
+        if (getModelsBtn) {
+            getModelsBtn.onclick = () => this.fetchAvailableModels();
+        }
         const dbTypeSelect = document.getElementById('settingsDBType');
         const hostTypeSelect = document.getElementById('settingsDBHostType') || document.getElementById('settingsHostType');
         const cloudProviderSelect = document.getElementById('settingsCloudProvider');
@@ -1132,6 +1140,54 @@ class DaiBaiApp {
             }
         } catch (e) {
             alert('Connection test failed: ' + (e.message || 'Network error'));
+        }
+    }
+
+    async fetchAvailableModels() {
+        const btn = document.getElementById('settingsLLMGetModels');
+        const provider = this.settingsState?.selected_llm_provider || document.getElementById('settingsLLMProvider')?.value;
+        const values = this.readLLMFormValues();
+        const apiKey = values.api_key;
+        const baseUrl = values.endpoint || '';
+
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Fetching...';
+        }
+        try {
+            const res = await fetch('/api/config/fetch-models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    provider,
+                    api_key: apiKey || null,
+                    base_url: baseUrl || null
+                })
+            });
+            const data = await res.json();
+            const datalist = document.getElementById('settingsLLMModelList');
+            if (datalist) {
+                datalist.innerHTML = '';
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m;
+                        datalist.appendChild(opt);
+                    });
+                }
+            }
+            if (data.error) {
+                alert(data.error);
+            } else if (data.message && !data.models?.length) {
+                alert(data.message);
+            }
+        } catch (e) {
+            alert('Failed to fetch models: ' + (e.message || 'Network error'));
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Get Models';
+            }
         }
     }
 

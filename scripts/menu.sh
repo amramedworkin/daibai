@@ -15,6 +15,12 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/status.sh"
 source "$SCRIPT_DIR/lib/actions.sh"
 
+# --- Read menu choice (empty Enter = 0/Back) ---
+read_menu_choice() {
+    read -r choice
+    [[ -z "$choice" ]] && choice="0"
+}
+
 # --- Menu Header ---
 show_header() {
     local title="$1"
@@ -54,6 +60,8 @@ show_main_menu() {
         "single-query mode, daibai-train"
     print_submenu_option "4" "Support & Utilities" \
         "config, docs, environment"
+    print_submenu_option "5" "Tests" \
+        "pytest, run, list, coverage"
     echo ""
     print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle)${NC}"
     echo ""
@@ -84,7 +92,7 @@ show_chat_service_menu() {
 handle_chat_service_menu() {
     while true; do
         show_chat_service_menu
-        read -r choice
+        read_menu_choice
         case $choice in
             1)
                 clear
@@ -150,7 +158,7 @@ show_interactive_cli_menu() {
 handle_interactive_cli_menu() {
     while true; do
         show_interactive_cli_menu
-        read -r choice
+        read_menu_choice
         case $choice in
             1)
                 clear
@@ -206,7 +214,7 @@ show_command_line_menu() {
 handle_command_line_menu() {
     while true; do
         show_command_line_menu
-        read -r choice
+        read_menu_choice
         case $choice in
             1)
                 clear
@@ -274,7 +282,7 @@ show_support_menu() {
 handle_support_menu() {
     while true; do
         show_support_menu
-        read -r choice
+        read_menu_choice
         case $choice in
             1)
                 clear
@@ -399,7 +407,7 @@ show_support_env_menu() {
 handle_support_env_menu() {
     while true; do
         show_support_env_menu
-        read -r choice
+        read_menu_choice
         case $choice in
             1)
                 clear
@@ -444,17 +452,171 @@ handle_support_env_menu() {
 }
 
 # =============================================================================
+# TESTS SUBMENU (5)
+# =============================================================================
+
+run_pytest() {
+    local py
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        py="$PROJECT_DIR/.venv/bin/python"
+    else
+        py="$(command -v python3 python 2>/dev/null | head -1)"
+    fi
+    [[ -z "$py" ]] && { echo -e "${RED}Python not found${NC}"; return 1; }
+    if ! "$py" -c "import pytest" 2>/dev/null; then
+        echo -e "${YELLOW}pytest not installed. Run: pip install -e \".[dev]\"${NC}"
+        return 1
+    fi
+    "$py" -m pytest "$@"
+}
+
+show_test_menu() {
+    show_header "Tests"
+    echo -e "  ${DIM}pytest control for tests/${NC}"
+    echo ""
+    local count
+    count=$(find "$PROJECT_DIR/tests" -name "test_*.py" 2>/dev/null | wc -l)
+    echo -e "  ${DIM}Test files: $count${NC}"
+    echo ""
+    print_action_option "1" "Run All Tests ${YELLOW}${DIM}(pytest tests/ -v)${NC}"
+    print_action_option "2" "Run All Tests (stop on first fail) ${YELLOW}${DIM}(-x)${NC}"
+    print_action_option "3" "Run Specific Test File"
+    print_action_option "4" "Run Specific Test by Name"
+    print_action_option "5" "Run Tests Matching Pattern ${YELLOW}${DIM}(-k)${NC}"
+    print_action_option "6" "List Test Files"
+    print_action_option "7" "List All Test Names"
+    print_action_option "8" "Run with Coverage ${YELLOW}${DIM}(--cov)${NC}"
+    print_action_option "9" "Run Quiet ${YELLOW}${DIM}(-q)${NC}"
+    echo ""
+    print_action_option "0" "Back to Main Menu"
+    echo ""
+    echo -n "  Select > "
+}
+
+handle_test_menu() {
+    while true; do
+        show_test_menu
+        read_menu_choice
+        case $choice in
+            1)
+                clear
+                echo -e "${CYAN}Running all tests...${NC}"
+                echo ""
+                run_pytest tests/ -v
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            2)
+                clear
+                echo -e "${CYAN}Running all tests (stop on first failure)...${NC}"
+                echo ""
+                run_pytest tests/ -v -x
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            3)
+                clear
+                echo -e "${CYAN}Available test files:${NC}"
+                echo ""
+                ls -1 "$PROJECT_DIR/tests"/test_*.py 2>/dev/null | xargs -I{} basename {} | nl
+                echo ""
+                echo -n "Enter filename (e.g. test_config.py) or Enter to cancel: "
+                read -r f
+                if [[ -n "$f" && -f "$PROJECT_DIR/tests/$f" ]]; then
+                    echo ""
+                    run_pytest "tests/$f" -v
+                else
+                    echo -e "${YELLOW}Cancelled${NC}"
+                fi
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            4)
+                clear
+                echo -n "Enter test name (e.g. test_list_available_providers) or pattern: "
+                read -r name
+                if [[ -n "$name" ]]; then
+                    echo ""
+                    run_pytest tests/ -v -k "$name"
+                else
+                    echo -e "${YELLOW}Cancelled${NC}"
+                fi
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            5)
+                clear
+                echo -n "Enter -k pattern (e.g. 'llm' or 'provider'): "
+                read -r pat
+                if [[ -n "$pat" ]]; then
+                    echo ""
+                    run_pytest tests/ -v -k "$pat"
+                else
+                    echo -e "${YELLOW}Cancelled${NC}"
+                fi
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            6)
+                clear
+                echo -e "${CYAN}Test files in tests/:${NC}"
+                echo ""
+                ls -la "$PROJECT_DIR/tests"/test_*.py 2>/dev/null || echo "  (none)"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            7)
+                clear
+                echo -e "${CYAN}All test names:${NC}"
+                echo ""
+                run_pytest tests/ --collect-only -q 2>/dev/null | grep -E "test_|>" || run_pytest tests/ --collect-only 2>/dev/null | head -80
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            8)
+                clear
+                echo -e "${CYAN}Running tests with coverage...${NC}"
+                echo ""
+                run_pytest tests/ -v --cov=daibai --cov-report=term-missing 2>/dev/null || run_pytest tests/ -v
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            9)
+                clear
+                echo -e "${CYAN}Running all tests (quiet)...${NC}"
+                echo ""
+                run_pytest tests/ -q
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+# =============================================================================
 # MAIN LOOP
 # =============================================================================
 
 while true; do
     show_main_menu
-    read -r choice
+    read_menu_choice
     case $choice in
         1) handle_chat_service_menu ;;
         2) handle_interactive_cli_menu ;;
         3) handle_command_line_menu ;;
         4) handle_support_menu ;;
+        5) handle_test_menu ;;
         s|S) handle_start_stop_chat_service ;;
         0)
             echo ""

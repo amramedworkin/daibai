@@ -149,6 +149,27 @@ async def test_llm_connection(body: Dict[str, Any] = Body(default={})):
     return {"success": True, "message": "Connection test not yet implemented"}
 
 
+# --- Model discovery (delegated to model_discovery module) ---
+from .model_discovery import fetch_provider_models
+
+
+class FetchModelsRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@app.post("/api/config/fetch-models")
+async def fetch_models(request: FetchModelsRequest):
+    """Fetch available models from an LLM provider."""
+    result = await fetch_provider_models(
+        provider=request.provider,
+        api_key=request.api_key,
+        base_url=request.base_url,
+    )
+    return result
+
+
 @app.get("/api/conversations", response_model=List[ConversationSummary])
 async def list_conversations():
     """List all conversations."""

@@ -185,8 +185,16 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
     if env_path and env_path.exists():
         load_dotenv(env_path)
     else:
-        # Try standard locations
-        for loc in [Path.cwd() / ".env", Path.home() / ".daibai" / ".env"]:
+        # Try standard locations (cwd can fail if deleted, e.g. in some test envs)
+        env_locations = []
+        try:
+            env_locations.append(Path.cwd() / ".env")
+        except OSError:
+            pass
+        env_locations.append(Path.home() / ".daibai" / ".env")
+        if config_path:
+            env_locations.insert(0, config_path.parent / ".env")
+        for loc in env_locations:
             if loc.exists():
                 load_dotenv(loc)
                 break

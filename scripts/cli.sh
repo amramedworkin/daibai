@@ -74,6 +74,15 @@ Commands (mirrors menu.sh):
     env-edit                Edit .env file
     env-preferences         Show preferences path and content
 
+  TESTS (menu 5)
+    test [args]             Run all tests (pytest tests/ -v). Pass-through args.
+    test run [path] [args]  Run tests (default: tests/). Args: -x, -k PATTERN, -q, etc.
+    test file <path>       Run specific test file (e.g. test_config.py)
+    test name <pattern>    Run tests matching -k pattern
+    test list              List test files
+    test collect           List all test names (--collect-only)
+    test coverage          Run with coverage report
+
   META
     status                  Alias for chat-status
     help                    Show this help
@@ -84,6 +93,11 @@ Examples:
     $(basename "$0") cli-query "How many users are in the database?"
     $(basename "$0") train --database suitecrm
     $(basename "$0") config-path
+    $(basename "$0") test
+    $(basename "$0") test -x
+    $(basename "$0") test file test_config.py
+    $(basename "$0") test name provider
+    $(basename "$0") test coverage
 
 EOF
 }
@@ -266,6 +280,65 @@ cmd_env_preferences() {
 }
 
 # ============================================================================
+# TEST COMMANDS
+# ============================================================================
+
+run_pytest() {
+    local py
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        py="$PROJECT_DIR/.venv/bin/python"
+    else
+        py="$(command -v python3 python 2>/dev/null | head -1)"
+    fi
+    [[ -z "$py" ]] && { print_error "Python not found"; return 1; }
+    if ! "$py" -c "import pytest" 2>/dev/null; then
+        print_error "pytest not installed. Run: pip install -e \".[dev]\""
+        return 1
+    fi
+    "$py" -m pytest "$@"
+}
+
+cmd_test() {
+    local sub="${1:-run}"
+    shift || true
+    case "$sub" in
+        run)
+            local path="tests/"
+            [[ -n "$1" && "$1" != -* ]] && { path="$1"; shift; }
+            [[ "$path" != tests/* && "$path" != tests ]] && path="tests/$path"
+            run_pytest "$path" -v "$@"
+            ;;
+        file)
+            local f="$1"
+            [[ -z "$f" ]] && { print_error "Usage: test file <path>"; return 1; }
+            shift || true
+            [[ "$f" != tests/* ]] && f="tests/$f"
+            run_pytest "$f" -v "$@"
+            ;;
+        name)
+            local pat="$1"
+            [[ -z "$pat" ]] && { print_error "Usage: test name <pattern>"; return 1; }
+            shift || true
+            run_pytest tests/ -v -k "$pat" "$@"
+            ;;
+        list)
+            print_header "Test Files"
+            ls -la "$PROJECT_DIR/tests"/test_*.py 2>/dev/null || echo "  (none)"
+            ;;
+        collect)
+            run_pytest tests/ --collect-only -q 2>/dev/null || run_pytest tests/ --collect-only
+            ;;
+        coverage)
+            run_pytest tests/ -v --cov=daibai --cov-report=term-missing 2>/dev/null || run_pytest tests/ -v
+            ;;
+        *)
+            # Pass-through: test -x, test -k foo, test tests/file.py
+            run_pytest tests/ -v "$sub" "$@"
+            ;;
+    esac
+}
+
+# ============================================================================
 # MAIN DISPATCHER
 # ============================================================================
 
@@ -315,6 +388,9 @@ main() {
             ;;
         env-preferences)
             cmd_env_preferences
+            ;;
+        test)
+            cmd_test "$@"
             ;;
         status)
             cmd_chat_status "$@"

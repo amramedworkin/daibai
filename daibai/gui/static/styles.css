@@ -969,6 +969,28 @@ body {
     border-color: var(--accent);
 }
 
+/* Model fetch: input + Get Models button inline */
+.model-fetch-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.model-fetch-container input {
+    flex: 1;
+    min-width: 0;
+}
+
+.model-fetch-container .btn-fetch-models {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.model-fetch-container .btn-fetch-models:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .settings-toggle {
     display: flex;
     align-items: center;
