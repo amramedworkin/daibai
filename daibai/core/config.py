@@ -206,7 +206,7 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
         # Return empty config if no file found
         return Config()
     
-    with open(yaml_path, "r") as f:
+    with open(yaml_path, "r", encoding="utf-8") as f:
         raw_config = yaml.safe_load(f) or {}
     
     # Resolve environment variables
@@ -254,7 +254,7 @@ def load_user_preferences() -> Dict[str, Any]:
     import json
     if _USER_PREFS_FILE.exists():
         try:
-            with open(_USER_PREFS_FILE, "r") as f:
+            with open(_USER_PREFS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError):
             pass
@@ -265,5 +265,5 @@ def save_user_preferences(prefs: Dict[str, Any]) -> None:
     """Save user preferences."""
     import json
     _USER_PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(_USER_PREFS_FILE, "w") as f:
+    with open(_USER_PREFS_FILE, "w", encoding="utf-8") as f:
         json.dump(prefs, f)

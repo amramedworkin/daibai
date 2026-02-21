@@ -35,7 +35,7 @@ class SchemaCache:
         path = self._cache_path(db_name)
         if path.exists():
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except (json.JSONDecodeError, IOError):
                 pass
@@ -52,7 +52,7 @@ class SchemaCache:
             "version": 1,
         }
         path = self._cache_path(db_name)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
     
     def is_stale(self, db_name: str, current_table_count: int = 0, max_age_hours: int = 24) -> bool:
