@@ -6,6 +6,7 @@ FastAPI backend providing REST and WebSocket endpoints for the GUI.
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -20,7 +21,15 @@ from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
 
 
-app = FastAPI(title="DaiBai", description="AI Database Assistant API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: ensure static dir exists. Shutdown: (none)."""
+    STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    yield
+
+
+app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=lifespan)
 
 # Global state
 _agent: Optional[DaiBaiAgent] = None
@@ -97,12 +106,6 @@ class ConversationSummary(BaseModel):
 STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 
 
-@app.on_event("startup")
-async def startup():
-    """Initialize on startup."""
-    STATIC_DIR.mkdir(parents=True, exist_ok=True)
-
-
 # API Endpoints
 @app.get("/api/settings", response_model=SettingsResponse)
 async def get_settings():
@@ -150,7 +153,7 @@ async def test_llm_connection(body: Dict[str, Any] = Body(default={})):
 
 
 # --- Model discovery (delegated to model_discovery module) ---
-from .model_discovery import fetch_provider_models
+from .model_discovery import fetch_provider_models, safe_str
 
 
 class FetchModelsRequest(BaseModel):
@@ -162,12 +165,20 @@ class FetchModelsRequest(BaseModel):
 @app.post("/api/config/fetch-models")
 async def fetch_models(request: FetchModelsRequest):
     """Fetch available models from an LLM provider."""
-    result = await fetch_provider_models(
-        provider=request.provider,
-        api_key=request.api_key,
-        base_url=request.base_url,
-    )
-    return result
+    try:
+        result = await fetch_provider_models(
+            provider=request.provider,
+            api_key=request.api_key,
+            base_url=request.base_url,
+        )
+        return result
+    except (UnicodeEncodeError, UnicodeDecodeError) as e:
+        import traceback
+        tb = traceback.format_exc()
+        return {
+            "models": [],
+            "error": safe_str(f"Encoding error: {type(e).__name__}. Traceback: {tb}"),
+        }
 
 
 @app.get("/api/conversations", response_model=List[ConversationSummary])

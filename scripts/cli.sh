@@ -79,6 +79,8 @@ Commands (mirrors menu.sh):
     test run [path] [args]  Run tests (default: tests/). Args: -x, -k PATTERN, -q, etc.
     test file <path>       Run specific test file (e.g. test_config.py)
     test name <pattern>    Run tests matching -k pattern
+    test gemini [--live]   Run isolated Gemini get-models test
+                            --live  Use real API (requires GEMINI_API_KEY)
     test list              List test files
     test collect           List all test names (--collect-only)
     test coverage          Run with coverage report
@@ -97,6 +99,8 @@ Examples:
     $(basename "$0") test -x
     $(basename "$0") test file test_config.py
     $(basename "$0") test name provider
+    $(basename "$0") test gemini
+    $(basename "$0") test gemini --live
     $(basename "$0") test coverage
 
 EOF
@@ -320,6 +324,15 @@ cmd_test() {
             [[ -z "$pat" ]] && { print_error "Usage: test name <pattern>"; return 1; }
             shift || true
             run_pytest tests/ -v -k "$pat" "$@"
+            ;;
+        gemini)
+            local live=false
+            [[ "$1" == "--live" ]] && { live=true; shift; }
+            if $live; then
+                run_pytest tests/test_gemini_get_models.py -v -s -k "live" "$@"
+            else
+                run_pytest tests/test_gemini_get_models.py -v -s "$@"
+            fi
             ;;
         list)
             print_header "Test Files"

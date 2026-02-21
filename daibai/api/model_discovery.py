@@ -20,26 +20,30 @@ def safe_str(s: str) -> str:
 
 
 def _fetch_http(url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Sync HTTP GET; run in thread pool for async compatibility."""
+    """Sync HTTP GET; run in thread pool for async compatibility.
+    Raw response is decoded as UTF-8, parsed as JSON, then sanitized to ASCII
+    to avoid 'ascii codec can't encode' errors downstream."""
     req = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(req, timeout=15) as resp:
         body = resp.read().decode("utf-8", errors="replace")
-        return json.loads(body)
+        data = json.loads(body)
+        return _sanitize_any(data)
+
+
+def _sanitize_any(obj: Any) -> Any:
+    """Recursively sanitize JSON-like structures to ASCII-safe strings (values only)."""
+    if isinstance(obj, str):
+        return safe_str(obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_any(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_any(x) for x in obj]
+    return obj
 
 
 def _sanitize_result(result: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively sanitize result dict to ASCII-safe strings."""
-    out: Dict[str, Any] = {}
-    for k, v in result.items():
-        if isinstance(v, str):
-            out[k] = safe_str(v)
-        elif isinstance(v, list):
-            out[k] = [safe_str(x) if isinstance(x, str) else x for x in v]
-        elif isinstance(v, dict):
-            out[k] = _sanitize_result(v)
-        else:
-            out[k] = v
-    return out
+    return _sanitize_any(result)
 
 
 async def fetch_provider_models(
