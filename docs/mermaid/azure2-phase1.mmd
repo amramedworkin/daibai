@@ -1,0 +1,13 @@
+sequenceDiagram
+    participant App as DaiBai Core
+    participant Cred as Azure Identity (DefaultAzureCredential)
+    participant KV as Azure Key Vault
+    participant Config as Azure App Config
+
+    App->>Cred: Get Token
+    Cred-->>App: Identity Token
+    App->>Config: Fetch App Settings (Log Levels, Feature Flags)
+    Config-->>App: Settings Data
+    App->>KV: Request LLM Provider Keys (using Token)
+    KV-->>App: OpenAI/Anthropic Secrets
+    Note over App: App Initialized & Cloud-Ready
