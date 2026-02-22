@@ -1,0 +1,37 @@
+graph TD
+    subgraph Client_Layer
+        User((User))
+        GUI[Static Web App / React]
+    end
+
+    subgraph Security_Identity
+        B2C[Azure AD B2C - Auth]
+        Vault[Azure Key Vault - Secrets]
+    end
+
+    subgraph Logic_Gateway
+        APIM[API Management - Consumption]
+        AF[Azure Functions - Backend]
+    end
+
+    subgraph Data_Storage
+        Cosmos[Cosmos DB Serverless - Profiles/Chat]
+        SQL[SQL Serverless - Data Inventory]
+    end
+
+    subgraph External_Connectors
+        Relay[Azure Relay - Local Data Servers]
+        Stripe[Stripe API - Billing]
+        LLM[LLM Providers - OpenAI/Anthropic]
+    end
+
+    User --> GUI
+    GUI --> B2C
+    GUI --> APIM
+    APIM --> AF
+    AF --> Vault
+    AF --> Cosmos
+    AF --> SQL
+    AF --> Relay
+    AF --> Stripe
+    AF --> LLM
