@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
@@ -153,7 +153,7 @@ async def test_llm_connection(body: Dict[str, Any] = Body(default={})):
 
 
 # --- Model discovery (delegated to model_discovery module) ---
-from .model_discovery import fetch_provider_models, safe_str
+from .model_discovery import fetch_provider_models, safe_str, _sanitize_result
 
 
 class FetchModelsRequest(BaseModel):
@@ -162,22 +162,56 @@ class FetchModelsRequest(BaseModel):
     base_url: Optional[str] = None
 
 
+def _resolve_fetch_models_api_key(provider: str, api_key: Optional[str]) -> Optional[str]:
+    """Use api_key from request, or resolve from config/env when masked/empty."""
+    if api_key and api_key.strip():
+        stripped = api_key.strip()
+        # Masked placeholder from UI - don't use it
+        if stripped not in ("••••••", "••••••••") and not all(c in "•\u2022" for c in stripped):
+            return stripped
+    # Resolve from config (daibai.yaml + .env)
+    config = get_config()
+    for name, cfg in config.llm_providers.items():
+        if (cfg.provider_type or "").lower() == (provider or "").lower() and cfg.api_key:
+            return cfg.api_key
+    # Fallback to env vars for common providers
+    import os
+    env_keys = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+    env_var = env_keys.get((provider or "").lower())
+    if env_var:
+        return os.environ.get(env_var) or None
+    return None
+
+
 @app.post("/api/config/fetch-models")
 async def fetch_models(request: FetchModelsRequest):
     """Fetch available models from an LLM provider."""
+    import os
+    api_key = _resolve_fetch_models_api_key(request.provider, request.api_key)
+    base_url = request.base_url if request.base_url else None
+    _debug = os.environ.get("DAIBAI_DEBUG_MODELS", "").strip() in ("1", "true", "yes")
+    if _debug:
+        print(f"[fetch-models] endpoint: provider={request.provider!r} api_key={'SET' if api_key else 'MISSING'} base_url={base_url!r}", flush=True)
     try:
         result = await fetch_provider_models(
             provider=request.provider,
-            api_key=request.api_key,
-            base_url=request.base_url,
+            api_key=api_key,
+            base_url=base_url,
         )
-        return result
+        if _debug:
+            print(f"[fetch-models] result: models={len(result.get('models', []))} error={result.get('error')!r}", flush=True)
+        return _sanitize_result(result)
     except (UnicodeEncodeError, UnicodeDecodeError) as e:
         import traceback
         tb = traceback.format_exc()
         return {
             "models": [],
             "error": safe_str(f"Encoding error: {type(e).__name__}. Traceback: {tb}"),
+        }
+    except Exception as e:
+        return {
+            "models": [],
+            "error": safe_str(str(e)),
         }
 
 
@@ -299,6 +333,30 @@ async def execute_sql(request: ExecuteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- File upload (local storage; future: Azure Blob) ---
+UPLOADS_DIR = Path.home() / ".daibai" / "uploads"
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Store uploaded file locally. Returns file id, name, size for session reference."""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    file_id = str(uuid.uuid4())
+    ext = Path(file.filename or "").suffix or ""
+    safe_name = f"{file_id}{ext}"
+    path = UPLOADS_DIR / safe_name
+    size = 0
+    try:
+        content = await file.read()
+        size = len(content)
+        path.write_bytes(content)
+        return {"id": file_id, "name": file.filename or "file", "size": size}
+    except Exception as e:
+        if path.exists():
+            path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/schema")
 async def get_schema():
     """Get the current database schema."""
@@ -361,23 +419,25 @@ async def websocket_chat(websocket: WebSocket):
                     "conversation_id": conv_id
                 })
                 
-                # Execute if requested
+                results = None
                 if execute and sql:
                     df = agent.run_sql(sql)
                     if df is not None:
+                        results = df.to_dict(orient="records")
                         await websocket.send_json({
                             "type": "results",
-                            "content": df.to_dict(orient="records"),
+                            "content": results,
                             "row_count": len(df),
                             "columns": list(df.columns),
                             "conversation_id": conv_id
                         })
                 
-                # Add to conversation
+                # Add to conversation (include results for session history)
                 _conversations[conv_id].append({
                     "role": "assistant",
                     "content": sql or "Could not generate SQL",
                     "sql": sql,
+                    "results": results,
                     "timestamp": datetime.now().isoformat()
                 })
                 

@@ -37,7 +37,9 @@ handle_start_stop_chat_service() {
     if chat_service_is_running; then
         stop_chat_service
     else
-        start_chat_service_background
+        if start_chat_service_background; then
+            (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
+        fi
     fi
     echo ""
     echo "Press Enter to continue..."
@@ -63,7 +65,7 @@ show_main_menu() {
     print_submenu_option "5" "Tests" \
         "pytest, run, list, coverage"
     echo ""
-    print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle)${NC}"
+    print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle, opens browser on start)${NC}"
     echo ""
     print_action_option "0" "Exit"
     echo ""

@@ -41,6 +41,9 @@ class DaiBaiApp {
         this.ws = null;
         this.isLoading = false;
         this.lastGeneratedSql = null;
+        this.resultsCache = {};  // resultsId -> results for Export CSV
+        this.sessionMessages = [];  // messages in current conversation for prompts list
+        this.attachedFiles = [];   // [{ id, name, size }] for file upload
         
         this.init();
     }
@@ -83,6 +86,52 @@ class DaiBaiApp {
             mode: this.modeSelect.value
         };
         localStorage.setItem('daibai_preferences', JSON.stringify(prefs));
+    }
+    
+    async handleFileSelect(e) {
+        const files = Array.from(e.target.files || []);
+        e.target.value = '';
+        for (const file of files) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                const res = await fetch('/api/upload', { method: 'POST', body: formData });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.attachedFiles.push({ id: data.id, name: data.name, size: data.size });
+                    this.renderAttachedFiles();
+                } else {
+                    const err = await res.json();
+                    alert('Upload failed: ' + (err.detail || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Upload failed: ' + (err.message || 'Network error'));
+            }
+        }
+    }
+    
+    removeAttachedFile(id) {
+        this.attachedFiles = this.attachedFiles.filter(f => f.id !== id);
+        this.renderAttachedFiles();
+    }
+    
+    renderAttachedFiles() {
+        if (!this.attachedFilesEl) return;
+        if (this.attachedFiles.length === 0) {
+            this.attachedFilesEl.innerHTML = '';
+            this.attachedFilesEl.style.display = 'none';
+            return;
+        }
+        this.attachedFilesEl.style.display = 'flex';
+        this.attachedFilesEl.innerHTML = this.attachedFiles.map(f => `
+            <span class="file-chip" data-id="${f.id}">
+                <span class="file-chip-name">${this.escapeHtml(f.name)}</span>
+                <button class="file-chip-remove" data-id="${f.id}" title="Remove">×</button>
+            </span>
+        `).join('');
+        this.attachedFilesEl.querySelectorAll('.file-chip-remove').forEach(btn => {
+            btn.addEventListener('click', () => this.removeAttachedFile(btn.dataset.id));
+        });
     }
     
     copyToClipboard(text) {
@@ -161,6 +210,9 @@ class DaiBaiApp {
         this.promptInput = document.getElementById('promptInput');
         this.sendBtn = document.getElementById('sendBtn');
         this.executeCheckbox = document.getElementById('executeCheckbox');
+        this.attachBtn = document.getElementById('attachBtn');
+        this.fileInput = document.getElementById('fileInput');
+        this.attachedFilesEl = document.getElementById('attachedFiles');
     }
     
     bindEvents() {
@@ -244,6 +296,11 @@ class DaiBaiApp {
         });
         
         this.sendBtn.addEventListener('click', () => this.sendMessage());
+        
+        if (this.attachBtn && this.fileInput) {
+            this.attachBtn.addEventListener('click', () => this.fileInput.click());
+            this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
         
         // Example prompts
         document.querySelectorAll('.example-prompt').forEach(btn => {
@@ -354,13 +411,17 @@ class DaiBaiApp {
             const conversation = await response.json();
             
             this.conversationId = id;
+            this.sessionMessages = conversation.messages || [];
             this.welcomeMessage.style.display = 'none';
             
             // Clear and render messages
             this.messagesContainer.innerHTML = '';
-            conversation.messages.forEach(msg => {
-                this.renderMessage(msg);
+            this.sessionMessages.forEach((msg, i) => {
+                this.renderMessage(msg, i);
             });
+            
+            // Update prompts list in sidebar
+            this.updatePromptsList(conversation.messages);
             
             // Update sidebar
             this.conversationList.querySelectorAll('.conversation-item').forEach(item => {
@@ -389,9 +450,11 @@ class DaiBaiApp {
     
     startNewChat() {
         this.conversationId = null;
+        this.sessionMessages = [];
         this.messagesContainer.innerHTML = '';
         this.messagesContainer.appendChild(this.welcomeMessage);
         this.welcomeMessage.style.display = 'flex';
+        this.updatePromptsList([]);
         
         this.conversationList.querySelectorAll('.conversation-item').forEach(item => {
             item.classList.remove('active');
@@ -432,13 +495,20 @@ class DaiBaiApp {
             case 'sql':
                 this.removeLoadingIndicator();
                 this.lastGeneratedSql = data.content;
-                this.renderAssistantMessage(data.content);
+                const assistantMsg = { role: 'assistant', content: data.content, sql: data.content, timestamp: new Date().toISOString() };
+                this.sessionMessages.push(assistantMsg);
+                this.renderAssistantMessage(data.content, null, this.sessionMessages.length - 1);
                 this.copyToClipboard(data.content);
+                this.updatePromptsList(this.sessionMessages);
                 break;
                 
             case 'results':
                 this.appendResultsToLastMessage(data);
                 this.saveToCsv(data.content);
+                if (this.sessionMessages.length > 0) {
+                    const last = this.sessionMessages[this.sessionMessages.length - 1];
+                    if (last.role === 'assistant') last.results = data.content;
+                }
                 break;
                 
             case 'error':
@@ -449,6 +519,7 @@ class DaiBaiApp {
             case 'done':
                 this.isLoading = false;
                 this.updateSendButton();
+                this.updatePromptsList(this.sessionMessages);
                 this.loadConversations();
                 break;
         }
@@ -465,14 +536,14 @@ class DaiBaiApp {
         this.welcomeMessage.style.display = 'none';
         
         // Render user message
-        this.renderMessage({
-            role: 'user',
-            content: query,
-            timestamp: new Date().toISOString()
-        });
+        const userMsg = { role: 'user', content: query, timestamp: new Date().toISOString() };
+        this.sessionMessages.push(userMsg);
+        this.renderMessage(userMsg, this.sessionMessages.length - 1);
         
-        // Clear input
+        // Clear input and attached files
         this.promptInput.value = '';
+        this.attachedFiles = [];
+        this.renderAttachedFiles();
         this.autoResizeTextarea();
         
         // Show loading indicator
@@ -511,9 +582,12 @@ class DaiBaiApp {
             this.conversationId = data.conversation_id;
             this.lastGeneratedSql = data.sql;
             
-            this.renderAssistantMessage(data.sql, data.results);
+            const assistantMsg = { role: 'assistant', content: data.sql, sql: data.sql, results: data.results, timestamp: new Date().toISOString() };
+            this.sessionMessages.push(assistantMsg);
+            this.renderAssistantMessage(data.sql, data.results, this.sessionMessages.length - 1);
             this.copyToClipboard(data.sql);
             this.saveToCsv(data.results);
+            this.updatePromptsList(this.sessionMessages);
             
             await this.loadConversations();
         } catch (error) {
@@ -525,9 +599,41 @@ class DaiBaiApp {
         }
     }
     
-    renderMessage(msg) {
+    updatePromptsList(messages) {
+        const section = document.getElementById('promptsSection');
+        const list = document.getElementById('promptsList');
+        if (!section || !list) return;
+        
+        const msgs = messages || [];
+        const userIndices = msgs.map((m, i) => m.role === 'user' ? i : -1).filter(i => i >= 0);
+        if (userIndices.length === 0) {
+            section.style.display = 'none';
+            return;
+        }
+        
+        section.style.display = 'block';
+        list.innerHTML = userIndices.map(idx => {
+            const m = msgs[idx];
+            const title = (m.content || '').slice(0, 50) + ((m.content || '').length > 50 ? '...' : '');
+            return `<div class="prompt-item" data-msg-index="${idx}" title="${this.escapeHtml(m.content || '')}">${this.escapeHtml(title)}</div>`;
+        }).join('');
+        
+        list.querySelectorAll('.prompt-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const target = this.messagesContainer.querySelector(`[data-msg-index="${el.dataset.msgIndex}"]`);
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    list.querySelectorAll('.prompt-item').forEach(p => p.classList.remove('active'));
+                    el.classList.add('active');
+                }
+            });
+        });
+    }
+    
+    renderMessage(msg, msgIndex = -1) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${msg.role}`;
+        if (msgIndex >= 0) messageEl.dataset.msgIndex = msgIndex;
         
         const avatar = msg.role === 'user' ? 'U' : 'D';
         const roleName = msg.role === 'user' ? 'You' : 'DaiBai';
@@ -559,13 +665,17 @@ class DaiBaiApp {
         }
         
         this.messagesContainer.appendChild(messageEl);
+        if (msg.role === 'assistant' && msg.results) {
+            this.bindExportCsvButtons(messageEl);
+        }
         this.scrollToBottom();
     }
     
-    renderAssistantMessage(sql, results = null) {
+    renderAssistantMessage(sql, results = null, msgIndex = -1) {
         const messageEl = document.createElement('div');
         messageEl.className = 'message assistant';
         messageEl.id = 'lastAssistantMessage';
+        if (msgIndex >= 0) messageEl.dataset.msgIndex = msgIndex;
         
         messageEl.innerHTML = `
             <div class="message-avatar">D</div>
@@ -582,8 +692,9 @@ class DaiBaiApp {
         this.messagesContainer.appendChild(messageEl);
         this.scrollToBottom();
         
-        // Bind copy and run buttons
+        // Bind copy, run, and export buttons
         this.bindSqlActions(messageEl, sql);
+        this.bindExportCsvButtons(messageEl);
     }
     
     renderSqlBlock(sql) {
@@ -609,11 +720,14 @@ class DaiBaiApp {
         }
         
         const columns = Object.keys(results[0]);
+        const resultsId = 'results-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        this.resultsCache[resultsId] = results;
         
         return `
-            <div class="results-container">
+            <div class="results-container" data-results-id="${resultsId}">
                 <div class="results-header">
                     <span>${results.length} row(s) returned</span>
+                    <button class="export-csv-btn" data-results-id="${resultsId}" title="Export to CSV">Export CSV</button>
                 </div>
                 <table class="results-table">
                     <thead>
@@ -636,8 +750,23 @@ class DaiBaiApp {
             const content = lastMessage.querySelector('.message-content');
             const resultsHtml = this.renderResults(data.content);
             content.insertAdjacentHTML('beforeend', resultsHtml);
+            this.bindExportCsvButtons(lastMessage);
             this.scrollToBottom();
         }
+    }
+    
+    bindExportCsvButtons(container) {
+        (container || this.messagesContainer).querySelectorAll('.export-csv-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const resultsId = btn.dataset.resultsId;
+                const results = this.resultsCache[resultsId];
+                if (results && results.length > 0) {
+                    this.saveToCsv(results);
+                    btn.textContent = 'Saved!';
+                    setTimeout(() => { btn.textContent = 'Export CSV'; }, 2000);
+                }
+            });
+        });
     }
     
     bindSqlActions(messageEl, sql) {
@@ -1147,7 +1276,12 @@ class DaiBaiApp {
         const btn = document.getElementById('settingsLLMGetModels');
         const provider = this.settingsState?.selected_llm_provider || document.getElementById('settingsLLMProvider')?.value;
         const values = this.readLLMFormValues();
-        const apiKey = values.api_key;
+        let apiKey = values.api_key || '';
+        // Don't send masked placeholder - backend will use config/env
+        const MASKED = ['••••••', '••••••••', '********'];
+        if (MASKED.includes(apiKey) || /^[•\u2022*]+$/.test(apiKey)) {
+            apiKey = null;
+        }
         const baseUrl = values.endpoint || '';
 
         if (btn) {

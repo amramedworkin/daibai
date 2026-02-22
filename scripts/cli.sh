@@ -50,8 +50,9 @@ Usage: $(basename "$0") <command> [options]
 Commands (mirrors menu.sh):
 
   CHAT SERVICE (menu 1)
-    chat-start [--open]     Start web server in background
+    chat-start [--open] [--debug]  Start web server in background
                             --open  Also open browser after start
+                            --debug Enable fetch-models instrumentation (see log)
     chat-stop               Stop web server
     chat-status [--json]     Show running status (no wait)
                             --json  Machine-readable output
@@ -112,9 +113,21 @@ EOF
 
 cmd_chat_start() {
     local open_browser=false
-    [[ "$1" == "--open" ]] && open_browser=true
+    local debug=false
+    while [[ -n "$1" ]]; do
+        case "$1" in
+            --open)  open_browser=true ;;
+            --debug) debug=true ;;
+        esac
+        shift
+    done
 
-    if start_chat_service_background; then
+    if $debug; then
+        start_chat_service_background --debug
+    else
+        start_chat_service_background
+    fi
+    if [[ $? -eq 0 ]]; then
         if $open_browser; then
             (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
         fi
