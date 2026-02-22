@@ -21,6 +21,29 @@ from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
 
 
+def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
+    """Convert DataFrame to list of dicts with Timestamp/datetime/numpy types made JSON-serializable."""
+    import pandas as pd
+    from datetime import datetime, date
+    records = df.to_dict(orient="records")
+    out = []
+    for row in records:
+        new_row = {}
+        for k, v in row.items():
+            if pd.isna(v):
+                new_row[k] = None
+            elif isinstance(v, (pd.Timestamp, datetime, date)):
+                new_row[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
+            elif hasattr(v, "item"):  # numpy scalar (int64, float64, etc.)
+                new_row[k] = v.item()
+            elif isinstance(v, (bytes, bytearray)):
+                new_row[k] = v.decode("utf-8", errors="replace")
+            else:
+                new_row[k] = v
+        out.append(new_row)
+    return out
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: ensure static dir exists. Shutdown: (none)."""
@@ -283,7 +306,7 @@ async def query(request: QueryRequest):
         if request.execute and sql:
             df = agent.run_sql(sql)
             if df is not None:
-                results = df.to_dict(orient="records")
+                results = _dataframe_to_json_safe(df)
                 row_count = len(df)
         
         # Add assistant message
@@ -324,7 +347,7 @@ async def execute_sql(request: ExecuteRequest):
         df = agent.run_sql(request.sql)
         if df is not None:
             return {
-                "results": df.to_dict(orient="records"),
+                "results": _dataframe_to_json_safe(df),
                 "row_count": len(df),
                 "columns": list(df.columns)
             }
@@ -423,7 +446,7 @@ async def websocket_chat(websocket: WebSocket):
                 if execute and sql:
                     df = agent.run_sql(sql)
                     if df is not None:
-                        results = df.to_dict(orient="records")
+                        results = _dataframe_to_json_safe(df)
                         await websocket.send_json({
                             "type": "results",
                             "content": results,

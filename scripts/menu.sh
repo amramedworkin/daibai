@@ -81,10 +81,11 @@ show_chat_service_menu() {
     show_chat_service_status_bar
     echo -e "  ${DIM}Web UI and daibai-server${NC}"
     echo ""
-    print_action_option "1" "Start Web Server (background) ${YELLOW}${DIM}(daibai-server)${NC}"
-    print_action_option "2" "Start Web Server & Open Browser ${YELLOW}${DIM}(background, port 8080)${NC}"
+    print_action_option "1" "Start Web Server (background) ${YELLOW}${DIM}(kills existing first)${NC}"
+    print_action_option "2" "Start Web Server & Open Browser ${YELLOW}${DIM}(kills existing first)${NC}"
     print_action_option "3" "Check if Server is Running"
-    print_action_option "4" "Stop Web Server ${YELLOW}${DIM}(if started by menu)${NC}"
+    print_action_option "4" "Stop Web Server ${YELLOW}${DIM}(fully kill pid/sid)${NC}"
+    print_action_option "5" "Restart Web Server ${YELLOW}${DIM}(stop then start)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -128,6 +129,13 @@ handle_chat_service_menu() {
             4)
                 clear
                 stop_chat_service
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            5)
+                clear
+                restart_chat_service
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
