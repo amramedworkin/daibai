@@ -146,6 +146,32 @@ async function getTokenPopup(request) {
     }
 }
 
+/** Get access token for DaiBai API. Uses openid scope; token is validated by backend. */
+async function getApiToken() {
+    const request = { scopes: ['openid', 'profile'] };
+    const response = await getTokenPopup(request);
+    return response.accessToken;
+}
+
+/** Fetch wrapper that adds Bearer token for authenticated API calls. */
+async function apiFetch(url, options = {}) {
+    const opts = { ...options };
+    opts.headers = opts.headers || {};
+    try {
+        const token = await getApiToken();
+        opts.headers['Authorization'] = 'Bearer ' + token;
+    } catch (e) {
+        showAuthGate();
+        throw e;
+    }
+    const res = await fetch(url, opts);
+    if (res.status === 401) {
+        showAuthGate();
+        throw new Error('Session expired. Please sign in again.');
+    }
+    return res;
+}
+
 function callMSGraph(endpoint, token, callback) {
     fetch(endpoint, {
         headers: { Authorization: `Bearer ${token}` },
@@ -265,7 +291,7 @@ class DaiBaiApp {
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                const res = await fetch('/api/upload', { method: 'POST', body: formData });
+                const res = await apiFetch('/api/upload', { method: 'POST', body: formData });
                 if (res.ok) {
                     const data = await res.json();
                     this.attachedFiles.push({ id: data.id, name: data.name, size: data.size });
@@ -502,7 +528,7 @@ class DaiBaiApp {
     
     async loadSettings() {
         try {
-            const response = await fetch('/api/settings');
+            const response = await apiFetch('/api/settings');
             const settings = await response.json();
             const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
             
@@ -532,7 +558,7 @@ class DaiBaiApp {
     
     async updateSettings() {
         try {
-            await fetch('/api/settings', {
+            await apiFetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -548,7 +574,7 @@ class DaiBaiApp {
     
     async loadConversations() {
         try {
-            const response = await fetch('/api/conversations');
+            const response = await apiFetch('/api/conversations');
             const conversations = await response.json();
             
             this.conversationList.innerHTML = conversations.map(conv => `
@@ -585,7 +611,7 @@ class DaiBaiApp {
     
     async loadConversation(id) {
         try {
-            const response = await fetch(`/api/conversations/${id}`);
+            const response = await apiFetch(`/api/conversations/${id}`);
             const conversation = await response.json();
             
             this.conversationId = id;
@@ -614,7 +640,7 @@ class DaiBaiApp {
     
     async deleteConversation(id) {
         try {
-            await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+            await apiFetch(`/api/conversations/${id}`, { method: 'DELETE' });
             
             if (id === this.conversationId) {
                 this.startNewChat();
@@ -639,10 +665,15 @@ class DaiBaiApp {
         });
     }
     
-    connectWebSocket() {
+    async connectWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
-        
+        let token;
+        try {
+            token = await getApiToken();
+        } catch (e) {
+            return;
+        }
+        const wsUrl = `${protocol}//${window.location.host}/ws/chat?token=${encodeURIComponent(token)}`;
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
@@ -748,7 +779,7 @@ class DaiBaiApp {
     
     async sendMessageRest(query) {
         try {
-            const response = await fetch('/api/query', {
+            const response = await apiFetch('/api/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -969,7 +1000,7 @@ class DaiBaiApp {
                 runBtn.disabled = true;
                 
                 try {
-                    const response = await fetch('/api/execute', {
+                    const response = await apiFetch('/api/execute', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ sql: sql })
@@ -1053,7 +1084,7 @@ class DaiBaiApp {
         this.schemaContent.textContent = 'Loading schema...';
         
         try {
-            const response = await fetch('/api/schema');
+            const response = await apiFetch('/api/schema');
             const data = await response.json();
             this.schemaContent.textContent = data.schema || 'No schema available';
         } catch (error) {
@@ -1079,7 +1110,7 @@ class DaiBaiApp {
     async loadSettingsState() {
         try {
             const [settingsRes, prefs] = await Promise.all([
-                fetch('/api/settings'),
+                apiFetch('/api/settings'),
                 Promise.resolve(JSON.parse(localStorage.getItem('daibai_preferences') || '{}'))
             ]);
             const settings = await settingsRes.json();
@@ -1407,10 +1438,10 @@ class DaiBaiApp {
     async clearAllConversations() {
         if (!confirm('Clear all conversations? This cannot be undone.')) return;
         try {
-            const response = await fetch('/api/conversations');
+            const response = await apiFetch('/api/conversations');
             const conversations = await response.json();
             for (const c of conversations) {
-                await fetch(`/api/conversations/${c.id}`, { method: 'DELETE' });
+                await apiFetch(`/api/conversations/${c.id}`, { method: 'DELETE' });
             }
             this.startNewChat();
             await this.loadConversations();
@@ -1422,7 +1453,7 @@ class DaiBaiApp {
 
     async refreshIndex() {
         try {
-            await fetch('/api/schema'); // Triggers schema load; backend could add /api/refresh-index
+            await apiFetch('/api/schema'); // Triggers schema load; backend could add /api/refresh-index
             alert('Index refresh requested.');
         } catch (e) {
             console.error('Failed to refresh index:', e);
@@ -1438,7 +1469,7 @@ class DaiBaiApp {
         const provider = this.settingsState?.selected_llm_provider || document.getElementById('settingsLLMProvider')?.value;
         const values = this.readLLMFormValues();
         try {
-            const res = await fetch('/api/test-llm', {
+            const res = await apiFetch('/api/test-llm', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ provider, ...values })
@@ -1471,7 +1502,7 @@ class DaiBaiApp {
             btn.textContent = 'Fetching...';
         }
         try {
-            const res = await fetch('/api/config/fetch-models', {
+            const res = await apiFetch('/api/config/fetch-models', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1551,7 +1582,7 @@ class DaiBaiApp {
     async saveSettings() {
         const payload = this.buildConfigPayload();
         try {
-            const response = await fetch('/api/config', {
+            const response = await apiFetch('/api/config', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

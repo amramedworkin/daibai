@@ -86,6 +86,7 @@ show_chat_service_menu() {
     print_action_option "3" "Check if Server is Running"
     print_action_option "4" "Stop Web Server ${YELLOW}${DIM}(fully kill pid/sid)${NC}"
     print_action_option "5" "Restart Web Server ${YELLOW}${DIM}(stop then start)${NC}"
+    print_action_option "6" "Run daibai-server (foreground) ${YELLOW}${DIM}(see logs, Ctrl+C to stop)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -136,6 +137,14 @@ handle_chat_service_menu() {
             5)
                 clear
                 restart_chat_service
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            6)
+                clear
+                echo -e "${CYAN}Starting daibai-server in foreground (Ctrl+C to stop)...${NC}"
+                run_daibai_server
                 echo ""
                 echo "Press Enter to continue..."
                 read -r

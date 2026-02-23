@@ -291,13 +291,112 @@ knownAuthorities: ['https://daibaiauth.ciamlogin.com']
 | Register | Nav bar (right) | Opens sign-up/sign-in flow (registration for new users) |
 | Sign Out | Nav bar (right) | Logs out and clears session |
 
-**Future: API Integration**
+### Implementation Completed: Backend API Authentication & Key Vault
 
-When the FastAPI backend is secured (Phase 1), the frontend will:
+The following work has been implemented and is ready for use.
 
-1. Call `getTokenPopup({ scopes: ['api://DaiBai-API/access'] })` to obtain an access token for the DaiBai-API app.
-2. Send the token in the `Authorization: Bearer <token>` header on each API request.
-3. The backend will validate the JWT against Entra's OIDC metadata before processing requests.
+#### 1. Backend API Authentication (JWT Token Validation)
+
+**What was done:**
+
+- **Dependencies:** Added `PyJWT[crypto]` (gui extras) and `httpx` (dev extras) for token validation and testing.
+- **Security scheme:** `OAuth2AuthorizationCodeBearer` with Entra ID URLs:
+  - `authorizationUrl`: `https://daibaiauth.ciamlogin.com/{tenant}/oauth2/v2.0/authorize`
+  - `tokenUrl`: `https://daibaiauth.ciamlogin.com/{tenant}/oauth2/v2.0/token`
+- **Token validation:** `get_current_user()` dependency validates JWTs using JWKS from `https://daibaiauth.ciamlogin.com/{tenant}/discovery/v2.0/keys`. Validates signature, expiry, audience (`ENTRA_CLIENT_ID`), and issuer (`ENTRA_ISSUER`).
+- **Protected endpoints:** All core API routes require authentication:
+  - `GET/POST /api/settings`, `PUT /api/config`, `POST /api/test-llm`, `POST /api/config/fetch-models`
+  - `GET/POST/DELETE /api/conversations`, `GET /api/conversations/{id}`
+  - `POST /api/query`, `POST /api/execute`, `POST /api/upload`
+  - `GET /api/schema`, `GET /api/tables`
+- **WebSocket:** `/ws/chat` requires a `token` query parameter; connection is rejected with code 4001 if missing or invalid.
+- **Frontend integration:** `apiFetch()` helper acquires an access token via `getTokenPopup({ scopes: ['openid', 'profile'] })` and adds `Authorization: Bearer <token>` to all API requests. WebSocket connects with `?token=...` in the URL.
+
+**Files modified:**
+
+- `daibai/api/server.py` – OAuth2 scheme, `get_current_user`, `_decode_and_validate_token`, route protection
+- `daibai/gui/static/app.js` – `getApiToken()`, `apiFetch()`, WebSocket token in query
+- `pyproject.toml` – `PyJWT[crypto]`, `httpx`
+- `tests/test_auth.py` – 401 without auth, 200 with mocked valid token
+
+#### 2. Azure Key Vault Integration
+
+**What was done:**
+
+- **Dependencies:** Added `azure-identity` and `azure-keyvault-secrets` to main project dependencies.
+- **Config loader:** `load_config()` in `daibai/core/config.py` checks for `KEY_VAULT_URL`. If set:
+  - Uses `DefaultAzureCredential()` and `SecretClient` to fetch secrets.
+  - Maps Key Vault secret names to LLM provider configs: `OPENAI-API-KEY`, `GEMINI-API-KEY`, `ANTHROPIC-API-KEY`, `AZURE-OPENAI-API-KEY`, `DEEPSEEK-API-KEY`, `MISTRAL-API-KEY`, `GROQ-API-KEY`, `NVIDIA-API-KEY`, `ALIBABA-API-KEY`, `META-API-KEY`.
+  - Injects secrets into `os.environ` for `${VAR}` resolution (e.g. `OPENAI_API_KEY` from `OPENAI-API-KEY`).
+  - Fills provider `api_key` when YAML has empty or missing keys.
+- **Fallback:** If `KEY_VAULT_URL` is unset or Key Vault access fails, config falls back to `.env` and YAML.
+
+**Files modified:**
+
+- `daibai/core/config.py` – `_fetch_secrets_from_keyvault()`, `_KEYVAULT_LLM_MAPPING`, Key Vault logic in `load_config()`
+- `pyproject.toml` – `azure-identity`, `azure-keyvault-secrets`
+- `tests/test_azure_config.py` – Key Vault fetch test, local fallback test
+
+---
+
+## What to Do Right Now
+
+Follow these steps to run and verify the current implementation.
+
+### 1. Install Dependencies
+
+```bash
+cd /path/to/daibai
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[gui,dev]"
+```
+
+### 2. Run the Application (Local)
+
+```bash
+daibai-server
+# or: python -m daibai.api.server
+```
+
+Open http://localhost:8080 in your browser.
+
+### 3. Test API Security
+
+- **Without login:** The auth gate blocks the app. API calls return 401.
+- **With login:** Click Login, sign in with Entra, then use the app. API calls succeed with the Bearer token.
+
+To test via curl:
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/settings
+# Expect: 401
+```
+
+### 4. (Optional) Use Azure Key Vault for Secrets
+
+If you want to pull LLM keys from Key Vault instead of `.env`:
+
+1. **Log in to Azure:**
+   ```bash
+   az login
+   ```
+
+2. **Set the Key Vault URL:**
+   ```bash
+   export KEY_VAULT_URL="https://your-vault-name.vault.azure.net/"
+   ```
+
+3. **Create secrets** in your Key Vault (e.g. `OPENAI-API-KEY`, `GEMINI-API-KEY`) and grant your identity `Key Vault Secrets User` (or equivalent) access.
+
+4. **Run the app** – config will load secrets from Key Vault when `KEY_VAULT_URL` is set.
+
+### 5. Run Tests
+
+```bash
+pytest tests/test_auth.py tests/test_azure_config.py -v
+```
+
+---
 
 ### Phase 1: Environment Abstraction & Cloud-Ready Refactoring
 

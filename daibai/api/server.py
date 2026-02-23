@@ -12,7 +12,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File
+import jwt
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends
+from fastapi.security import OAuth2AuthorizationCodeBearer
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,6 +22,69 @@ from pydantic import BaseModel
 
 from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
+
+# Entra ID (daibaiauth tenant) - matches frontend MSAL config
+ENTRA_TENANT_ID = "e12adb01-a6b3-47bb-86c0-d662dacb3675"
+ENTRA_CLIENT_ID = "5f5462c3-47b1-4af0-9ee0-6271d9893780"
+ENTRA_ISSUER = f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/v2.0"
+ENTRA_JWKS_URL = f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/discovery/v2.0/keys"
+
+oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    authorizationUrl=f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/oauth2/v2.0/authorize",
+    tokenUrl=f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/oauth2/v2.0/token",
+)
+
+
+def _get_jwks():
+    """Fetch JWKS from Entra ID (cached)."""
+    import urllib.request
+    with urllib.request.urlopen(ENTRA_JWKS_URL, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _decode_and_validate_token(token: str) -> Dict[str, Any]:
+    """Decode and validate JWT from Entra ID. Raises HTTPException on failure."""
+    try:
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        jwks = _get_jwks()
+        if not kid:
+            # Fallback: try decoding with first key
+            keys = jwks.get("keys", [])
+            if not keys:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            key = jwt.algorithms.RSAAlgorithm.from_jwk(keys[0])
+            payload = jwt.decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                audience=ENTRA_CLIENT_ID,
+                issuer=ENTRA_ISSUER,
+            )
+            return payload
+        for key_data in jwks.get("keys", []):
+            if key_data.get("kid") == kid:
+                key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+                payload = jwt.decode(
+                    token,
+                    key,
+                    algorithms=["RS256"],
+                    audience=ENTRA_CLIENT_ID,
+                    issuer=ENTRA_ISSUER,
+                )
+                return payload
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
+    """Validate JWT and return decoded payload. Raises 401 if invalid."""
+    return _decode_and_validate_token(token)
 
 
 def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
@@ -147,9 +212,9 @@ async def favicon():
     favicon_path = STATIC_DIR / "logo.png"
     return FileResponse(favicon_path, media_type="image/png")
 
-# API Endpoints
+# API Endpoints (protected)
 @app.get("/api/settings", response_model=SettingsResponse)
-async def get_settings():
+async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
     """Get current settings and available options."""
     config = get_config()
     agent = get_agent()
@@ -166,7 +231,7 @@ async def get_settings():
 
 
 @app.post("/api/settings")
-async def update_settings(settings: SettingsUpdate):
+async def update_settings(settings: SettingsUpdate, _user: Dict[str, Any] = Depends(get_current_user)):
     """Update current settings."""
     agent = get_agent()
     
@@ -179,7 +244,7 @@ async def update_settings(settings: SettingsUpdate):
 
 
 @app.put("/api/config")
-async def update_config(config: ConfigUpdate):
+async def update_config(config: ConfigUpdate, _user: Dict[str, Any] = Depends(get_current_user)):
     """Update config (nested JSON matching daibai.yaml structure).
     Frontend sends complete object; backend persists when Stripe/user storage is ready."""
     # TODO: Persist to user storage / Stripe when auth is implemented
@@ -187,7 +252,7 @@ async def update_config(config: ConfigUpdate):
 
 
 @app.post("/api/test-llm")
-async def test_llm_connection(body: Dict[str, Any] = Body(default={})):
+async def test_llm_connection(body: Dict[str, Any] = Body(default={}), _user: Dict[str, Any] = Depends(get_current_user)):
     """Test LLM provider connectivity. Returns success/error."""
     # TODO: Implement actual connectivity test per provider
     return {"success": True, "message": "Connection test not yet implemented"}
@@ -225,7 +290,7 @@ def _resolve_fetch_models_api_key(provider: str, api_key: Optional[str]) -> Opti
 
 
 @app.post("/api/config/fetch-models")
-async def fetch_models(request: FetchModelsRequest):
+async def fetch_models(request: FetchModelsRequest, _user: Dict[str, Any] = Depends(get_current_user)):
     """Fetch available models from an LLM provider."""
     import os
     api_key = _resolve_fetch_models_api_key(request.provider, request.api_key)
@@ -257,7 +322,7 @@ async def fetch_models(request: FetchModelsRequest):
 
 
 @app.get("/api/conversations", response_model=List[ConversationSummary])
-async def list_conversations():
+async def list_conversations(_user: Dict[str, Any] = Depends(get_current_user)):
     """List all conversations."""
     summaries = []
     for conv_id, messages in _conversations.items():
@@ -274,7 +339,7 @@ async def list_conversations():
 
 
 @app.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, _user: Dict[str, Any] = Depends(get_current_user)):
     """Get a specific conversation."""
     if conversation_id not in _conversations:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -282,7 +347,7 @@ async def get_conversation(conversation_id: str):
 
 
 @app.post("/api/conversations")
-async def create_conversation():
+async def create_conversation(_user: Dict[str, Any] = Depends(get_current_user)):
     """Create a new conversation."""
     conv_id = str(uuid.uuid4())
     _conversations[conv_id] = []
@@ -290,7 +355,7 @@ async def create_conversation():
 
 
 @app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(conversation_id: str, _user: Dict[str, Any] = Depends(get_current_user)):
     """Delete a conversation."""
     if conversation_id in _conversations:
         del _conversations[conversation_id]
@@ -298,7 +363,7 @@ async def delete_conversation(conversation_id: str):
 
 
 @app.post("/api/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+async def query(request: QueryRequest, _user: Dict[str, Any] = Depends(get_current_user)):
     """Process a natural language query."""
     agent = get_agent()
     
@@ -358,7 +423,7 @@ class ExecuteRequest(BaseModel):
 
 
 @app.post("/api/execute")
-async def execute_sql(request: ExecuteRequest):
+async def execute_sql(request: ExecuteRequest, _user: Dict[str, Any] = Depends(get_current_user)):
     """Execute SQL directly."""
     agent = get_agent()
     try:
@@ -379,7 +444,7 @@ UPLOADS_DIR = Path.home() / ".daibai" / "uploads"
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), _user: Dict[str, Any] = Depends(get_current_user)):
     """Store uploaded file locally. Returns file id, name, size for session reference."""
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     file_id = str(uuid.uuid4())
@@ -399,7 +464,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @app.get("/api/schema")
-async def get_schema():
+async def get_schema(_user: Dict[str, Any] = Depends(get_current_user)):
     """Get the current database schema."""
     agent = get_agent()
     schema = agent.get_schema()
@@ -407,7 +472,7 @@ async def get_schema():
 
 
 @app.get("/api/tables")
-async def get_tables():
+async def get_tables(_user: Dict[str, Any] = Depends(get_current_user)):
     """Get list of tables in current database."""
     agent = get_agent()
     try:
@@ -422,7 +487,16 @@ async def get_tables():
 # WebSocket for streaming responses
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat responses."""
+    """WebSocket endpoint for streaming chat responses. Requires token in query param."""
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001)
+        return
+    try:
+        _decode_and_validate_token(token)
+    except HTTPException:
+        await websocket.close(code=4001)
+        return
     await websocket.accept()
     agent = get_agent()
     

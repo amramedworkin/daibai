@@ -4,6 +4,7 @@ Configuration system for DaiBai.
 Loads configuration from:
 1. daibai.yaml (or ~/.daibai/daibai.yaml) for structure
 2. .env for secrets (API keys, passwords)
+3. Azure Key Vault (when KEY_VAULT_URL is set)
 
 Supports ${VAR} placeholder resolution from environment.
 """
@@ -16,6 +17,41 @@ from dataclasses import dataclass, field
 
 import yaml
 from dotenv import load_dotenv
+
+# Key Vault secret name -> provider_type for LLM API keys
+_KEYVAULT_LLM_MAPPING = {
+    "OPENAI-API-KEY": "openai",
+    "GEMINI-API-KEY": "gemini",
+    "ANTHROPIC-API-KEY": "anthropic",
+    "AZURE-OPENAI-API-KEY": "azure",
+    "DEEPSEEK-API-KEY": "deepseek",
+    "MISTRAL-API-KEY": "mistral",
+    "GROQ-API-KEY": "groq",
+    "NVIDIA-API-KEY": "nvidia",
+    "ALIBABA-API-KEY": "alibaba",
+    "META-API-KEY": "meta",
+}
+
+
+def _fetch_secrets_from_keyvault(vault_url: str) -> Dict[str, str]:
+    """Fetch secrets from Azure Key Vault. Returns dict of secret_name -> value."""
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.keyvault.secrets import SecretClient
+
+        credential = DefaultAzureCredential()
+        client = SecretClient(vault_url=vault_url, credential=credential)
+        result = {}
+        for secret_name in _KEYVAULT_LLM_MAPPING:
+            try:
+                secret = client.get_secret(secret_name)
+                if secret and secret.value:
+                    result[secret_name] = secret.value
+            except Exception:
+                pass
+        return result
+    except Exception:
+        return {}
 
 
 @dataclass
@@ -172,7 +208,11 @@ def _parse_llm_config(name: str, data: Dict[str, Any]) -> LLMProviderConfig:
 
 def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = None) -> Config:
     """
-    Load configuration from YAML and environment.
+    Load configuration from YAML, environment, and optionally Azure Key Vault.
+    
+    When KEY_VAULT_URL is set, fetches LLM API keys (OPENAI-API-KEY, GEMINI-API-KEY, etc.)
+    from Azure Key Vault and maps them to provider configs. Falls back to .env/YAML if
+    Key Vault is unavailable.
     
     Args:
         config_path: Path to daibai.yaml (auto-detected if not provided)
@@ -198,6 +238,28 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
             if loc.exists():
                 load_dotenv(loc)
                 break
+
+    # Fetch secrets from Azure Key Vault if configured
+    keyvault_secrets: Dict[str, str] = {}
+    vault_url = os.environ.get("KEY_VAULT_URL", "").strip()
+    if vault_url:
+        keyvault_secrets = _fetch_secrets_from_keyvault(vault_url)
+        # Inject into env for ${VAR} resolution (e.g. OPENAI_API_KEY from OPENAI-API-KEY)
+        env_mapping = {
+            "OPENAI-API-KEY": "OPENAI_API_KEY",
+            "GEMINI-API-KEY": "GEMINI_API_KEY",
+            "ANTHROPIC-API-KEY": "ANTHROPIC_API_KEY",
+            "AZURE-OPENAI-API-KEY": "AZURE_OPENAI_API_KEY",
+            "DEEPSEEK-API-KEY": "DEEPSEEK_API_KEY",
+            "MISTRAL-API-KEY": "MISTRAL_API_KEY",
+            "GROQ-API-KEY": "GROQ_API_KEY",
+            "NVIDIA-API-KEY": "NVIDIA_API_KEY",
+            "ALIBABA-API-KEY": "ALIBABA_API_KEY",
+            "META-API-KEY": "META_API_KEY",
+        }
+        for kv_name, env_name in env_mapping.items():
+            if kv_name in keyvault_secrets and not os.environ.get(env_name):
+                os.environ[env_name] = keyvault_secrets[kv_name]
     
     # Find and load YAML config
     yaml_path = config_path or _find_config_file()
@@ -225,6 +287,14 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
     for llm_name, llm_data in llm_section.items():
         if isinstance(llm_data, dict):
             llm_providers[llm_name] = _parse_llm_config(llm_name, llm_data)
+    
+    # Apply Key Vault secrets to LLM providers when api_key is empty
+    for kv_name, provider_type in _KEYVAULT_LLM_MAPPING.items():
+        if kv_name not in keyvault_secrets:
+            continue
+        for provider_name, provider in llm_providers.items():
+            if (provider.provider_type or "").lower() == provider_type.lower() and not provider.api_key:
+                provider.api_key = keyvault_secrets[kv_name]
     
     # Get defaults
     default_database = db_section.get("default") or (list(databases.keys())[0] if databases else None)

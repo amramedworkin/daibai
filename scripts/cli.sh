@@ -59,6 +59,7 @@ Commands (mirrors menu.sh):
     chat-status [--json]     Show running status (no wait)
                             --json  Machine-readable output
     chat-toggle             Toggle start/stop
+    server                  Run daibai-server in foreground (see logs, Ctrl+C to stop)
 
   INTERACTIVE CLI (menu 2)
     cli-launch              Launch interactive daibai REPL (foreground)
@@ -96,6 +97,7 @@ Examples:
     $(basename "$0") chat-status
     $(basename "$0") chat-bounce
     $(basename "$0") chat-start --open
+    $(basename "$0") server
     $(basename "$0") cli-query "How many users are in the database?"
     $(basename "$0") train --database suitecrm
     $(basename "$0") config-path
@@ -172,6 +174,10 @@ cmd_chat_status() {
         fi
         echo ""
     fi
+}
+
+cmd_server() {
+    run_daibai_server "$@"
 }
 
 cmd_chat_toggle() {
@@ -405,6 +411,9 @@ main() {
             ;;
         chat-toggle)
             cmd_chat_toggle
+            ;;
+        server)
+            cmd_server "$@"
             ;;
         cli-launch)
             cmd_cli_launch
