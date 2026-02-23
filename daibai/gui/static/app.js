@@ -52,6 +52,48 @@ async function signOut() {
     }
 }
 
+async function getTokenPopup(request) {
+    await msalInstance.initialize();
+    const account = msalInstance.getAllAccounts()[0];
+    if (!account) {
+        throw new Error('No account signed in');
+    }
+    const silentRequest = { ...request, account };
+    try {
+        return await msalInstance.acquireTokenSilent(silentRequest);
+    } catch (error) {
+        if (error.name === 'InteractionRequiredAuthError') {
+            return await msalInstance.acquireTokenPopup(request);
+        }
+        throw error;
+    }
+}
+
+function callMSGraph(endpoint, token, callback) {
+    fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+    })
+        .then((res) => res.json())
+        .then((data) => callback(null, data))
+        .catch((err) => callback(err, null));
+}
+
+async function readMail() {
+    const request = { scopes: ['User.Read'] };
+    try {
+        const response = await getTokenPopup(request);
+        callMSGraph('https://graph.microsoft.com/v1.0/me', response.accessToken, (err, data) => {
+            if (err) {
+                console.error('Graph API error:', err);
+                return;
+            }
+            console.log('Profile:', data);
+        });
+    } catch (error) {
+        console.error('Token error:', error);
+    }
+}
+
 // Supported LLM providers (order for display)
 const SUPPORTED_LLM_PROVIDERS = [
     'ollama', 'openai', 'anthropic', 'gemini', 'azure',
