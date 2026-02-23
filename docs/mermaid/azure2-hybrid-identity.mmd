@@ -1,0 +1,23 @@
+graph LR
+    subgraph Client_Side["User Interface (Local or Hosted)"]
+        UI[DaiBai GUI]
+    end
+
+    subgraph Azure_Identity_Layer["Azure (The Cloud Gatekeeper)"]
+        B2C[Azure AD B2C]
+        AKV[Azure Key Vault]
+    end
+
+    subgraph Local_Compute["Your Current Server (Local)"]
+        API[FastAPI Server]
+        Core[DaiBai Core Logic]
+        DB[(Local Databases)]
+    end
+
+    %% Flow
+    UI -->|1. Sign-In Request| B2C
+    B2C -->|2. JWT Identity Token| UI
+    UI -->|3. API Call + Token| API
+    API -->|4. Validate Token| B2C
+    API -->|5. Fetch Secrets| AKV
+    Core -->|6. Query| DB

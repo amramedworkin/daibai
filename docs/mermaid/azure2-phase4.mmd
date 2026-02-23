@@ -1,0 +1,24 @@
+graph TD
+    subgraph Azure_Cloud["Azure Serverless (Cloud)"]
+        AF[Azure Function / Agent]
+        CDB[(Cosmos DB - Multi-tenant)]
+        Vault[Key Vault - User Keys]
+        RelayH[Azure Relay - Cloud Hub]
+    end
+
+    subgraph User_A_Network["User A (Local/On-Prem)"]
+        AgentA[Local Relay Listener]
+        DB_A[(User A Local DB)]
+    end
+
+    subgraph Billing_External
+        Stripe[Stripe API / Billing]
+    end
+
+    %% Flow
+    AF -->|1. Check Subscription| Stripe
+    AF -->|2. Get User A Keys| Vault
+    AF -->|3. Route Query| RelayH
+    RelayH <-->|4. Secure Tunnel| AgentA
+    AgentA <-->|5. Local SQL| DB_A
+    AF -->|6. Log Usage| CDB

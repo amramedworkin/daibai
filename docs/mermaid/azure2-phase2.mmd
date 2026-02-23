@@ -1,0 +1,32 @@
+graph LR
+    subgraph Deployment_Source
+        Git[GitHub Repository]
+        Bicep[Bicep Templates]
+    end
+
+    subgraph Azure_Subscription
+        subgraph Resource_Group
+            RG[Resource Group]
+
+            subgraph Security
+                AKV[Key Vault]
+            end
+
+            subgraph Compute
+                AF[Function App]
+                SWA[Static Web App]
+            end
+
+            subgraph Data
+                CDB[Cosmos DB Serverless]
+                ASQL[Azure SQL Serverless]
+            end
+        end
+    end
+
+    Git -->|Push| Bicep
+    Bicep -->|Deploy| RG
+    AF -->|Identity Auth| AKV
+    AF -->|Read/Write| CDB
+    AF -->|Metadata| ASQL
+    SWA -->|CORS Connection| AF

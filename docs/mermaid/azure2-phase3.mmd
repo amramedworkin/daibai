@@ -1,0 +1,29 @@
+graph TD
+    subgraph GitHub_Cloud["GitHub (Source & Automation)"]
+        Repo[DaiBai Repo]
+        Actions[GitHub Actions Runner]
+        Secret[GitHub Actions Secrets]
+    end
+
+    subgraph Azure_Cloud["Azure (Production Environment)"]
+        direction TB
+        SWA[Azure Static Web App]
+        AF_Slot[Azure Function - Staging Slot]
+        AF_Prod[Azure Function - Production]
+        CDB[(Cosmos DB)]
+    end
+
+    %% Workflow
+    Repo -->|1. Git Push| Actions
+    Secret -->|2. Injects Credentials| Actions
+
+    Actions -->|3. Test & Build| Actions
+
+    Actions -->|4a. Deploy Frontend| SWA
+    Actions -->|4b. Deploy Backend| AF_Slot
+
+    AF_Slot -->|5. Smoke Test| CDB
+    AF_Slot -.->|6. Swap| AF_Prod
+
+    style GitHub_Cloud fill:#f5f5f5,stroke:#333
+    style Azure_Cloud fill:#e1f5fe,stroke:#01579b
