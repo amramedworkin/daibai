@@ -1,9 +1,9 @@
 """
 Stateless conversation store backed by Azure Cosmos DB.
 
-Uses DefaultAzureCredential for authentication. Document id = session_id,
-partition key = /id. Chat history stored as list of message objects.
-All operations use azure.cosmos.aio (async) to avoid blocking the FastAPI event loop.
+Uses azure.cosmos.aio.CosmosClient with DefaultAzureCredential. Async is critical
+for web servers so one user's database save doesn't block others.
+No local storage—all data lives in Cosmos DB.
 """
 
 import os
@@ -14,11 +14,11 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity.aio import DefaultAzureCredential
 
 
-class CosmosConversationStore:
+class CosmosStore:
     """
-    Stateless conversation store using Azure Cosmos DB (async).
+    Stateless Cosmos DB store. Singleton client pattern: create once, reuse.
     Database: daibai-metadata, Container: conversations.
-    Document: { id: session_id, messages: [{role, content, ...}] }
+    Document: {"id": session_id, "messages": [...]}
     Partition key: /id
     """
 
@@ -40,7 +40,7 @@ class CosmosConversationStore:
         return bool(self._endpoint)
 
     async def _ensure_client(self) -> CosmosClient:
-        """Create and return the Cosmos client. Reuses existing client."""
+        """Create and return the Cosmos client. Singleton: create once, reuse."""
         if self._client is not None:
             return self._client
         if not self._endpoint:
@@ -61,6 +61,25 @@ class CosmosConversationStore:
             await self._credential.close()
             self._credential = None
 
+    async def get_chat_history(self, session_id: str) -> list:
+        """Fetch the document where id == session_id. Return messages list or [] if not found."""
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client(self._container_name)
+        try:
+            doc = await container.read_item(item=session_id, partition_key=session_id)
+            return doc.get("messages", [])
+        except CosmosResourceNotFoundError:
+            return []
+
+    async def save_chat_history(self, session_id: str, messages: list) -> None:
+        """Save chat history. Document structure: {"id": session_id, "messages": messages}."""
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client(self._container_name)
+        doc = {"id": session_id, "messages": messages}
+        await container.upsert_item(doc)
+
     async def ping(self) -> bool:
         """Ping Cosmos DB to verify connectivity. Returns True if successful."""
         if not self._endpoint:
@@ -73,32 +92,22 @@ class CosmosConversationStore:
         except Exception:
             return False
 
+    # Aliases for backward compatibility (server and tests use these)
     async def get_history(self, session_id: str) -> List[Dict[str, Any]]:
-        """Fetch the document where id == session_id. Return the messages list or empty list if not found."""
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        try:
-            doc = await container.read_item(item=session_id, partition_key=session_id)
-            return doc.get("messages", [])
-        except CosmosResourceNotFoundError:
-            return []
+        """Alias for get_chat_history."""
+        return await self.get_chat_history(session_id)
 
     async def upsert_history(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
-        """Save the entire message list back to Cosmos DB."""
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        doc = {"id": session_id, "messages": messages}
-        await container.upsert_item(doc)
+        """Alias for save_chat_history."""
+        await self.save_chat_history(session_id, messages)
 
     async def append_messages(
         self, session_id: str, new_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Fetch existing messages, append new ones, upsert, and return the full list."""
-        messages = await self.get_history(session_id)
+        """Fetch existing messages, append new ones, save, and return the full list."""
+        messages = await self.get_chat_history(session_id)
         messages.extend(new_messages)
-        await self.upsert_history(session_id, messages)
+        await self.save_chat_history(session_id, messages)
         return messages
 
     async def list_conversations(self) -> List[Dict[str, Any]]:
@@ -144,5 +153,5 @@ class CosmosConversationStore:
             pass  # Idempotent: already deleted
 
 
-# Backward compatibility alias
-CosmosStore = CosmosConversationStore
+# Backward compatibility alias (server imports CosmosConversationStore)
+CosmosConversationStore = CosmosStore

@@ -28,7 +28,7 @@ def _get_category(nodeid):
         return "DB", _CYAN
     if "test_api" in nodeid:
         return "API", _GREEN
-    if "test_cosmos_cloud" in nodeid or "test_cosmos_integration" in nodeid:
+    if "test_cosmos_cloud" in nodeid or "test_cosmos_integration" in nodeid or "test_cosmos_store" in nodeid:
         return "CLOUD", _YELLOW
     return None, None
 
@@ -44,7 +44,7 @@ def pytest_runtest_setup(item):
         return
     doc = _test_docs[item.nodeid]
     mod = item.module.__name__
-    if mod in ("tests.test_database_logic", "tests.test_api", "tests.test_cosmos_cloud"):
+    if mod in ("tests.test_database_logic", "tests.test_api", "tests.test_cosmos_cloud", "tests.test_cosmos_store"):
         if "test_database_logic" in mod:
             prefix = f"{_CYAN}{_BOLD}[DB]"
         elif "test_api" in mod:
@@ -64,7 +64,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     skipped = stats.get("skipped", [])
     all_reports = [(r, "passed") for r in passed] + [(r, "failed") for r in failed] + [(r, "skipped") for r in skipped]
     # Only show dashboard for our key test modules
-    key_mods = ("test_database_logic", "test_api", "test_cosmos_cloud", "test_cosmos_integration")
+    key_mods = ("test_database_logic", "test_api", "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store")
     dashboard = [(r, status) for r, status in all_reports if any(m in r.nodeid for m in key_mods)]
     if not dashboard:
         return

@@ -352,8 +352,8 @@ cmd_test_cloud() {
         echo ""
         exit 1
     fi
-    print_header "Cosmos DB Cloud Integration Test (Create/Read/Delete)"
-    run_pytest tests/test_cosmos_cloud.py -v -s
+    print_header "Cosmos DB Cloud Integration Test (CosmosStore E2E)"
+    run_pytest tests/test_cosmos_store.py -v -s
 }
 
 cmd_cosmos_role() {
