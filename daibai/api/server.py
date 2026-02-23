@@ -118,7 +118,11 @@ def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: ensure static dir exists, init CosmosConversationStore. Shutdown: close store."""
+    """
+    Manage Cosmos DB connection lifecycle. Prevents connection leaks.
+    Startup: init CosmosStore and attach to app.state.
+    Shutdown: close the store (client + credential) gracefully.
+    """
     STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     app.state.store = CosmosConversationStore()
