@@ -143,9 +143,9 @@ STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 # Add this route after your app initialization
 @app.get('/favicon.ico', include_in_schema=False)
 async def favicon():
-    # Points to the existing logo in your static directory
+    """Serve logo as favicon to avoid 404. Browsers request /favicon.ico by default."""
     favicon_path = STATIC_DIR / "logo.png"
-    return FileResponse(favicon_path)
+    return FileResponse(favicon_path, media_type="image/png")
 
 # API Endpoints
 @app.get("/api/settings", response_model=SettingsResponse)

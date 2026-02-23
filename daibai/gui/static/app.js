@@ -13,6 +13,8 @@ const msalConfig = {
         clientId: '5f5462c3-47b1-4af0-9ee0-6271d9893780',
         authority: `https://${MSAL_TENANT_NAME}.ciamlogin.com/${MSAL_TENANT_ID}/`,
         knownAuthorities: [`https://${MSAL_TENANT_NAME}.ciamlogin.com`],
+        redirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
+        postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
     },
     cache: {
         cacheLocation: 'sessionStorage',
@@ -23,59 +25,106 @@ const msalConfig = {
 const msalInstance = new msal.PublicClientApplication(msalConfig);
 console.log('MSAL Instance Initialized:', msalInstance !== undefined);
 
+// Redirect flow avoids COOP blocking popup window.closed; set false to try popup
+const USE_REDIRECT_INSTEAD_OF_POPUP = true;
+
+let _authInteractionInProgress = false;
+
+function isAuthenticated() {
+    return msalInstance.getAllAccounts().length > 0;
+}
+
+function showAuthGate() {
+    document.body.classList.add('unauthenticated');
+    document.body.classList.remove('authenticated');
+}
+
+function hideAuthGate() {
+    document.body.classList.remove('unauthenticated');
+    document.body.classList.add('authenticated');
+}
+
 function updateAuthButtons() {
+    const hasAccount = isAuthenticated();
     const loginBtn = document.getElementById('loginBtn');
     const registerBtn = document.getElementById('registerBtn');
     const logoutBtn = document.getElementById('logoutBtn');
-    if (!loginBtn || !logoutBtn) return;
-    const hasAccount = msalInstance.getAllAccounts().length > 0;
-    loginBtn.style.display = hasAccount ? 'none' : '';
+    if (loginBtn) loginBtn.style.display = hasAccount ? 'none' : '';
     if (registerBtn) registerBtn.style.display = hasAccount ? 'none' : '';
-    logoutBtn.style.display = hasAccount ? '' : 'none';
+    if (logoutBtn) logoutBtn.style.display = hasAccount ? '' : 'none';
+    if (hasAccount) {
+        hideAuthGate();
+    } else {
+        showAuthGate();
+    }
 }
 
 async function signIn() {
+    if (_authInteractionInProgress) return;
     await msalInstance.initialize();
     const loginRequest = { scopes: ['openid', 'profile'] };
     try {
-        const response = await msalInstance.loginPopup(loginRequest);
-        console.log('Account:', response.account);
-        alert('Logged in as: ' + response.account.username);
-        updateAuthButtons();
+        if (USE_REDIRECT_INSTEAD_OF_POPUP) {
+            _authInteractionInProgress = true;
+            await msalInstance.loginRedirect(loginRequest);
+        } else {
+            const response = await msalInstance.loginPopup(loginRequest);
+            if (response) {
+                console.log('Account:', response.account);
+                alert('Logged in as: ' + response.account.username);
+                updateAuthButtons();
+            }
+        }
     } catch (error) {
+        _authInteractionInProgress = false;
         console.error('Login error:', error);
     }
 }
 
 async function signOut() {
+    if (_authInteractionInProgress) return;
     await msalInstance.initialize();
     try {
-        await msalInstance.logoutPopup();
-        updateAuthButtons();
+        if (USE_REDIRECT_INSTEAD_OF_POPUP) {
+            _authInteractionInProgress = true;
+            await msalInstance.logoutRedirect();
+        } else {
+            await msalInstance.logoutPopup();
+            updateAuthButtons();
+        }
     } catch (error) {
+        _authInteractionInProgress = false;
         console.error('Logout error:', error);
     }
 }
 
 async function signUp() {
+    if (_authInteractionInProgress) return;
     await msalInstance.initialize();
     const scopes = ['openid', 'profile', 'User.Read'];
     try {
-        // prompt: 'create' forces sign-up UI; fallback to normal flow if unsupported
-        let response;
-        try {
-            response = await msalInstance.loginPopup({ scopes, prompt: 'create' });
-        } catch (e) {
-            if (e.errorCode === 'invalid_prompt' || e.message?.includes('prompt')) {
+        if (USE_REDIRECT_INSTEAD_OF_POPUP) {
+            _authInteractionInProgress = true;
+            await msalInstance.loginRedirect({ scopes });
+        } else {
+            let response;
+            try {
                 response = await msalInstance.loginPopup({ scopes });
-            } else {
-                throw e;
+            } catch (e) {
+                if (e.errorCode === 'invalid_prompt' || e.message?.includes('prompt')) {
+                    response = await msalInstance.loginPopup({ scopes });
+                } else {
+                    throw e;
+                }
+            }
+            if (response) {
+                console.log('Registration successful:', response);
+                alert('Account created and logged in as: ' + response.account.username);
+                updateAuthButtons();
             }
         }
-        console.log('Registration successful:', response);
-        alert('Account created and logged in as: ' + response.account.username);
-        updateAuthButtons();
     } catch (error) {
+        _authInteractionInProgress = false;
         console.error('Registration error:', error);
     }
 }
@@ -175,7 +224,7 @@ class DaiBaiApp {
         await this.loadSettings();
         await this.loadConversations();
         this.connectWebSocket();
-        msalInstance.initialize().then(() => updateAuthButtons());
+        updateAuthButtons();
     }
     
     loadPreferences() {
@@ -655,6 +704,10 @@ class DaiBaiApp {
     }
     
     async sendMessage() {
+        if (!isAuthenticated()) {
+            showAuthGate();
+            return;
+        }
         const query = this.promptInput.value.trim();
         if (!query || this.isLoading) return;
         
@@ -1539,7 +1592,27 @@ class DaiBaiApp {
     }
 }
 
-// Initialize app
-document.addEventListener('DOMContentLoaded', () => {
+// Initialize app: MUST await handleRedirectPromise before any other MSAL call (fixes interaction_in_progress)
+document.addEventListener('DOMContentLoaded', async () => {
+    await msalInstance.initialize();
+    try {
+        const response = await msalInstance.handleRedirectPromise();
+        if (response) {
+            console.log('Redirect login successful:', response.account?.username);
+        }
+    } catch (e) {
+        console.error('Redirect callback error:', e);
+    } finally {
+        _authInteractionInProgress = false;
+    }
+
+    if (!isAuthenticated()) {
+        showAuthGate();
+        document.getElementById('authGateLogin')?.addEventListener('click', () => signIn());
+        document.getElementById('authGateRegister')?.addEventListener('click', () => signUp());
+        return;
+    }
+
+    hideAuthGate();
     window.app = new DaiBaiApp();
 });

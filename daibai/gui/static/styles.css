@@ -57,6 +57,59 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
+/* Auth Gate - blocks app when not logged in */
+body.unauthenticated #mainApp {
+    display: none !important;
+    pointer-events: none !important;
+    visibility: hidden !important;
+}
+
+body.authenticated #authGate {
+    display: none !important;
+}
+
+.auth-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: var(--bg-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auth-gate-content {
+    text-align: center;
+    max-width: 360px;
+    padding: 32px;
+}
+
+.auth-gate-content img {
+    margin-bottom: 24px;
+}
+
+.auth-gate-content h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.auth-gate-content p {
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+}
+
+.auth-gate-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
+.auth-gate-buttons .btn-primary,
+.auth-gate-buttons .btn-secondary {
+    padding: 10px 24px;
+}
+
 /* App Container */
 .app {
     display: flex;

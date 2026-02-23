@@ -193,6 +193,43 @@ To access Azure services (like Key Vault) from your local machine:
 
 *Use Microsoft Authentication Library (MSAL) and Microsoft Graph. ADAL and Azure AD Graph are deprecated. See [Microsoft Entra External ID](https://learn.microsoft.com/en-us/entra/external-id/) documentation.*
 
+#### Enabling User Registration in Entra External ID
+
+If the sign-in page does **not** show a "No account? Create one" link, registration is not enabled. Follow these steps in the Azure Portal:
+
+**1. Create a Sign-up and Sign-in User Flow**
+
+1. Sign in to [Microsoft Entra admin center](https://entra.microsoft.com/).
+2. Switch to your **external tenant** (DaiBai Customers) via the directory switcher.
+3. Go to **Entra ID** → **External Identities** → **User flows**.
+4. Click **New user flow**.
+5. Enter a name (e.g. `SignUpSignIn`).
+6. Under **Identity providers**, select **Email Accounts** and choose:
+   - **Email with password** – users sign up with email + password, or
+   - **Email one-time passcode** – users sign up with email + OTP sent to their inbox.
+7. Under **User attributes**, select what to collect (e.g. Display Name, Given Name).
+8. Click **Create**.
+
+**2. Add DaiBai-GUI to the User Flow**
+
+1. In **User flows**, select the flow you created.
+2. Under **Use**, click **Applications**.
+3. Click **Add application**.
+4. Select **DaiBai-GUI** from the list.
+5. Click **Select**.
+
+**3. Verify Redirect URI**
+
+Ensure `http://localhost:8080/` (and your production URL) is listed under **Authentication** → **Redirect URIs** for DaiBai-GUI as a **Single-page application** platform.
+
+**4. Test**
+
+After setup, the sign-in page should show **"No account? Create one"**. New users click it to register. If it still doesn’t appear:
+
+- Try an incognito/private window.
+- Clear browser cache and cookies.
+- Confirm the app is added to the user flow and the flow uses Email Accounts.
+
 #### Microsoft Entra Identity: Login, Sign-Up & Credentials
 
 DaiBai uses **Microsoft Entra External ID** (formerly Azure AD B2C for customers) to manage user identity. Entra provides login, self-service sign-up, and secure credential handling without storing passwords in the application.
@@ -218,12 +255,14 @@ DaiBai uses **Microsoft Entra External ID** (formerly Azure AD B2C for customers
 **Sign-Up (Registration) Flow**
 
 1. User clicks **Register** in the nav bar.
-2. `signUp()` calls `msalInstance.loginPopup()` with the same authority as login.
-3. Entra External ID uses a single **Sign-up and sign-in** user flow. If the user has no account, the flow shows the registration form (email verification, password creation, etc.).
-4. After successful registration, the user is logged in automatically.
-5. New users appear in the **Users** blade in the Microsoft Entra admin center.
+2. A hint appears: "Click 'No account? Create one' to register."
+3. User is redirected to the sign-in page.
+4. User clicks **"No account? Create one"** on the sign-in page (this link appears only when a Sign-up and sign-in user flow is configured and the app is added to it—see *Enabling User Registration* above).
+5. User completes registration (email verification, password creation, etc.).
+6. After successful registration, the user is logged in and redirected back.
+7. New users appear in **Entra ID** → **Users** in the admin center.
 
-*Note: Entra External ID does not use separate B2C-style policy paths (e.g. `B2C_1_signup`). The same authority handles both login and registration.*
+*Note: Entra External ID does not support forcing the sign-up screen via MSAL. The flow always starts with sign-in; users must click "No account? Create one" to register.*
 
 **Credentials & Token Management**
 

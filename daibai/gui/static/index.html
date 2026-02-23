@@ -4,14 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DaiBai - AI Database Assistant</title>
-    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="icon" type="image/png" href="/favicon.ico">
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body>
-    <div class="app">
+<body class="unauthenticated">
+    <!-- Auth gate: shown when not logged in, blocks all app usage -->
+    <div id="authGate" class="auth-gate">
+        <div class="auth-gate-content">
+            <img src="/static/logo.png" alt="DaiBai" width="80" height="80">
+            <h1>Sign in to use DaiBai</h1>
+            <p>You must be signed in to access the AI Database Assistant.</p>
+            <div class="auth-gate-buttons">
+                <button class="btn-primary" id="authGateLogin">Login</button>
+                <button class="btn-secondary" id="authGateRegister">Register</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="app" id="mainApp">
         <!-- Top Navigation Bar -->
         <header class="top-nav">
             <div class="nav-left">
