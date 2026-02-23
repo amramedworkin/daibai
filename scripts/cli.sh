@@ -130,10 +130,8 @@ cmd_chat_start() {
     else
         start_chat_service_background
     fi
-    if [[ $? -eq 0 ]]; then
-        if $open_browser; then
-            (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
-        fi
+    if [[ $? -eq 0 ]] && $open_browser; then
+        open_chat_browser
     fi
 }
 
@@ -144,16 +142,14 @@ cmd_chat_stop() {
 cmd_chat_restart() {
     local open_browser=false
     [[ "$1" == "--open" ]] && open_browser=true
-    restart_chat_service
-    if [[ $? -eq 0 ]] && $open_browser; then
-        (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
+    if restart_chat_service; then
+        $open_browser && open_chat_browser
     fi
 }
 
 cmd_chat_bounce() {
-    restart_chat_service
-    if [[ $? -eq 0 ]]; then
-        (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
+    if restart_chat_service; then
+        open_chat_browser
     fi
 }
 

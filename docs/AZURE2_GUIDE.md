@@ -193,6 +193,73 @@ To access Azure services (like Key Vault) from your local machine:
 
 *Use Microsoft Authentication Library (MSAL) and Microsoft Graph. ADAL and Azure AD Graph are deprecated. See [Microsoft Entra External ID](https://learn.microsoft.com/en-us/entra/external-id/) documentation.*
 
+#### Microsoft Entra Identity: Login, Sign-Up & Credentials
+
+DaiBai uses **Microsoft Entra External ID** (formerly Azure AD B2C for customers) to manage user identity. Entra provides login, self-service sign-up, and secure credential handling without storing passwords in the application.
+
+**Identity Model**
+
+| Aspect | Implementation |
+|--------|----------------|
+| **Provider** | Microsoft Entra External ID (CIAM) |
+| **Tenant** | DaiBai Customers (`daibaiauth.onmicrosoft.com`) |
+| **Library** | MSAL.js Browser SDK 2.35.0 |
+| **Token Storage** | `sessionStorage` (cleared when tab closes) |
+
+**Login Flow**
+
+1. User clicks **Login** in the nav bar.
+2. `signIn()` calls `msalInstance.loginPopup()` with scopes `['openid', 'profile']`.
+3. A popup opens to `https://daibaiauth.ciamlogin.com` where the user enters email and password.
+4. Entra validates credentials and returns an ID token and account object.
+5. MSAL caches the session in `sessionStorage`.
+6. The UI switches to show **Sign Out** and hides Login/Register.
+
+**Sign-Up (Registration) Flow**
+
+1. User clicks **Register** in the nav bar.
+2. `signUp()` calls `msalInstance.loginPopup()` with the same authority as login.
+3. Entra External ID uses a single **Sign-up and sign-in** user flow. If the user has no account, the flow shows the registration form (email verification, password creation, etc.).
+4. After successful registration, the user is logged in automatically.
+5. New users appear in the **Users** blade in the Microsoft Entra admin center.
+
+*Note: Entra External ID does not use separate B2C-style policy paths (e.g. `B2C_1_signup`). The same authority handles both login and registration.*
+
+**Credentials & Token Management**
+
+- **No passwords in app:** Passwords are never stored or handled by DaiBai. Entra manages authentication.
+- **ID tokens:** MSAL receives JWT ID tokens proving the user's identity. These are cached in `sessionStorage`.
+- **Access tokens:** For API calls (e.g. Microsoft Graph), `getTokenPopup()` acquires access tokens:
+  - Tries `acquireTokenSilent()` first (no popup).
+  - Falls back to `acquireTokenPopup()` if interaction is required (e.g. consent, re-auth).
+- **Logout:** `signOut()` calls `logoutPopup()`, which clears the Entra session and MSAL cache.
+
+**Configuration (app.js)**
+
+```javascript
+// Authority must include tenant ID for Entra External ID
+authority: 'https://daibaiauth.ciamlogin.com/e12adb01-a6b3-47bb-86c0-d662dacb3675/'
+
+// Required: ciamlogin.com is not trusted by default
+knownAuthorities: ['https://daibaiauth.ciamlogin.com']
+```
+
+**UI Components**
+
+| Button | Location | Action |
+|--------|----------|--------|
+| Login | Nav bar (right) | Opens login popup |
+| Register | Nav bar (right) | Opens sign-up/sign-in flow (registration for new users) |
+| Sign Out | Nav bar (right) | Logs out and clears session |
+
+**Future: API Integration**
+
+When the FastAPI backend is secured (Phase 1), the frontend will:
+
+1. Call `getTokenPopup({ scopes: ['api://DaiBai-API/access'] })` to obtain an access token for the DaiBai-API app.
+2. Send the token in the `Authorization: Bearer <token>` header on each API request.
+3. The backend will validate the JWT against Entra's OIDC metadata before processing requests.
+
 ### Phase 1: Environment Abstraction & Cloud-Ready Refactoring
 
 Phase 1 focuses on decoupling the DaiBai core logic from local file-based configurations and secrets, making the codebase "cloud-aware" without breaking local development.

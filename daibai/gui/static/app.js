@@ -5,11 +5,14 @@
 console.log('MSAL Loaded:', typeof msal !== 'undefined');
 
 // Microsoft Entra External ID (MSAL) configuration
+const MSAL_TENANT_NAME = 'daibaiauth';
+const MSAL_TENANT_ID = 'e12adb01-a6b3-47bb-86c0-d662dacb3675';
+
 const msalConfig = {
     auth: {
         clientId: '5f5462c3-47b1-4af0-9ee0-6271d9893780',
-        authority: 'https://daibaiauth.ciamlogin.com/e12adb01-a6b3-47bb-86c0-d662dacb3675/',
-        knownAuthorities: ['https://daibaiauth.ciamlogin.com'],
+        authority: `https://${MSAL_TENANT_NAME}.ciamlogin.com/${MSAL_TENANT_ID}/`,
+        knownAuthorities: [`https://${MSAL_TENANT_NAME}.ciamlogin.com`],
     },
     cache: {
         cacheLocation: 'sessionStorage',
@@ -22,10 +25,12 @@ console.log('MSAL Instance Initialized:', msalInstance !== undefined);
 
 function updateAuthButtons() {
     const loginBtn = document.getElementById('loginBtn');
+    const registerBtn = document.getElementById('registerBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     if (!loginBtn || !logoutBtn) return;
     const hasAccount = msalInstance.getAllAccounts().length > 0;
     loginBtn.style.display = hasAccount ? 'none' : '';
+    if (registerBtn) registerBtn.style.display = hasAccount ? 'none' : '';
     logoutBtn.style.display = hasAccount ? '' : 'none';
 }
 
@@ -49,6 +54,29 @@ async function signOut() {
         updateAuthButtons();
     } catch (error) {
         console.error('Logout error:', error);
+    }
+}
+
+async function signUp() {
+    await msalInstance.initialize();
+    const scopes = ['openid', 'profile', 'User.Read'];
+    try {
+        // prompt: 'create' forces sign-up UI; fallback to normal flow if unsupported
+        let response;
+        try {
+            response = await msalInstance.loginPopup({ scopes, prompt: 'create' });
+        } catch (e) {
+            if (e.errorCode === 'invalid_prompt' || e.message?.includes('prompt')) {
+                response = await msalInstance.loginPopup({ scopes });
+            } else {
+                throw e;
+            }
+        }
+        console.log('Registration successful:', response);
+        alert('Account created and logged in as: ' + response.account.username);
+        updateAuthButtons();
+    } catch (error) {
+        console.error('Registration error:', error);
     }
 }
 
@@ -283,6 +311,7 @@ class DaiBaiApp {
         this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
         this.autoCsvCheckbox = document.getElementById('autoCsvCheckbox');
         this.loginBtn = document.getElementById('loginBtn');
+        this.registerBtn = document.getElementById('registerBtn');
         this.logoutBtn = document.getElementById('logoutBtn');
         this.schemaBtn = document.getElementById('schemaBtn');
         this.schemaModal = document.getElementById('schemaModal');
@@ -333,6 +362,7 @@ class DaiBaiApp {
         
         // Auth
         this.loginBtn.addEventListener('click', () => signIn());
+        if (this.registerBtn) this.registerBtn.addEventListener('click', () => signUp());
         this.logoutBtn.addEventListener('click', () => signOut());
 
         // Schema modal

@@ -15,6 +15,7 @@ import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
 from ..core.config import load_config, Config
@@ -53,6 +54,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=lifespan)
+
+
+# COOP header: allows MSAL popup (Entra login) to communicate with opener (window.closed)
+class COOPMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+        return response
+
+
+app.add_middleware(COOPMiddleware)
 
 # Global state
 _agent: Optional[DaiBaiAgent] = None
@@ -128,6 +140,12 @@ class ConversationSummary(BaseModel):
 # Static files path
 STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 
+# Add this route after your app initialization
+@app.get('/favicon.ico', include_in_schema=False)
+async def favicon():
+    # Points to the existing logo in your static directory
+    favicon_path = STATIC_DIR / "logo.png"
+    return FileResponse(favicon_path)
 
 # API Endpoints
 @app.get("/api/settings", response_model=SettingsResponse)

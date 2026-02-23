@@ -38,7 +38,7 @@ handle_start_stop_chat_service() {
         stop_chat_service
     else
         if start_chat_service_background; then
-            (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
+            open_chat_browser
         fi
     fi
     echo ""
@@ -109,7 +109,7 @@ handle_chat_service_menu() {
             2)
                 clear
                 if start_chat_service_background; then
-                    (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
+                    open_chat_browser
                 fi
                 echo ""
                 echo "Press Enter to continue..."
