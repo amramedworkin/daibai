@@ -396,6 +396,179 @@ If you want to pull LLM keys from Key Vault instead of `.env`:
 pytest tests/test_auth.py tests/test_azure_config.py -v
 ```
 
+### 6. (Optional) Validate Cosmos DB Access
+
+If you have Cosmos DB configured (role assignment + `COSMOS_ENDPOINT`), run the Golden Ticket check:
+
+```bash
+./scripts/cli.sh test-db
+```
+
+Success shows green `✓ GOLDEN TICKET VALID`; failure shows red `✗ FAILED` with the error. See *Cosmos DB Data Access Setup* below for full setup.
+
+---
+
+## Cosmos DB Data Access Setup (The "Second Lock")
+
+Cosmos DB uses a **data-plane** role model that is separate from Azure management-plane RBAC. The **Cosmos DB Built-in Data Contributor** role does not appear in the standard Azure Portal "Roles" list—you must grant it via the Azure CLI.
+
+### Why This Step Is Required
+
+- **Management-plane vs. data-plane:** The Portal "Roles" tab shows management roles (create databases, scale throughput). Data-plane roles (read/write documents) are assigned via `az cosmosdb sql role assignment`.
+- **Role definition ID:** `00000000-0000-0000-0000-000000000002` is the fixed, universal ID for **Cosmos DB Built-in Data Contributor** across all Azure tenants.
+
+### Step 1: Get Your Principal ID
+
+```bash
+az ad signed-in-user show --query id -o tsv
+```
+
+Example output: `5fdfa982-4781-460e-a4b9-62c45f55aab9`
+
+Ensure you are logged in: `az login`.
+
+### Step 2: Create the Role Assignment
+
+Run this command (replace the principal ID with yours if different):
+
+```bash
+az cosmosdb sql role assignment create \
+    --account-name daibai-metadata \
+    --resource-group daibai-rg \
+    --scope "/" \
+    --principal-id 5fdfa982-4781-460e-a4b9-62c45f55aab9 \
+    --role-definition-id 00000000-0000-0000-0000-000000000002
+```
+
+**Parameters:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `--account-name` | `daibai-metadata` | Cosmos DB account name |
+| `--resource-group` | `daibai-rg` | Resource group |
+| `--scope` | `"/"` | Grants permission across the entire account (all databases and containers) |
+| `--principal-id` | Your object ID | Your Azure AD/Entra user ID |
+| `--role-definition-id` | `00000000-0000-0000-0000-000000000002` | Cosmos DB Built-in Data Contributor |
+
+### Step 3: Set the Cosmos Endpoint
+
+Add to your `.bashrc` (or equivalent):
+
+```bash
+export COSMOS_ENDPOINT="https://daibai-metadata.documents.azure.com:443/"
+```
+
+Reload your shell: `source ~/.bashrc` (or run your `rebash` command).
+
+### Step 4: Verify Access
+
+Role assignments can take up to **60 seconds** to propagate. To verify:
+
+```bash
+az cosmosdb sql role assignment list --account-name daibai-metadata --resource-group daibai-rg
+```
+
+If you see a JSON block containing your principal ID (`5fdfa982...`), you have data-plane access.
+
+### CLI Shortcut
+
+You can also use the DaiBai CLI to create the role assignment (auto-fetches your principal ID):
+
+```bash
+./scripts/cli.sh cosmos-role
+```
+
+Or with a specific principal ID:
+
+```bash
+./scripts/cli.sh cosmos-role --principal-id 5fdfa982-4781-460e-a4b9-62c45f55aab9
+```
+
+Override account or resource group via environment variables:
+
+```bash
+COSMOS_ACCOUNT_NAME=daibai-metadata COSMOS_RESOURCE_GROUP=daibai-rg ./scripts/cli.sh cosmos-role
+```
+
+### Step 5: Validate Access (Golden Ticket)
+
+Run the Cosmos DB validation script to confirm Read/Write/Delete works:
+
+```bash
+./scripts/cli.sh test-db
+```
+
+**Prerequisites:** A project virtual environment with dependencies installed. If you don't have one:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+**What the script does:** `test_cosmos.py` performs a full Create → Read → Delete cycle on the `conversations` container:
+
+1. **Create:** Upserts a test document `{"id": "test-session", "message": "Hello Azure"}`
+2. **Read:** Retrieves the document and prints it
+3. **Delete:** Removes the test document (leaves the database clean)
+
+**Output:** Color-coded for quick scanning:
+
+- **Success:** Green `✓ GOLDEN TICKET VALID` with a checklist of verified items
+- **Failure:** Red `✗ FAILED` with the error message
+
+**Example success output:**
+
+```
+Connecting to Cosmos DB...
+Create: Upserting test document...
+  ✓ OK
+Read: Retrieving document...
+  Document: {'id': 'test-session', 'message': 'Hello Azure', ...}
+Delete: Removing test document...
+  ✓ OK
+
+✓ GOLDEN TICKET VALID
+  Cosmos DB Read/Write/Delete validation passed.
+
+  Verified:
+  ✓ Authentication (az login via DefaultAzureCredential)
+  ✓ Permission (Data Contributor role active)
+  ✓ Plumbing (COSMOS_ENDPOINT set correctly)
+```
+
+**What the Golden Ticket validates:**
+
+| Check | Meaning |
+|-------|---------|
+| **Authentication** | `DefaultAzureCredential` works (you are logged in via `az login`) |
+| **Permission** | Your Data Contributor role assignment is active and propagated |
+| **Plumbing** | `COSMOS_ENDPOINT` is correctly exported and readable by Python |
+
+**Environment overrides:** `COSMOS_DATABASE` and `COSMOS_CONTAINER` default to `daibai-metadata` and `conversations`; override if your setup differs.
+
+### Implementation Completed: Stateless Conversation Store
+
+The backend has been refactored to persist chat history in Azure Cosmos DB.
+
+**Files:**
+
+- `daibai/api/database.py` – `CosmosConversationStore` class (async, uses `azure.cosmos.aio` and `DefaultAzureCredential`)
+- `daibai/api/server.py` – All conversation endpoints use `CosmosStore` instead of in-memory dict
+
+**Data model:**
+
+- Document `id` = `session_id` (conversation ID)
+- Partition key: `/id`
+- `messages`: list of `{role, content, timestamp, sql?, results?}`
+
+**Flow:**
+
+1. On each request: load existing document for `session_id` from Cosmos DB (or start with an empty list)
+2. After AI response: append user + assistant messages and upsert the document
+
+**Requirements:** `COSMOS_ENDPOINT` must be set. Database: `daibai-metadata`, container: `conversations` (override via `COSMOS_DATABASE`, `COSMOS_CONTAINER`).
+
 ---
 
 ### Phase 1: Environment Abstraction & Cloud-Ready Refactoring

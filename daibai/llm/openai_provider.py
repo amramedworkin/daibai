@@ -146,7 +146,14 @@ class OpenAIProvider(BaseLLMProvider):
                 "content": "\n\n".join(system_parts)
             })
         
-        # User message
+        # Conversation history (user/assistant turns)
+        for m in context.get("messages", []) if context else []:
+            role = m.get("role")
+            content = m.get("content", "")
+            if role and content:
+                messages.append({"role": role, "content": content})
+        
+        # Current user message
         messages.append({
             "role": "user",
             "content": prompt

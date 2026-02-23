@@ -69,6 +69,13 @@ Commands (mirrors menu.sh):
     train [--database <name>]  Train schema (daibai-train)
                             --database  Train specific database
 
+  AZURE
+    cosmos-role [--principal-id ID]  Set up Cosmos DB role for signed-in user
+                            Uses az ad signed-in-user show for principal-id if not given.
+                            Account: daibai-metadata, RG: daibai-rg (override via env)
+    test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
+    test-cloud               Cosmos DB cloud integration test (requires COSMOS_ENDPOINT, run before deploy)
+
   SUPPORT & UTILITIES (menu 4)
     config-path             Show config file locations (● found ○ not found)
     config-edit             Edit daibai.yaml
@@ -79,7 +86,7 @@ Commands (mirrors menu.sh):
     env-preferences         Show preferences path and content
 
   TESTS (menu 5)
-    test [args]             Run all tests (pytest tests/ -v). Pass-through args.
+    test [args]             Run unit tests (excludes cloud, ~1s). Pass-through args.
     test run [path] [args]  Run tests (default: tests/). Args: -x, -k PATTERN, -q, etc.
     test file <path>       Run specific test file (e.g. test_config.py)
     test name <pattern>    Run tests matching -k pattern
@@ -101,6 +108,10 @@ Examples:
     $(basename "$0") cli-query "How many users are in the database?"
     $(basename "$0") train --database suitecrm
     $(basename "$0") config-path
+    $(basename "$0") cosmos-role
+    $(basename "$0") cosmos-role --principal-id <object-id>
+    $(basename "$0") test-db
+    $(basename "$0") test-cloud
     $(basename "$0") test
     $(basename "$0") test -x
     $(basename "$0") test file test_config.py
@@ -307,6 +318,86 @@ cmd_env_edit() {
     "${EDITOR:-nano}" "$env_file"
 }
 
+# ============================================================================
+# AZURE COMMANDS
+# ============================================================================
+
+cmd_test_db() {
+    local py
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        py="$PROJECT_DIR/.venv/bin/python"
+    else
+        py="$(command -v python3 python 2>/dev/null | head -1)"
+        if [[ -n "$py" ]]; then
+            print_error "No .venv found. Create one and install deps first:"
+            echo ""
+            echo "  python3 -m venv .venv"
+            echo "  source .venv/bin/activate"
+            echo "  pip install -e ."
+            echo ""
+            echo "  Then run: ./scripts/cli.sh test-db"
+            exit 1
+        fi
+    fi
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    print_header "Cosmos DB Validation (Golden Ticket)"
+    "$py" "$PROJECT_DIR/test_cosmos.py"
+}
+
+cmd_test_cloud() {
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
+        print_error "COSMOS_ENDPOINT not set. Add to environment:"
+        echo ""
+        echo '  export COSMOS_ENDPOINT="https://daibai-metadata.documents.azure.com:443/"'
+        echo ""
+        exit 1
+    fi
+    print_header "Cosmos DB Cloud Integration Test (Create/Read/Delete)"
+    run_pytest tests/test_cosmos_cloud.py -v -s
+}
+
+cmd_cosmos_role() {
+    local principal_id=""
+    while [[ -n "$1" ]]; do
+        case "$1" in
+            --principal-id)
+                principal_id="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$principal_id" ]]; then
+        print_info "Getting principal ID from signed-in user..."
+        principal_id=$(az ad signed-in-user show --query id -o tsv 2>/dev/null)
+        if [[ -z "$principal_id" ]]; then
+            print_error "Could not get principal ID. Run: az login"
+            exit 1
+        fi
+        print_info "Principal ID: $principal_id"
+    fi
+
+    local account="${COSMOS_ACCOUNT_NAME:-daibai-metadata}"
+    local rg="${COSMOS_RESOURCE_GROUP:-daibai-rg}"
+    local role_id="00000000-0000-0000-0000-000000000002"
+
+    print_info "Creating Cosmos DB role assignment (account=$account, rg=$rg)..."
+    if az cosmosdb sql role assignment create \
+        --account-name "$account" \
+        --resource-group "$rg" \
+        --scope "/" \
+        --principal-id "$principal_id" \
+        --role-definition-id "$role_id"; then
+        print_success "Cosmos DB role assignment created"
+    else
+        print_error "Role assignment failed"
+        exit 1
+    fi
+}
+
 cmd_env_preferences() {
     print_header "User Preferences"
     echo "Path: $HOME/.daibai/preferences.json"
@@ -344,14 +435,20 @@ cmd_test() {
             local path="tests/"
             [[ -n "$1" && "$1" != -* ]] && { path="$1"; shift; }
             [[ "$path" != tests/* && "$path" != tests ]] && path="tests/$path"
-            run_pytest "$path" -v "$@"
+            # Exclude cloud tests by default for speed (~1s when offline)
+            # -s shows colorized test descriptions
+            if [[ "$path" == "tests/" || "$path" == "tests" ]]; then
+                run_pytest tests/ -v -s -m "not cloud" "$@"
+            else
+                run_pytest "$path" -v -s "$@"
+            fi
             ;;
         file)
             local f="$1"
             [[ -z "$f" ]] && { print_error "Usage: test file <path>"; return 1; }
             shift || true
             [[ "$f" != tests/* ]] && f="tests/$f"
-            run_pytest "$f" -v "$@"
+            run_pytest "$f" -v -s "$@"
             ;;
         name)
             local pat="$1"
@@ -423,6 +520,15 @@ main() {
             ;;
         train)
             cmd_train "$@"
+            ;;
+        cosmos-role)
+            cmd_cosmos_role "$@"
+            ;;
+        test-db)
+            cmd_test_db
+            ;;
+        test-cloud)
+            cmd_test_cloud
             ;;
         config-path)
             cmd_config_path

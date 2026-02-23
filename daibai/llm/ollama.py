@@ -126,8 +126,13 @@ class OllamaProvider(BaseLLMProvider):
                 parts.append(context["system_prompt"])
             if context.get("schema"):
                 parts.append(f"Database Schema:\n{context['schema']}")
+            for m in context.get("messages", []):
+                role = m.get("role", "").capitalize()
+                content = m.get("content", "")
+                if role and content:
+                    parts.append(f"{role}: {content}")
         
-        parts.append(prompt)
+        parts.append(f"User: {prompt}")
         
         return "\n\n".join(parts)
     

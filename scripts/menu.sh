@@ -31,6 +31,33 @@ show_header() {
     echo ""
 }
 
+# --- Quick Commit & Push (used from main menu and submenu 4) ---
+handle_quick_commit() {
+    clear
+    echo -e "${CYAN}Quick Commit & Push${NC}"
+    echo ""
+    echo "This will: pull → add -A → commit → push"
+    echo ""
+    echo -e "${BOLD}Current changes:${NC}"
+    git status -s 2>/dev/null || echo "  (no changes)"
+    echo ""
+    echo -n "Enter commit message (or 'c' to cancel): "
+    read -r commit_msg
+    if [[ "$commit_msg" == "c" ]] || [[ -z "$commit_msg" ]]; then
+        echo -e "${YELLOW}Cancelled${NC}"
+    elif [[ ! -x "$HOME/.local/bin/gitqik.sh" ]]; then
+        echo -e "${YELLOW}gitqik.sh not found at ~/.local/bin/gitqik.sh${NC}"
+    else
+        echo ""
+        echo -e "${CYAN}Running gitqik.sh...${NC}"
+        echo ""
+        "$HOME/.local/bin/gitqik.sh" "$commit_msg"
+    fi
+    echo ""
+    echo "Press Enter to continue..."
+    read -r
+}
+
 # --- Toggle start/stop chat service from main menu ---
 handle_start_stop_chat_service() {
     clear
@@ -65,6 +92,7 @@ show_main_menu() {
     print_submenu_option "5" "Tests" \
         "pytest, run, list, coverage"
     echo ""
+    print_action_option "q" "Quick Commit & Push ${YELLOW}${DIM}(gitqik.sh)${NC}"
     print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle, opens browser on start)${NC}"
     echo ""
     print_action_option "0" "Exit"
@@ -379,29 +407,7 @@ handle_support_menu() {
                 read -r
                 ;;
             7)
-                clear
-                echo -e "${CYAN}Quick Commit & Push${NC}"
-                echo ""
-                echo "This will: pull → add -A → commit → push"
-                echo ""
-                echo -e "${BOLD}Current changes:${NC}"
-                git status -s 2>/dev/null || echo "  (no changes)"
-                echo ""
-                echo -n "Enter commit message (or 'c' to cancel): "
-                read -r commit_msg
-                if [[ "$commit_msg" == "c" ]] || [[ -z "$commit_msg" ]]; then
-                    echo -e "${YELLOW}Cancelled${NC}"
-                elif [[ ! -x "$HOME/.local/bin/gitqik.sh" ]]; then
-                    echo -e "${YELLOW}gitqik.sh not found at ~/.local/bin/gitqik.sh${NC}"
-                else
-                    echo ""
-                    echo -e "${CYAN}Running gitqik.sh...${NC}"
-                    echo ""
-                    "$HOME/.local/bin/gitqik.sh" "$commit_msg"
-                fi
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
+                handle_quick_commit
                 ;;
             0) return ;;
             *) ;;
@@ -636,6 +642,7 @@ while true; do
         3) handle_command_line_menu ;;
         4) handle_support_menu ;;
         5) handle_test_menu ;;
+        q|Q) handle_quick_commit ;;
         s|S) handle_start_stop_chat_service ;;
         0)
             echo ""

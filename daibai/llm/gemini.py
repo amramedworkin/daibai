@@ -147,8 +147,13 @@ class GeminiProvider(BaseLLMProvider):
                 parts.append(f"Database Schema:\n{context['schema']}\n")
             if context.get("system_prompt"):
                 parts.append(context["system_prompt"])
+            for m in context.get("messages", []):
+                role = m.get("role", "").capitalize()
+                content = m.get("content", "")
+                if role and content:
+                    parts.append(f"{role}: {content}")
         
-        parts.append(prompt)
+        parts.append(f"User: {prompt}")
         
         return "\n\n".join(parts)
     

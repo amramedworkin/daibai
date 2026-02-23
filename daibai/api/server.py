@@ -13,7 +13,7 @@ from datetime import datetime
 import uuid
 
 import jwt
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends, Request
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
+from .database import CosmosConversationStore
 
 # Entra ID (daibaiauth tenant) - matches frontend MSAL config
 ENTRA_TENANT_ID = "e12adb01-a6b3-47bb-86c0-d662dacb3675"
@@ -87,6 +88,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
     return _decode_and_validate_token(token)
 
 
+def get_store(request: Request) -> CosmosConversationStore:
+    """Get CosmosConversationStore from app state."""
+    return request.app.state.store
+
+
 def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
     """Convert DataFrame to list of dicts with Timestamp/datetime/numpy types made JSON-serializable."""
     import pandas as pd
@@ -112,10 +118,13 @@ def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: ensure static dir exists. Shutdown: (none)."""
+    """Startup: ensure static dir exists, init CosmosConversationStore. Shutdown: close store."""
     STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    app.state.store = CosmosConversationStore()
     yield
+    if hasattr(app.state, "store") and app.state.store:
+        await app.state.store.close()
 
 
 app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=lifespan)
@@ -134,7 +143,6 @@ app.add_middleware(COOPMiddleware)
 # Global state
 _agent: Optional[DaiBaiAgent] = None
 _config: Optional[Config] = None
-_conversations: Dict[str, List[Dict[str, Any]]] = {}
 
 
 def get_agent() -> DaiBaiAgent:
@@ -204,6 +212,18 @@ class ConversationSummary(BaseModel):
 
 # Static files path
 STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
+
+@app.get("/health")
+async def health(request: Request):
+    """
+    Health check. Returns {"status": "ok", "database": "connected"} only if
+    Cosmos DB can be successfully pinged.
+    """
+    store: CosmosConversationStore = request.app.state.store
+    if await store.ping():
+        return {"status": "ok", "database": "connected"}
+    raise HTTPException(status_code=503, detail={"status": "unhealthy", "database": "disconnected"})
+
 
 # Add this route after your app initialization
 @app.get('/favicon.ico', include_in_schema=False)
@@ -322,99 +342,101 @@ async def fetch_models(request: FetchModelsRequest, _user: Dict[str, Any] = Depe
 
 
 @app.get("/api/conversations", response_model=List[ConversationSummary])
-async def list_conversations(_user: Dict[str, Any] = Depends(get_current_user)):
+async def list_conversations(
+    _user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
     """List all conversations."""
-    summaries = []
-    for conv_id, messages in _conversations.items():
-        if messages:
-            first_msg = messages[0]
-            title = first_msg.get("content", "")[:50] + "..." if len(first_msg.get("content", "")) > 50 else first_msg.get("content", "New conversation")
-            summaries.append(ConversationSummary(
-                id=conv_id,
-                title=title,
-                created_at=first_msg.get("timestamp", datetime.now().isoformat()),
-                message_count=len(messages)
-            ))
-    return sorted(summaries, key=lambda x: x.created_at, reverse=True)
+    items = await store.list_conversations()
+    return [ConversationSummary(**item) for item in items]
 
 
 @app.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str, _user: Dict[str, Any] = Depends(get_current_user)):
-    """Get a specific conversation."""
-    if conversation_id not in _conversations:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return {"id": conversation_id, "messages": _conversations[conversation_id]}
+async def get_conversation(
+    conversation_id: str,
+    _user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
+    """Get a specific conversation. Returns empty messages if not yet created."""
+    messages = await store.get_history(conversation_id)
+    return {"id": conversation_id, "messages": messages}
 
 
 @app.post("/api/conversations")
 async def create_conversation(_user: Dict[str, Any] = Depends(get_current_user)):
-    """Create a new conversation."""
+    """Create a new conversation. Document created on first message."""
     conv_id = str(uuid.uuid4())
-    _conversations[conv_id] = []
     return {"id": conv_id}
 
 
 @app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, _user: Dict[str, Any] = Depends(get_current_user)):
+async def delete_conversation(
+    conversation_id: str,
+    _user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
     """Delete a conversation."""
-    if conversation_id in _conversations:
-        del _conversations[conversation_id]
+    await store.delete_conversation(conversation_id)
     return {"status": "ok"}
 
 
 @app.post("/api/query", response_model=QueryResponse)
-async def query(request: QueryRequest, _user: Dict[str, Any] = Depends(get_current_user)):
+async def query(
+    request: QueryRequest,
+    _user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
     """Process a natural language query."""
     agent = get_agent()
-    
-    # Create or get conversation
     conv_id = request.conversation_id or str(uuid.uuid4())
-    if conv_id not in _conversations:
-        _conversations[conv_id] = []
-    
-    # Add user message
-    _conversations[conv_id].append({
+
+    # Pull: get history at start
+    history = await store.get_history(conv_id)
+
+    user_msg = {
         "role": "user",
         "content": request.query,
-        "timestamp": datetime.now().isoformat()
-    })
-    
-    # Generate SQL
+        "timestamp": datetime.now().isoformat(),
+    }
+
     try:
-        sql = await agent.generate_sql_async(request.query, "sql")
-        
+        # Process: pass history to the LLM
+        sql = await agent.generate_sql_async(request.query, "sql", history=history)
         results = None
         row_count = None
-        
         if request.execute and sql:
             df = agent.run_sql(sql)
             if df is not None:
                 results = _dataframe_to_json_safe(df)
                 row_count = len(df)
-        
-        # Add assistant message
-        _conversations[conv_id].append({
+
+        assistant_msg = {
             "role": "assistant",
             "content": sql or "Could not generate SQL",
             "sql": sql,
             "results": results,
-            "timestamp": datetime.now().isoformat()
-        })
-        
+            "timestamp": datetime.now().isoformat(),
+        }
+        # Push: append both messages and upsert
+        updated = history + [user_msg, assistant_msg]
+        await store.upsert_history(conv_id, updated)
+
         return QueryResponse(
             sql=sql,
             explanation="Generated SQL query",
             results=results,
             row_count=row_count,
-            conversation_id=conv_id
+            conversation_id=conv_id,
         )
     except Exception as e:
         error_msg = str(e)
-        _conversations[conv_id].append({
+        error_assistant_msg = {
             "role": "assistant",
             "content": f"Error: {error_msg}",
-            "timestamp": datetime.now().isoformat()
-        })
+            "timestamp": datetime.now().isoformat(),
+        }
+        updated = history + [user_msg, error_assistant_msg]
+        await store.upsert_history(conv_id, updated)
         raise HTTPException(status_code=500, detail=error_msg)
 
 
@@ -499,41 +521,36 @@ async def websocket_chat(websocket: WebSocket):
         return
     await websocket.accept()
     agent = get_agent()
-    
+    store = websocket.app.state.store
+
     try:
         while True:
             data = await websocket.receive_json()
             query = data.get("query", "")
             conv_id = data.get("conversation_id", str(uuid.uuid4()))
             execute = data.get("execute", False)
-            
-            if conv_id not in _conversations:
-                _conversations[conv_id] = []
-            
-            # Add user message
-            _conversations[conv_id].append({
+
+            # Pull: get history at start
+            history = await store.get_history(conv_id)
+
+            user_msg = {
                 "role": "user",
                 "content": query,
-                "timestamp": datetime.now().isoformat()
-            })
-            
+                "timestamp": datetime.now().isoformat(),
+            }
+
             # Send acknowledgment
-            await websocket.send_json({
-                "type": "ack",
-                "conversation_id": conv_id
-            })
-            
+            await websocket.send_json({"type": "ack", "conversation_id": conv_id})
+
             try:
-                # Generate SQL (streaming would go here for supported providers)
-                sql = await agent.generate_sql_async(query, "sql")
-                
-                # Send SQL result
+                # Process: pass history to the LLM
+                sql = await agent.generate_sql_async(query, "sql", history=history)
                 await websocket.send_json({
                     "type": "sql",
                     "content": sql,
-                    "conversation_id": conv_id
+                    "conversation_id": conv_id,
                 })
-                
+
                 results = None
                 if execute and sql:
                     df = agent.run_sql(sql)
@@ -544,31 +561,36 @@ async def websocket_chat(websocket: WebSocket):
                             "content": results,
                             "row_count": len(df),
                             "columns": list(df.columns),
-                            "conversation_id": conv_id
+                            "conversation_id": conv_id,
                         })
-                
-                # Add to conversation (include results for session history)
-                _conversations[conv_id].append({
+
+                assistant_msg = {
                     "role": "assistant",
                     "content": sql or "Could not generate SQL",
                     "sql": sql,
                     "results": results,
-                    "timestamp": datetime.now().isoformat()
-                })
-                
-                # Send completion
-                await websocket.send_json({
-                    "type": "done",
-                    "conversation_id": conv_id
-                })
-                
+                    "timestamp": datetime.now().isoformat(),
+                }
+                # Push: append both messages and upsert
+                updated = history + [user_msg, assistant_msg]
+                await store.upsert_history(conv_id, updated)
+
+                await websocket.send_json({"type": "done", "conversation_id": conv_id})
+
             except Exception as e:
+                error_assistant_msg = {
+                    "role": "assistant",
+                    "content": str(e),
+                    "timestamp": datetime.now().isoformat(),
+                }
+                updated = history + [user_msg, error_assistant_msg]
+                await store.upsert_history(conv_id, updated)
                 await websocket.send_json({
                     "type": "error",
                     "content": str(e),
-                    "conversation_id": conv_id
+                    "conversation_id": conv_id,
                 })
-    
+
     except WebSocketDisconnect:
         pass
 

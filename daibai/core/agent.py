@@ -449,8 +449,10 @@ Return the SQL in a ```sql code block. Do not execute it."""
         response = self.generate(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)
     
-    async def generate_sql_async(self, prompt: str, mode: str = "sql") -> str:
-        """Generate SQL asynchronously."""
+    async def generate_sql_async(
+        self, prompt: str, mode: str = "sql", history: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
+        """Generate SQL asynchronously. Optionally pass conversation history for context."""
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request.",
@@ -466,9 +468,11 @@ Request: {prompt}
 
 Return the SQL in a ```sql code block. Do not execute it."""
         
-        context = {
+        context: Dict[str, Any] = {
             "system_prompt": "You are an expert SQL developer. Generate clean, efficient SQL."
         }
+        if history:
+            context["messages"] = [{"role": m.get("role"), "content": m.get("content", "")} for m in history]
         
         response = await self.generate_async(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)

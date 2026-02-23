@@ -155,12 +155,16 @@ def _resolve_env_vars(value: Any) -> Any:
 
 def _find_config_file() -> Optional[Path]:
     """Find daibai.yaml in standard locations."""
-    locations = [
-        Path.cwd() / "daibai.yaml",
-        Path.cwd() / ".daibai.yaml",
+    locations = []
+    try:
+        cwd = Path.cwd()
+        locations.extend([cwd / "daibai.yaml", cwd / ".daibai.yaml"])
+    except OSError:
+        pass  # cwd can be invalid if directory was deleted (e.g. in some test envs)
+    locations.extend([
         Path.home() / ".daibai" / "daibai.yaml",
         Path.home() / ".config" / "daibai" / "daibai.yaml",
-    ]
+    ])
     for loc in locations:
         if loc.exists():
             return loc

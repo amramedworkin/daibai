@@ -1,0 +1,4 @@
+# Core dependencies - install with: pip install -r requirements.txt
+# For full app with GUI: pip install -e ".[gui]"
+azure-cosmos>=4.7.0
+azure-identity>=1.15.0

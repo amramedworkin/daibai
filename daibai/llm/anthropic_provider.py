@@ -54,13 +54,13 @@ class AnthropicProvider(BaseLLMProvider):
         """Generate response using Claude."""
         self._ensure_client()
         
-        system, user_message = self._build_messages(prompt, context)
+        system, messages = self._build_messages(prompt, context)
         
         response = self._client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user_message}],
+            messages=messages,
         )
         
         text = response.content[0].text if response.content else ""
@@ -78,13 +78,13 @@ class AnthropicProvider(BaseLLMProvider):
         """Async generation using Claude."""
         self._ensure_client()
         
-        system, user_message = self._build_messages(prompt, context)
+        system, messages = self._build_messages(prompt, context)
         
         response = await self._async_client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user_message}],
+            messages=messages,
         )
         
         text = response.content[0].text if response.content else ""
@@ -102,19 +102,19 @@ class AnthropicProvider(BaseLLMProvider):
         """Stream response tokens from Claude."""
         self._ensure_client()
         
-        system, user_message = self._build_messages(prompt, context)
+        system, messages = self._build_messages(prompt, context)
         
         async with self._async_client.messages.stream(
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user_message}],
+            messages=messages,
         ) as stream:
             async for text in stream.text_stream:
                 yield text
     
     def _build_messages(self, prompt: str, context: Optional[Dict[str, Any]]) -> tuple:
-        """Build system prompt and user message."""
+        """Build system prompt and messages list (history + current user)."""
         system_parts = []
         
         if context:
@@ -125,7 +125,15 @@ class AnthropicProvider(BaseLLMProvider):
         
         system = "\n\n".join(system_parts) if system_parts else ""
         
-        return system, prompt
+        messages = []
+        for m in context.get("messages", []) if context else []:
+            role = m.get("role")
+            content = m.get("content", "")
+            if role and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": prompt})
+        
+        return system, messages
     
     def _extract_sql(self, text: str) -> Optional[str]:
         """Extract SQL from response text."""
