@@ -55,6 +55,7 @@ Commands (mirrors menu.sh):
                             --debug Enable fetch-models instrumentation (see log)
     chat-stop               Stop web server (fully kill pid/sid)
     chat-restart [--open]    Restart web server (stop then start)
+    chat-bounce              Restart web server and open browser (alias for chat-restart --open)
     chat-status [--json]     Show running status (no wait)
                             --json  Machine-readable output
     chat-toggle             Toggle start/stop
@@ -93,6 +94,7 @@ Commands (mirrors menu.sh):
 
 Examples:
     $(basename "$0") chat-status
+    $(basename "$0") chat-bounce
     $(basename "$0") chat-start --open
     $(basename "$0") cli-query "How many users are in the database?"
     $(basename "$0") train --database suitecrm
@@ -144,6 +146,13 @@ cmd_chat_restart() {
     [[ "$1" == "--open" ]] && open_browser=true
     restart_chat_service
     if [[ $? -eq 0 ]] && $open_browser; then
+        (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
+    fi
+}
+
+cmd_chat_bounce() {
+    restart_chat_service
+    if [[ $? -eq 0 ]]; then
         (sleep 1 && (xdg-open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null || open "http://localhost:${DAIBAI_PORT:-8080}" 2>/dev/null)) &
     fi
 }
@@ -391,6 +400,9 @@ main() {
             ;;
         chat-restart)
             cmd_chat_restart "$@"
+            ;;
+        chat-bounce)
+            cmd_chat_bounce
             ;;
         chat-status)
             cmd_chat_status "$@"

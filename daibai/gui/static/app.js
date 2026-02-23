@@ -2,6 +2,56 @@
  * DaiBai GUI - Main Application JavaScript
  */
 
+console.log('MSAL Loaded:', typeof msal !== 'undefined');
+
+// Microsoft Entra External ID (MSAL) configuration
+const msalConfig = {
+    auth: {
+        clientId: '5f5462c3-47b1-4af0-9ee0-6271d9893780',
+        authority: 'https://daibaiauth.ciamlogin.com/e12adb01-a6b3-47bb-86c0-d662dacb3675/',
+        knownAuthorities: ['https://daibaiauth.ciamlogin.com'],
+    },
+    cache: {
+        cacheLocation: 'sessionStorage',
+        storeAuthStateInCookie: false,
+    },
+};
+
+const msalInstance = new msal.PublicClientApplication(msalConfig);
+console.log('MSAL Instance Initialized:', msalInstance !== undefined);
+
+function updateAuthButtons() {
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (!loginBtn || !logoutBtn) return;
+    const hasAccount = msalInstance.getAllAccounts().length > 0;
+    loginBtn.style.display = hasAccount ? 'none' : '';
+    logoutBtn.style.display = hasAccount ? '' : 'none';
+}
+
+async function signIn() {
+    await msalInstance.initialize();
+    const loginRequest = { scopes: ['openid', 'profile'] };
+    try {
+        const response = await msalInstance.loginPopup(loginRequest);
+        console.log('Account:', response.account);
+        alert('Logged in as: ' + response.account.username);
+        updateAuthButtons();
+    } catch (error) {
+        console.error('Login error:', error);
+    }
+}
+
+async function signOut() {
+    await msalInstance.initialize();
+    try {
+        await msalInstance.logoutPopup();
+        updateAuthButtons();
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+}
+
 // Supported LLM providers (order for display)
 const SUPPORTED_LLM_PROVIDERS = [
     'ollama', 'openai', 'anthropic', 'gemini', 'azure',
@@ -55,6 +105,7 @@ class DaiBaiApp {
         await this.loadSettings();
         await this.loadConversations();
         this.connectWebSocket();
+        msalInstance.initialize().then(() => updateAuthButtons());
     }
     
     loadPreferences() {
@@ -189,6 +240,8 @@ class DaiBaiApp {
         this.modeSelect = document.getElementById('modeSelect');
         this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
         this.autoCsvCheckbox = document.getElementById('autoCsvCheckbox');
+        this.loginBtn = document.getElementById('loginBtn');
+        this.logoutBtn = document.getElementById('logoutBtn');
         this.schemaBtn = document.getElementById('schemaBtn');
         this.schemaModal = document.getElementById('schemaModal');
         this.schemaModalClose = document.getElementById('schemaModalClose');
@@ -236,6 +289,10 @@ class DaiBaiApp {
         this.autoCsvCheckbox.addEventListener('change', () => this.savePreferences());
         this.executeCheckbox.addEventListener('change', () => this.savePreferences());
         
+        // Auth
+        this.loginBtn.addEventListener('click', () => signIn());
+        this.logoutBtn.addEventListener('click', () => signOut());
+
         // Schema modal
         this.schemaBtn.addEventListener('click', () => this.showSchema());
         this.schemaModalClose.addEventListener('click', () => {
