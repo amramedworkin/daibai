@@ -507,7 +507,7 @@ show_test_menu() {
     count=$(find "$PROJECT_DIR/tests" -name "test_*.py" 2>/dev/null | wc -l)
     echo -e "  ${DIM}Test files: $count${NC}"
     echo ""
-    print_action_option "1" "Run All Tests ${YELLOW}${DIM}(pytest tests/ -v)${NC}"
+    print_action_option "1" "Run All Tests (Quiet Mode) ${YELLOW}${DIM}(-q --quiet-mode)${NC}"
     print_action_option "2" "Run All Tests (stop on first fail) ${YELLOW}${DIM}(-x)${NC}"
     print_action_option "3" "Run Specific Test File"
     print_action_option "4" "Run Specific Test by Name"
@@ -515,7 +515,8 @@ show_test_menu() {
     print_action_option "6" "List Test Files"
     print_action_option "7" "List All Test Names"
     print_action_option "8" "Run with Coverage ${YELLOW}${DIM}(--cov)${NC}"
-    print_action_option "9" "Run Quiet ${YELLOW}${DIM}(-q)${NC}"
+    print_action_option "9" "Dashboard Only ${YELLOW}${DIM}(-q --quiet-mode)${NC}"
+    print_action_option "10" "Run Verbose ${YELLOW}${DIM}(-v, per-test docstrings)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -529,9 +530,9 @@ handle_test_menu() {
         case $choice in
             1)
                 clear
-                echo -e "${CYAN}Running all tests...${NC}"
+                echo -e "${CYAN}Running all tests (Quiet Mode)...${NC}"
                 echo ""
-                run_pytest tests/ -v
+                run_pytest tests/ -q --quiet-mode
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
@@ -620,9 +621,18 @@ handle_test_menu() {
                 ;;
             9)
                 clear
-                echo -e "${CYAN}Running all tests (quiet)...${NC}"
+                echo -e "${CYAN}Running Dashboard-Only Summary...${NC}"
                 echo ""
-                run_pytest tests/ -q
+                run_pytest tests/ -q --quiet-mode
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            10)
+                clear
+                echo -e "${CYAN}Running all tests (verbose)...${NC}"
+                echo ""
+                run_pytest tests/ -v --no-quiet-mode
                 echo ""
                 echo "Press Enter to continue..."
                 read -r

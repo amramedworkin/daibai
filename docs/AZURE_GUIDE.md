@@ -532,6 +532,7 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | **14** | Cache | `test_exact_match_retrieval` | Semantic cache: exact prompt returns cached response | `tests/test_semantic_cache.py` | SemanticCache | `✓ [CLOUD-CACHE]` | `AssertionError` |
 | **15** | Cache | `test_semantic_similarity_retrieval` | Similar prompts (cosine > 0.95) return cached response | `tests/test_semantic_cache.py` | SemanticCache | `✓ [CLOUD-CACHE]` | `AssertionError` |
 | **16** | Cache | `test_resilience_redis_down` | Redis down: graceful fallback to LLM | `tests/test_semantic_cache.py` | Resilience | `✓ [CLOUD-CACHE]` | `ConnectionError` |
+| **16b** | Cache | `test_paraphrased_question_should_hit_cache` | **TDD Broken Promise:** "What is total revenue for 2023?" stored; "Show me 2023 total revenue" should hit cache. Currently FAILS (Cache Miss) until semantic matching is fixed. | `tests/test_semantic_precision.py` | Semantic precision | `✓ [CLOUD-CACHE]` | `AssertionError` (Cache Miss) |
 | **17** | Conn | `test_cache_manager_ping_calls_mock_and_returns_true` | CacheManager.ping() via mocked Redis | `tests/test_cache_connection.py` | CacheManager (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
 | **18** | Conn | `test_cache_manager_ping_loads_connection_from_env` | Connection string from config/env | `tests/test_cache_connection.py` | Config (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
 | **19** | Conn | `test_cache_manager_ping_returns_false_when_no_connection_string` | No config → ping returns False | `tests/test_cache_connection.py` | Graceful fallback (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
@@ -555,6 +556,21 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | **37** | Env | `test_clean_env_idempotent_on_clean_file` | clean_env.py leaves already-clean .env unchanged | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
 
 **Dashboard tags:** Tests use component-specific tags (`[DB]`, `[API]`, `[AUTH]`, `[CONFIG]`, `[LLM-PROVIDERS]`, `[LLM-REGISTRY]`, `[LLM-MODELS]`, `[LLM-GEMINI]`, `[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`, `[CLOUD-AZURE]`, `[ENV-INTEGRITY]`) so admins can see which service each test targets.
+
+**TDD Semantic Precision Test (Broken Promise)**
+
+`tests/test_semantic_precision.py` implements a test-driven development "broken promise" test:
+
+1. **Store** a mocked LLM response for: "What is the total revenue for 2023?"
+2. **Retrieve** using the paraphrased question: "Show me 2023 total revenue."
+3. **Assert** the cache returns the stored answer.
+
+**Expected result:** The test **MUST FAIL** with a "Cache Miss" until the system correctly treats paraphrased questions as semantically equivalent. This proves the test suite is working and defines the desired behavior.
+
+```bash
+python3 -m pytest tests/test_semantic_precision.py -v
+# Expected: FAILED - AssertionError: Cache Miss: Paraphrased question should return cached answer.
+```
 
 **Cache connection tests (mocked vs live)**
 

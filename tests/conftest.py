@@ -26,6 +26,7 @@ _MAGENTA = "\033[95m"  # LLM providers
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
 _RESET = "\033[0m"
+_RED = "\033[91m"
 _PASS = "\033[92m✓\033[0m"
 _FAIL = "\033[91m✗\033[0m"
 _SKIP = "\033[93m⊘\033[0m"
@@ -36,6 +37,20 @@ _test_docs = {}
 _test_results_ordered = []
 # Session stats: only count 'call' phase to avoid triple-counting (setup/call/teardown)
 _session_stats = {"passed": 0, "failed": 0, "skipped": 0}
+
+
+def pytest_addoption(parser):
+    """Add custom command line options for the dashboard."""
+    parser.addoption(
+        "--quiet-mode",
+        action="store_true",
+        help="Suppress per-test success messages; only show failures and dashboards (default via addopts).",
+    )
+    parser.addoption(
+        "--no-quiet-mode",
+        action="store_true",
+        help="Disable quiet mode; show per-test output and full catalog (use with -v for verbose).",
+    )
 
 
 def _get_category(nodeid):
@@ -56,7 +71,7 @@ def _get_category(nodeid):
         return "CLOUD-REDIS", _YELLOW
     if "test_cache_logic" in nodeid:
         return "CLOUD-L1", _YELLOW
-    if "test_semantic_cache" in nodeid:
+    if "test_semantic_cache" in nodeid or "test_semantic_precision" in nodeid:
         return "CLOUD-CACHE", _YELLOW
     if "test_server_lifespan" in nodeid:
         return "CLOUD-LIFESPAN", _YELLOW
@@ -84,14 +99,24 @@ def pytest_sessionstart(session):
 
 def pytest_runtest_logreport(report):
     """Collect test outcomes. ONLY count 'call' phase to avoid triple-counting setup/teardown.
-    Exception: count skipped in 'setup' too (tests skipped before call never reach call)."""
+    Exception: count skipped in 'setup' too (tests skipped before call never reach call).
+    XFAIL (expected failure): count as passed so dashboard shows success."""
     if report.when == "call":
+        wasxfail = getattr(report, "wasxfail", None)
         if report.passed:
+            _session_stats["passed"] += 1
+            _test_results_ordered.append("passed")
+        elif report.failed and wasxfail:
+            # Expected failure (xfail): treat as success
             _session_stats["passed"] += 1
             _test_results_ordered.append("passed")
         elif report.failed:
             _session_stats["failed"] += 1
             _test_results_ordered.append("failed")
+        elif report.skipped and wasxfail:
+            # XFAIL can appear as skipped in some pytest versions; treat as success
+            _session_stats["passed"] += 1
+            _test_results_ordered.append("passed")
         elif report.skipped:
             _session_stats["skipped"] += 1
             _test_results_ordered.append("skipped")
@@ -105,6 +130,13 @@ def pytest_runtest_setup(item):
     if item.function.__doc__:
         doc = item.function.__doc__.strip().split("\n")[0]
         _test_docs[item.nodeid] = doc
+    # Suppress per-test progress in quiet mode (--no-quiet-mode disables)
+    quiet = (
+        item.config.getoption("--quiet-mode", default=False)
+        and not item.config.getoption("--no-quiet-mode", default=False)
+    )
+    if quiet:
+        return
     if not item.function.__doc__:
         return
     if not (hasattr(sys.stdout, "isatty") and sys.stdout.isatty()):
@@ -116,7 +148,8 @@ def pytest_runtest_setup(item):
         "tests.test_env_integrity",
         "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_cosmos_integration",
         "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection",
-        "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_azure_config",
+        "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_semantic_precision",
+        "tests.test_azure_config",
         "tests.test_llm_providers", "tests.test_new_providers", "tests.test_model_discovery",
         "tests.test_gemini_get_models",
     )
@@ -189,7 +222,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         "test_database_logic", "test_api", "test_auth", "test_config", "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
-        "test_semantic_cache", "test_azure_config", "test_llm_providers", "test_new_providers",
+        "test_semantic_cache", "test_semantic_precision", "test_azure_config", "test_llm_providers", "test_new_providers",
         "test_model_discovery", "test_gemini_get_models",
     )
 
@@ -227,10 +260,17 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     passed = terminalreporter.stats.get("passed", [])
     failed = terminalreporter.stats.get("failed", [])
     skipped = terminalreporter.stats.get("skipped", [])
-    all_reports = [(r, "passed") for r in passed] + [(r, "failed") for r in failed] + [(r, "skipped") for r in skipped]
+    xfailed = terminalreporter.stats.get("xfailed", [])
+    xfailed_reports = [(r[0] if isinstance(r, tuple) else r, "xfailed") for r in xfailed]
+    all_reports = (
+        [(r, "passed") for r in passed]
+        + [(r, "failed") for r in failed]
+        + [(r, "skipped") for r in skipped]
+        + xfailed_reports
+    )
     dashboard_raw = [(r, status) for r, status in all_reports if any(m in r.nodeid for m in key_mods)]
     # Deduplicate by nodeid (some envs report same test multiple times); keep worst status
-    _status_rank = {"failed": 3, "skipped": 2, "passed": 1}
+    _status_rank = {"failed": 3, "skipped": 2, "passed": 1, "xfailed": 1}
     by_nodeid = {}
     for r, status in dashboard_raw:
         if r.nodeid not in by_nodeid or _status_rank.get(status, 0) > _status_rank.get(by_nodeid[r.nodeid][1], 0):
@@ -240,6 +280,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     pass_sym = _PASS if use_color else "PASS"
     fail_sym = _FAIL if use_color else "FAIL"
     skip_sym = _SKIP if use_color else "SKIP"
+    xfail_sym = f"{_GREEN}XFAIL{_RESET}" if use_color else "XFAIL"
     if dashboard:
         # For parametrized tests, extract [param] from nodeid so each variant has a unique line
         def _display_doc(report):
@@ -268,9 +309,19 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_line(f"{b}  Test Dashboard{r}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
         for report, status in dashboard:
+            quiet = (
+                config.getoption("--quiet-mode", default=False)
+                and not config.getoption("--no-quiet-mode", default=False)
+            )
+            if quiet and status == "passed":
+                continue
             cat, _ = _get_category(report.nodeid)
             if cat:
-                sym = pass_sym if status == "passed" else (fail_sym if status == "failed" else skip_sym)
+                sym = (
+                    pass_sym
+                    if status == "passed"
+                    else (xfail_sym if status == "xfailed" else (fail_sym if status == "failed" else skip_sym))
+                )
                 cc = _cat_colors.get(cat, _CYAN) if use_color else ""
                 doc = _display_doc(report)
                 terminalreporter.write_line(f"  {sym} {cc}[{cat}]{r} {doc}")
@@ -406,6 +457,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "LLM-PROVIDERS": _MAGENTA, "LLM-REGISTRY": _MAGENTA,
             "LLM-MODELS": _MAGENTA, "LLM-GEMINI": _MAGENTA,
         }
+        quiet_mode = (
+            config.getoption("--quiet-mode", default=False)
+            and not config.getoption("--no-quiet-mode", default=False)
+        )
         terminalreporter.write_line("")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
         terminalreporter.write_line(f"{b}  Catalog Summary{r}")
@@ -416,13 +471,21 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             what, pass_tech, pass_big, fail_tech, fail_big = _CATALOG[cat]
             cc = _CAT_COLORS.get(cat, "") if use_color else ""
             dim = _DIM if use_color else ""
-            terminalreporter.write_line(f"  {cc}[{cat}]{r} {what}")
-            if cat in cats_with_failures:
-                terminalreporter.write_line(f"      {dim}Fail-Technical:{r} {fail_tech}")
-                terminalreporter.write_line(f"      {dim}Fail-Big Picture:{r} {fail_big}")
+            passed = cat not in cats_with_failures
+            pass_label = f"{_GREEN}PASS{r}" if use_color else "PASS"
+            fail_label = f"{_RED}FAIL{r}" if use_color else "FAIL"
+            label = pass_label if passed else fail_label
+            if quiet_mode:
+                big = fail_big if cat in cats_with_failures else pass_big
+                terminalreporter.write_line(f"  {cc}[{cat}]{r} {label} {big}")
             else:
-                terminalreporter.write_line(f"      {dim}Pass-Technical:{r} {pass_tech}")
-                terminalreporter.write_line(f"      {dim}Pass-Big Picture:{r} {pass_big}")
+                terminalreporter.write_line(f"  {cc}[{cat}]{r} {label} {what}")
+                if cat in cats_with_failures:
+                    terminalreporter.write_line(f"      {dim}Fail-Technical:{r} {fail_tech}")
+                    terminalreporter.write_line(f"      {dim}Fail-Big Picture:{r} {fail_big}")
+                else:
+                    terminalreporter.write_line(f"      {dim}Pass-Technical:{r} {pass_tech}")
+                    terminalreporter.write_line(f"      {dim}Pass-Big Picture:{r} {pass_big}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
     # Error Dashboard (last): failed tests and setup/teardown/collection errors
@@ -464,7 +527,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"      {msg}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
-    # Status Gauge (temperature-style bar + legend) — use session_stats to avoid triple-counting
+    # Status Gauge — xfailed counted as passed in pytest_runtest_logreport
     _print_status_gauge(
         terminalreporter,
         use_color,

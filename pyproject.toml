@@ -119,6 +119,7 @@ packages = ["daibai"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-q --quiet-mode"
 filterwarnings = [
     "ignore::DeprecationWarning:fakeredis.*",
     "ignore::DeprecationWarning:redis.*",
