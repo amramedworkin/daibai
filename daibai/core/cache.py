@@ -1,14 +1,20 @@
 """
 Cache manager for Redis connectivity.
 
-Uses AZURE_REDIS_CONNECTION_STRING or REDIS_URL from .env (via config).
+Supports two modes:
+- Secretless (Azure): REDIS_USE_ENTRA_ID=1 + AZURE_REDIS_HOST → DefaultAzureCredential via redis-entraid
+- Connection string: AZURE_REDIS_CONNECTION_STRING or REDIS_URL (local dev, fallback)
 """
 
 import hashlib
 import json
 from typing import List, Optional
 
-from .config import get_redis_connection_string, get_semantic_similarity_threshold
+from .config import (
+    get_redis_connection_string,
+    get_redis_entra_config,
+    get_semantic_similarity_threshold,
+)
 
 SEMANTIC_KEY_PREFIX = "semantic:"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -43,14 +49,40 @@ class CacheManager:
         self._client = None
 
     def _get_client(self):
-        """Lazy-init Redis client from connection string."""
+        """Lazy-init Redis client. Prefer Entra ID when configured; else connection string."""
         if self._client is not None:
             return self._client
-        if not self._connection_string:
+        # Try Entra ID (secretless) first when REDIS_USE_ENTRA_ID=1
+        entra = get_redis_entra_config()
+        if entra:
+            host, port = entra
+            try:
+                from redis import Redis
+                from redis_entraid.cred_provider import create_from_default_azure_credential
+
+                cred_provider = create_from_default_azure_credential(
+                    ("https://redis.azure.com/.default",),
+                )
+                self._client = Redis(
+                    host=host,
+                    port=port,
+                    ssl=True,
+                    ssl_cert_reqs=None,
+                    credential_provider=cred_provider,
+                    decode_responses=True,
+                )
+                return self._client
+            except ImportError:
+                pass  # redis-entraid not installed; fall through to connection string
+            except Exception:
+                pass  # Credential failed (e.g. not in Azure); fall through
+        # Fallback: connection string (local dev, or when Entra not configured)
+        conn_str = self._connection_string or get_redis_connection_string()
+        if not conn_str:
             return None
         import redis
         self._client = redis.Redis.from_url(
-            self._connection_string,
+            conn_str,
             decode_responses=True,
         )
         return self._client

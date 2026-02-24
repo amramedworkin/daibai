@@ -135,6 +135,7 @@ Commands (mirrors menu.sh):
                             Account: daibai-metadata, RG: daibai-rg (override via env)
     test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
+    verify-azure-auth        Verify secretless Cosmos access (lists containers, no COSMOS_KEY)
     redis-create             Create Azure Cache for Redis (RG + Basic C0, auto-writes REDIS_URL to .env)
     test-redis               Redis integration test (add/retrieve/delete keys, requires REDIS_URL)
     test-cache-connection    CacheManager ping (mocked + live when REDIS_URL set)
@@ -147,6 +148,7 @@ Commands (mirrors menu.sh):
     setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
 
   SUPPORT & UTILITIES (menu 4)
+    is-ready [--strict]      Check env components (Redis, Cosmos, DB, LLM). --strict = require all
     config-path             Show config file locations (● found ○ not found)
     config-edit             Edit daibai.yaml
     docs [file]             List docs/ or cat specific file
@@ -180,11 +182,13 @@ Examples:
     $(basename "$0") server
     $(basename "$0") cli-query "How many users are in the database?"
     $(basename "$0") train --database suitecrm
+    $(basename "$0") is-ready
     $(basename "$0") config-path
     $(basename "$0") cosmos-role
     $(basename "$0") cosmos-role --principal-id <object-id>
     $(basename "$0") test-db
     $(basename "$0") test-cosmos
+    $(basename "$0") verify-azure-auth
     $(basename "$0") redis-create
     $(basename "$0") test-redis
     $(basename "$0") test-cache-connection
@@ -325,6 +329,20 @@ cmd_train() {
 # SUPPORT & UTILITIES
 # ============================================================================
 
+cmd_is_ready() {
+    load_env
+    local py
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        py="$PROJECT_DIR/.venv/bin/python"
+    else
+        py="$(command -v python3 python 2>/dev/null | head -1)"
+    fi
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    local strict=""
+    [[ "$1" == "--strict" ]] && strict="--strict"
+    "$py" "$PROJECT_DIR/scripts/check_env_ready.py" $strict
+}
+
 cmd_config_path() {
     print_header "Configuration File Search Order"
     local locs=(
@@ -447,6 +465,7 @@ cmd_test_db() {
 }
 
 cmd_test_cosmos() {
+    load_env
     if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
         print_error "COSMOS_ENDPOINT not set. Add to environment:"
         echo ""
@@ -456,6 +475,19 @@ cmd_test_cosmos() {
     fi
     print_header "Cosmos DB E2E (CosmosStore lifecycle)"
     run_pytest tests/test_cosmos_store.py -v -s
+}
+
+cmd_verify_azure_auth() {
+    load_env
+    print_header "Verify Secretless Azure Auth (Cosmos DB)"
+    local py
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        py="$PROJECT_DIR/.venv/bin/python"
+    else
+        py="$(command -v python3 python 2>/dev/null | head -1)"
+    fi
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    "$py" "$PROJECT_DIR/scripts/verify_azure_auth.py"
 }
 
 cmd_redis_create() {
@@ -840,6 +872,9 @@ main() {
         test-cosmos)
             cmd_test_cosmos
             ;;
+        verify-azure-auth)
+            cmd_verify_azure_auth
+            ;;
         redis-create)
             cmd_redis_create
             ;;
@@ -866,6 +901,9 @@ main() {
             ;;
         setup|install)
             cmd_setup
+            ;;
+        is-ready)
+            cmd_is_ready "$@"
             ;;
         config-path)
             cmd_config_path

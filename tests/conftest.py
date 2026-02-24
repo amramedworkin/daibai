@@ -74,6 +74,8 @@ def _get_category(nodeid):
         return "GUARDRAILS", _CYAN
     if "test_env_integrity" in nodeid:
         return "ENV-INTEGRITY", _CYAN
+    if "test_env_ready" in nodeid:
+        return "ENV-READY", _CYAN
     if "test_cache_connection" in nodeid:
         return "CLOUD-CONN", _YELLOW
     if "test_redis" in nodeid:
@@ -388,7 +390,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
         _cat_colors = {
             "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN, "GUARDRAILS": _CYAN,
-            "ENV-INTEGRITY": _CYAN,
+            "ENV-INTEGRITY": _CYAN, "ENV-READY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
             "CLOUD-AZURE": _YELLOW,
@@ -471,6 +473,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "Your .env is clean and predictable; Smart Append and clean_env keep it that way.",
             "Duplicate keys or malformed lines detected; run ./scripts/cli.sh env-clean to fix.",
             "Config may load wrong values; run env-clean to deduplicate and fix.",
+        ),
+        "ENV-READY": (
+            "Env component detection (Redis, Cosmos, DB, LLM, Key Vault).",
+            "Each component correctly detected from REDIS_URL, COSMOS_ENDPOINT, daibai.yaml, etc.",
+            "Run ./scripts/cli.sh is-ready to see what is configured.",
+            "Component detection logic may be wrong.",
+            "is-ready report may be inaccurate.",
         ),
         "CLOUD-CONN": (
             "Redis connection (CacheManager.ping, config wiring).",
@@ -557,7 +566,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         }
         _CAT_COLORS = {
             "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN, "GUARDRAILS": _CYAN,
-            "ENV-INTEGRITY": _CYAN,
+            "ENV-INTEGRITY": _CYAN, "ENV-READY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
             "CLOUD-AZURE": _YELLOW,

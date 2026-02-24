@@ -1,3 +1,16 @@
+### **Secretless Azure Identity (Phase 4)**
+
+When running in Azure (Container Apps, Functions, VM with Managed Identity), you can avoid storing passwords in `.env`:
+
+| Service | Traditional (secrets) | Secretless (identity) |
+|---------|------------------------|------------------------|
+| **Cosmos DB** | `COSMOS_KEY` in .env | `DefaultAzureCredential` — no key needed. Set `COSMOS_ENDPOINT` only. Run `./scripts/cli.sh cosmos-role` to grant your identity Data Contributor. |
+| **Redis** | `REDIS_URL` or `AZURE_REDIS_CONNECTION_STRING` with password | Set `REDIS_USE_ENTRA_ID=1`, `AZURE_REDIS_HOST=your-cache.redis.cache.windows.net`, `AZURE_REDIS_PORT=6380`. Requires `redis-entraid` (`pip install -e ".[azure]"`) and Entra ID enabled on the cache. |
+
+**Verification:** Run `python scripts/verify_azure_auth.py` to confirm Cosmos DB is accessible without a key. If it lists containers, Azureification is working.
+
+---
+
 ### **Key Settings Reference**
 
 The following settings are present in the codebase and control semantic behavior. Set them in `.env`.
