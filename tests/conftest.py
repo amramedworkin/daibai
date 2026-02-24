@@ -2,7 +2,7 @@
 Pytest configuration: colorized test descriptions and dashboard summary.
 
 Run with: pytest tests/ -v -s
-Colors: [DB]=cyan, [API]=green, [CLOUD]=yellow
+Colors: [DB]=cyan, [API]=green, [CLOUD-<component>]=yellow (e.g. CLOUD-REDIS, CLOUD-COSMOS, CLOUD-LIFESPAN)
 """
 
 import sys
@@ -23,13 +23,19 @@ _test_docs = {}
 
 
 def _get_category(nodeid):
-    """Return (category, color) for a test nodeid."""
+    """Return (category, color) for a test nodeid. Cloud tests get [CLOUD-<component>]."""
     if "test_database_logic" in nodeid:
         return "DB", _CYAN
     if "test_api" in nodeid:
         return "API", _GREEN
-    if "test_cosmos_cloud" in nodeid or "test_cosmos_integration" in nodeid or "test_cosmos_store" in nodeid or "test_server_lifespan" in nodeid:
-        return "CLOUD", _YELLOW
+    if "test_redis" in nodeid:
+        return "CLOUD-REDIS", _YELLOW
+    if "test_semantic_cache" in nodeid:
+        return "CLOUD-CACHE", _YELLOW
+    if "test_server_lifespan" in nodeid:
+        return "CLOUD-LIFESPAN", _YELLOW
+    if "test_cosmos_cloud" in nodeid or "test_cosmos_integration" in nodeid or "test_cosmos_store" in nodeid:
+        return "CLOUD-COSMOS", _YELLOW
     return None, None
 
 
@@ -44,14 +50,11 @@ def pytest_runtest_setup(item):
         return
     doc = _test_docs[item.nodeid]
     mod = item.module.__name__
-    if mod in ("tests.test_database_logic", "tests.test_api", "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_server_lifespan"):
-        if "test_database_logic" in mod:
-            prefix = f"{_CYAN}{_BOLD}[DB]"
-        elif "test_api" in mod:
-            prefix = f"{_GREEN}{_BOLD}[API]"
-        else:
-            prefix = f"{_YELLOW}{_BOLD}[CLOUD]"
-        print(f"\n  {prefix} {doc}{_RESET}", flush=True)
+    if mod in ("tests.test_database_logic", "tests.test_api", "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_server_lifespan", "tests.test_redis", "tests.test_semantic_cache"):
+        cat, color = _get_category(item.nodeid)
+        if cat:
+            prefix = f"{color}{_BOLD}[{cat}]"
+            print(f"\n  {prefix} {doc}{_RESET}", flush=True)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
@@ -64,7 +67,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     skipped = stats.get("skipped", [])
     all_reports = [(r, "passed") for r in passed] + [(r, "failed") for r in failed] + [(r, "skipped") for r in skipped]
     # Only show dashboard for our key test modules
-    key_mods = ("test_database_logic", "test_api", "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store", "test_server_lifespan")
+    key_mods = ("test_database_logic", "test_api", "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store", "test_server_lifespan", "test_redis", "test_semantic_cache")
     dashboard = [(r, status) for r, status in all_reports if any(m in r.nodeid for m in key_mods)]
     if not dashboard:
         return

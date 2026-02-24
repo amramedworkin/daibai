@@ -74,7 +74,9 @@ Commands (mirrors menu.sh):
                             Uses az ad signed-in-user show for principal-id if not given.
                             Account: daibai-metadata, RG: daibai-rg (override via env)
     test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
-    test-cloud               Cosmos DB cloud integration test (requires COSMOS_ENDPOINT, run before deploy)
+    test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
+    redis-create             Create Azure Cache for Redis (RG + Basic C0, auto-writes REDIS_URL to .env)
+    test-redis               Redis integration test (add/retrieve/delete keys, requires REDIS_URL)
 
   SUPPORT & UTILITIES (menu 4)
     config-path             Show config file locations (● found ○ not found)
@@ -111,7 +113,9 @@ Examples:
     $(basename "$0") cosmos-role
     $(basename "$0") cosmos-role --principal-id <object-id>
     $(basename "$0") test-db
-    $(basename "$0") test-cloud
+    $(basename "$0") test-cosmos
+    $(basename "$0") redis-create
+    $(basename "$0") test-redis
     $(basename "$0") test
     $(basename "$0") test -x
     $(basename "$0") test file test_config.py
@@ -344,7 +348,7 @@ cmd_test_db() {
     "$py" "$PROJECT_DIR/test_cosmos.py"
 }
 
-cmd_test_cloud() {
+cmd_test_cosmos() {
     if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
         print_error "COSMOS_ENDPOINT not set. Add to environment:"
         echo ""
@@ -352,8 +356,25 @@ cmd_test_cloud() {
         echo ""
         exit 1
     fi
-    print_header "Cosmos DB Cloud Integration Test (CosmosStore E2E)"
+    print_header "Cosmos DB E2E (CosmosStore lifecycle)"
     run_pytest tests/test_cosmos_store.py -v -s
+}
+
+cmd_redis_create() {
+    print_header "Azure Cache for Redis Setup"
+    bash "$SCRIPT_DIR/setup_redis.sh"
+}
+
+cmd_test_redis() {
+    if [[ -z "${REDIS_URL:-}" ]]; then
+        print_error "REDIS_URL not set. Run redis-create first (writes to .env automatically)"
+        echo ""
+        echo '  ./scripts/cli.sh redis-create'
+        echo ""
+        exit 1
+    fi
+    print_header "Redis Integration Test (Add/Retrieve/Delete Keys)"
+    run_pytest tests/test_redis.py -v -s
 }
 
 cmd_cosmos_role() {
@@ -527,8 +548,14 @@ main() {
         test-db)
             cmd_test_db
             ;;
-        test-cloud)
-            cmd_test_cloud
+        test-cosmos)
+            cmd_test_cosmos
+            ;;
+        redis-create)
+            cmd_redis_create
+            ;;
+        test-redis)
+            cmd_test_redis
             ;;
         config-path)
             cmd_config_path

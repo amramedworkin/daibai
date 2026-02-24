@@ -48,6 +48,7 @@ dependencies = [
     "azure-keyvault-secrets>=4.7.0",
     "azure-cosmos>=4.7.0",
     "aiohttp>=3.9.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -90,6 +91,10 @@ dev = [
     "httpx>=0.25.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+]
+# Semantic cache: embeddings for similarity search
+cache = [
+    "sentence-transformers>=2.2.0",
 ]
 
 [project.scripts]

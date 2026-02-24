@@ -398,27 +398,139 @@ pytest tests/test_auth.py tests/test_azure_config.py -v
 
 ### 5.1 DaiBai Test Suite Catalog
 
-The following table summarizes the key tests in the DaiBai test suite. Use it as a quick reference when validating the plumbing (Cosmos DB, auth, config) and during the "Brain Transplant" migration. Run unit tests with `./scripts/cli.sh test` and cloud tests with `./scripts/cli.sh test-cloud` (requires `COSMOS_ENDPOINT`).
+The following table summarizes the key tests in the DaiBai test suite. Use it as a quick reference when validating the plumbing (Cosmos DB, auth, config) and during the "Brain Transplant" migration.
+
+**Test commands:**
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/cli.sh test` | Unit tests (excludes cloud; ~1s) |
+| `./scripts/cli.sh test-cosmos` | Cosmos DB E2E (CosmosStore lifecycle; requires `COSMOS_ENDPOINT`) |
+| `./scripts/cli.sh test-redis` | Redis add/retrieve/delete (requires `REDIS_URL`) |
+| `./scripts/cli.sh test-db` | Golden Ticket (Cosmos Read/Write/Delete validation) |
+| `python3 -m pytest tests/ -v -s` | Full suite (cloud tests skip when env not set) |
+
+*Note: `test-cloud` was renamed to `test-cosmos` to reflect Cosmos DB specifically.*
 
 | ID | Category | Test Name | Description | File | Target Component | Success | Failure |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **01** | Cloud Logic | `test_cosmos_store_e2e_lifecycle` | Full Create/Read/Delete cycle via CosmosStore | `tests/test_cosmos_store.py` | CosmosStore + Real Azure | `PASSED` | `CredentialUnavailableError` |
-| **02** | Infrastructure | `test_cosmos_store_singleton_client` | Verify shared client (connection pool) | `tests/test_cosmos_store.py` | Connection Pool | `✓ [CLOUD] Verify...` | `AssertionError` (ID mismatch) |
-| **03** | Lifecycle | `test_cosmos_store_fastapi_lifespan_simulation` | Startup/Shutdown + graceful close | `tests/test_cosmos_store.py` | Async Clean-up | `✓ [CLOUD] Simulate...` | `RuntimeError` |
+| **01** | Cosmos | `test_cosmos_store_e2e_lifecycle` | Full Create/Read/Delete cycle via CosmosStore | `tests/test_cosmos_store.py` | CosmosStore + Real Azure | `PASSED` | `CredentialUnavailableError` |
+| **02** | Cosmos | `test_cosmos_store_singleton_client` | Verify shared client (connection pool) | `tests/test_cosmos_store.py` | Connection Pool | `✓ [CLOUD-COSMOS]` | `AssertionError` (ID mismatch) |
+| **03** | Cosmos | `test_cosmos_store_fastapi_lifespan_simulation` | Startup/Shutdown + graceful close | `tests/test_cosmos_store.py` | Async Clean-up | `✓ [CLOUD-COSMOS]` | `RuntimeError` |
 | **04** | Data Logic | `test_get_history_returns_empty_on_cosmos_not_found` | Missing document returns `[]` | `tests/test_database_logic.py` | Graceful Fallback | `PASSED` | `KeyError` |
 | **05** | Data Logic | `test_append_messages_fetches_extends_upserts` | Atomic fetch-extend-save | `tests/test_database_logic.py` | History Extension | `PASSED` | `TypeError` |
 | **06** | API Flow | `test_post_query_creates_record_in_store` | Chat POST → record persisted | `tests/test_api.py` | FastAPI ↔ Store | `PASSED` | `500 Internal Error` |
 | **07** | LLM Check | `test_gemini_get_models_live` | Live Gemini API (requires key) | `tests/test_gemini_get_models.py` | Gemini Auth | `Models returned: N` | `403 Forbidden` |
 | **08** | Environment | `test_resolve_env_vars` | Env var injection from `.env` | `tests/test_config.py` | Config / `.env` | `PASSED` | `ValueError` |
+| **09** | Lifespan | `test_server_lifespan_initializes_store_and_closes_gracefully` | FastAPI lifespan: store init, client active, graceful shutdown | `tests/test_server_lifespan.py` | FastAPI lifespan + CosmosStore | `✓ [CLOUD-LIFESPAN]` | `AssertionError` / skip if no COSMOS_ENDPOINT |
+| **10** | Redis | `test_redis_add_and_retrieve_key` | Add key-value and retrieve it | `tests/test_redis.py` | Azure Cache for Redis | `✓ [CLOUD-REDIS]` | `ConnectionError` / skip if no REDIS_URL |
+| **11** | Redis | `test_redis_delete_key` | Add key, delete it, verify gone | `tests/test_redis.py` | Redis delete | `✓ [CLOUD-REDIS]` | `ConnectionError` |
+| **12** | Redis | `test_redis_retrieve_nonexistent_key` | Retrieve non-existent key returns None | `tests/test_redis.py` | Bad key retrieval | `✓ [CLOUD-REDIS]` | `AssertionError` |
+| **13** | Redis | `test_redis_full_lifecycle` | Add, retrieve, delete, verify bad retrieval | `tests/test_redis.py` | Redis E2E | `✓ [CLOUD-REDIS]` | `ConnectionError` |
+| **14** | Cache | `test_exact_match_retrieval` | Semantic cache: exact prompt returns cached response | `tests/test_semantic_cache.py` | SemanticCache | `✓ [CLOUD-CACHE]` | `AssertionError` |
+| **15** | Cache | `test_semantic_similarity_retrieval` | Similar prompts (cosine > 0.95) return cached response | `tests/test_semantic_cache.py` | SemanticCache | `✓ [CLOUD-CACHE]` | `AssertionError` |
+| **16** | Cache | `test_resilience_redis_down` | Redis down: graceful fallback to LLM | `tests/test_semantic_cache.py` | Resilience | `✓ [CLOUD-CACHE]` | `ConnectionError` |
+
+**Dashboard tags:** Cloud tests use component-specific tags (`[CLOUD-COSMOS]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-CACHE]`) so admins can see which service each test targets.
+
+**Lifespan tests**
+
+`tests/test_server_lifespan.py` verifies that the FastAPI app correctly manages the CosmosStore connection during startup and shutdown:
+
+- **Startup:** `app.state.store` is initialized and is an instance of `CosmosStore`.
+- **Client creation:** After a request (e.g. `/health`), the CosmosClient within the store is active (`store._client` is not `None`).
+- **Shutdown:** When the `TestClient` context exits, the lifespan shutdown runs and the store's connection is closed (`store._client` is `None`).
+
+The test uses `TestClient(app)` to trigger lifespan events and requires `COSMOS_ENDPOINT` to be set; otherwise it is skipped.
 
 **Quick run commands:**
 
 ```bash
 ./scripts/cli.sh test          # Unit tests (excludes cloud)
-./scripts/cli.sh test-cloud    # CosmosStore E2E (requires COSMOS_ENDPOINT)
+./scripts/cli.sh test-cosmos    # CosmosStore E2E (requires COSMOS_ENDPOINT)
+./scripts/cli.sh test-redis     # Redis add/retrieve/delete (requires REDIS_URL)
+python3 -m pytest tests/ -v -s # Full suite (all tests; cloud/Redis skip when env not set)
 ```
 
-### 6. (Optional) Validate Cosmos DB Access
+**Integrated Test Dashboard**
+
+At the end of each run, `conftest.py` prints a dashboard summarizing key tests by category. Cloud tests use component-specific tags so admins can see which Azure service each test targets:
+
+| Tag | Color | Component |
+|-----|-------|-----------|
+| `[DB]` | Cyan | Database logic (mocked) |
+| `[API]` | Green | API flow |
+| `[CLOUD-COSMOS]` | Yellow | Cosmos DB |
+| `[CLOUD-REDIS]` | Yellow | Azure Cache for Redis |
+| `[CLOUD-LIFESPAN]` | Yellow | FastAPI lifespan |
+| `[CLOUD-CACHE]` | Yellow | Semantic cache (Redis + embeddings) |
+
+**Example output:**
+
+```
+──────────────────────────────────────────────────────────────────────
+  Test Dashboard
+──────────────────────────────────────────────────────────────────────
+  PASS [API] When a user sends a chat message, the server saves both...
+  PASS [DB] When a conversation document exists in Cosmos, fetching...
+  PASS [DB] When a conversation does not exist yet, fetching it ret...
+  PASS [DB] When a document exists but has no messages key, we safe...
+  PASS [DB] Saving a conversation writes the session id and message...
+  PASS [DB] Appending new messages loads the existing conversation,...
+  PASS [DB] Listing conversations converts raw Cosmos documents int...
+  PASS [DB] Deleting a conversation that does not exist does not ra...
+  PASS [CLOUD-CACHE] Save a response for "What is Azure?" and retrieve...
+  PASS [CLOUD-CACHE] Store for "How do I deploy to Azure?", query with...
+  SKIP [CLOUD-COSMOS] test_cosmos_store_singleton_client
+  SKIP [CLOUD-LIFESPAN] test_server_lifespan_initializes_store_and_clos...
+  SKIP [CLOUD-REDIS] Add a key-value pair and retrieve it successfully.
+  ...
+──────────────────────────────────────────────────────────────────────
+================= 61 passed, 2 skipped, 10 deselected in 2.00s ==================
+```
+
+### 6. (Optional) Azure Cache for Redis Setup
+
+To provision Azure Cache for Redis (Basic C0 tier) and add `REDIS_URL` to your `.env`:
+
+```bash
+az login
+./scripts/cli.sh redis-create
+```
+
+Or run the script directly (each step blocks until complete):
+
+```bash
+# 0. Register Microsoft.Cache provider (if not already)
+az provider register --namespace Microsoft.Cache --wait
+
+# 1. Create Resource Group (if not already created)
+az group create --name daibai-rg --location eastus
+
+# 2. Create Azure Cache for Redis (Basic C0 - blocks ~10-15 min)
+az redis create --location eastus --name daibai-redis --resource-group daibai-rg --sku Basic --vm-size c0
+
+# 3. Retrieve the primary connection string
+az redis list-keys --name daibai-redis --resource-group daibai-rg --query primaryConnectionString -o tsv
+```
+
+The `redis-create` command automatically writes `REDIS_URL` to `.env` (creates the file from `.env.example` if needed, or updates an existing `REDIS_URL` line).
+
+**Semantic cache (always on):** When `REDIS_URL` is set, the agent automatically wraps all LLM providers with `SemanticCache`. Cache is used by default; disable only for testing or debugging:
+
+```bash
+export DAIBAI_DISABLE_SEMANTIC_CACHE=1   # Bypass cache (error isolation, testing)
+```
+
+Then run the Redis integration tests:
+
+```bash
+./scripts/cli.sh test-redis
+```
+
+**Override via env:** `REDIS_RESOURCE_GROUP`, `REDIS_NAME`, `REDIS_LOCATION`. The script registers the Microsoft.Cache provider if needed and blocks until the full Redis deployment completes (~15 min).
+
+### 7. (Optional) Validate Cosmos DB Access
 
 If you have Cosmos DB configured (role assignment + `COSMOS_ENDPOINT`), run the Golden Ticket check:
 

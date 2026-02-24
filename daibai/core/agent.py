@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import Config, load_config, DatabaseConfig, LLMProviderConfig
+from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_redis_connection_string
 from ..llm import get_provider_class, create_provider
-from ..llm.base import BaseLLMProvider, LLMResponse
+from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
 
 class SchemaCache:
@@ -219,8 +219,16 @@ class DaiBaiAgent:
                 kwargs["endpoint"] = llm_config.endpoint
             kwargs.update(llm_config.extra)
             
-            self._providers[name] = provider_class(**kwargs)
-        
+            provider = provider_class(**kwargs)
+
+            # Always use semantic cache unless explicitly disabled (testing/debug/stand-down)
+            cache_disabled = os.environ.get("DAIBAI_DISABLE_SEMANTIC_CACHE", "").strip().lower() in ("1", "true", "yes")
+            redis_url = get_redis_connection_string()
+            if not cache_disabled and redis_url:
+                cache = SemanticCache(connection_string=redis_url)
+                provider = CachedLLMProvider(provider, cache)
+
+            self._providers[name] = provider
         return self._providers[name]
     
     def switch_database(self, db_name: str) -> None:

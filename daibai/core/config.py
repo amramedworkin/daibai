@@ -323,6 +323,19 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
 _USER_PREFS_FILE = Path.home() / ".daibai" / "preferences.json"
 
 
+def get_redis_connection_string() -> Optional[str]:
+    """
+    Get Azure Redis connection string for semantic caching.
+    Reads from AZURE_REDIS_CONNECTION_STRING or REDIS_URL (env).
+    Returns None if not configured.
+    """
+    return (
+        os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
+        or os.environ.get("REDIS_URL", "").strip()
+        or None
+    )
+
+
 def load_user_preferences() -> Dict[str, Any]:
     """Load user preferences (current database, LLM, etc.)."""
     import json
