@@ -16,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_redis_connection_string
-from .guardrails import SQLValidator, SecurityViolation
+from .guardrails import GuardrailPipeline, SQLValidator, SecurityViolation
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
@@ -457,6 +457,7 @@ class DaiBaiAgent:
         Returns:
             Generated SQL string
         """
+        GuardrailPipeline.validate_prompt(prompt)
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
@@ -483,6 +484,7 @@ Return the SQL in a ```sql code block. Do not execute it."""
         self, prompt: str, mode: str = "sql", history: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """Generate SQL asynchronously. Optionally pass conversation history for context."""
+        GuardrailPipeline.validate_prompt(prompt)
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request.",

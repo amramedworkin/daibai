@@ -18,6 +18,8 @@
 
 DaiBai is an AI-powered natural language database assistant that converts your questions into SQL queries. It supports multiple LLM providers (Gemini, OpenAI, Azure, Anthropic, Ollama) and multiple database connections.
 
+> **🛡️ Safe-by-Design:** DaiBai uses an "Untrusted Client" model with Defense-in-Depth guardrails. See [Security & SQL Guardrails](#security--sql-guardrails) for limitations, blocked operations, and deployment guidance.
+
 ## Features
 
 - **Natural Language to SQL**: Ask questions in plain English, get SQL queries
@@ -25,6 +27,7 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 - **Multiple Databases**: Configure and switch between multiple database connections
 - **Interactive REPL**: Rich command-line interface with colors and command history
 - **Safe by Default**: SQL is generated but not executed unless you explicitly request results
+- **SQL Guardrails**: Two-stage pipeline (Peng et al. 2023) — pre-LLM prompt sanitizer blocks in-band injection; post-LLM validator blocks DML/DDL, DoS, info disclosure, tautologies, and out-of-scope tables
 - **Auto-Training**: Automatically indexes database schemas on first use
 - **Persistent Cache**: Schema cache persists across sessions for fast startup
 - **Clipboard Integration**: SQL is automatically copied to clipboard
@@ -32,6 +35,7 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 
 ## Table of Contents
 
+- [Security & SQL Guardrails](#security--sql-guardrails)
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -44,6 +48,49 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 - [Development](#development)
 - [Resources](#resources)
 - [License](#license)
+
+---
+
+## Security & SQL Guardrails
+
+DaiBai operates on an **"Untrusted Client"** model. Because LLMs are inherently probabilistic and susceptible to [Prompt Injection (GenSQLi)](https://arxiv.org/abs/2310.12889) and hallucinations, we implement a strict, multi-layered **Defense-in-Depth** pipeline (Pre-LLM Sanitization + Post-LLM AST Validation) to protect your databases.
+
+Below is the explicit classification of how the system handles different types of requests, based on the latest research on Text-to-SQL vulnerabilities.
+
+### Rejected Operations (High-Risk)
+
+These operations are **strictly blocked** at the AST parsing level. If the LLM generates any of these, the query is immediately rejected and a `SecurityViolation` is raised.
+
+| Category | What's Blocked |
+|----------|----------------|
+| **Data Modification & Destruction (DML/DDL)** | The agent is strictly read-only. Keywords such as `DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`, `GRANT`, and `REVOKE` are hard-blocked. |
+| **Piggyback Attacks (Multi-Statement Injection)** | Queries chaining commands with semicolons (e.g. `SELECT * FROM sales; DROP TABLE users;`) are blocked to prevent hidden destructive payloads. |
+| **System Schema Probing** | Attempts to map backend architecture via `information_schema`, `pg_catalog`, `sqlite_master`, or other system metadata tables are rejected. |
+| **Information Disclosure** | Functions that leak server IPs, database names, or version numbers—`user()`, `database()`, `version()`, `session_user()`—are intercepted. |
+
+### Dangerous Operations (Restricted)
+
+These requests can crash database servers or exhaust connection pools (Denial of Service). They are blocked or mitigated.
+
+| Category | What's Blocked |
+|----------|----------------|
+| **Time-Based & Computational DoS** | Functions designed to tie up resources—`benchmark()`, `pg_sleep()`, `waitfor`—are universally blocked. |
+| **Unbounded Cartesian Products** | Queries joining massive tables without `ON` clauses or lacking `LIMIT`/`TOP` may be flagged; users should define explicit constraints (e.g. "Show me the *top 100* users..."). |
+| **Out-of-Scope Schema Access** | If the Semantic Pruner grants access only to `sales` and `products`, any attempt to query `hr_salaries`—even if it exists—is blocked as a context violation. |
+
+### Questionable Operations (Increased Scrutiny)
+
+These sit in a gray area: poorly phrased questions, LLM hallucinations, or sophisticated prompt injection. They undergo rigorous pre- and post-processing.
+
+| Category | How It's Handled |
+|----------|------------------|
+| **In-Band Prompt Injections** | If a user includes explicit SQL payloads in natural language (e.g. *"Which client's name is \\g DROP database?"*), the Pre-LLM Sanitizer rejects the prompt before it reaches the LLM. |
+| **Tautologies & Always-True Conditions** | Patterns like `OR 1=1` or `WHERE status = 'active' OR 'a'='a'`—classic SQL injection techniques that LLMs may hallucinate—are flagged and blocked. |
+| **Complex UNION Smuggling** | Queries using `UNION` to stitch an allowed table with an unauthorized table are deeply inspected; the AST parser traverses both sides to ensure scope compliance. |
+
+### Future: Configurable "God-Mode"
+
+*In a future revision, we will introduce a configurable "God-Mode" (strictly gated by RBAC and explicit environment variables) allowing system administrators to bypass read-only guardrails for authenticated sessions—e.g. automated migrations and mass-updates via natural language.*
 
 ---
 

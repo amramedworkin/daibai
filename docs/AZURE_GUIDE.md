@@ -969,13 +969,16 @@ sequenceDiagram
 
 **Test/Guardrail:** Create `tests/test_prompt_construction.py`. Assert that the final prompt sent to the LLM contains specific table definitions relevant to the user's input.
 
-##### Phase 3, Step 3: SQL Guardrail & Validation (Planned)
+##### Phase 3, Step 3: SQL Guardrail & Validation ✅ *Implemented*
 
 **Goal:** Prevent "hallucinated" or "destructive" SQL.
 
-**Implementation:** Implement a `validate_sql(query: str)` function. It must use regex to block DROP, DELETE, and TRUNCATE commands. It should also perform a dry-run EXPLAIN on the database to check for syntax errors.
+**Implementation:** A two-stage guardrail pipeline (Peng et al. 2023):
 
-**Test/Guardrail:** Create `tests/test_sql_safety.py`. Test that the agent refuses to generate or execute a DROP TABLE command.
+- **Stage 1 (Pre-LLM):** `GuardrailPipeline.validate_prompt(user_prompt)` blocks in-band SQL injection in natural language (e.g. `UNION SELECT`, `DROP DATABASE`, `OR 1=1`). Integrated into `DaiBaiAgent.generate_sql` and `generate_sql_async`.
+- **Stage 2 (Post-LLM):** `SQLValidator.validate(query)` blocks DML/DDL keywords, DoS functions (`benchmark`, `sleep`), info disclosure (`user()`, `version()`), tautologies (`OR 1=1`), system schema probing, and out-of-scope tables. All execution paths use `validate_and_execute` or `run_sql` which validate before running.
+
+**Test/Guardrail:** `tests/test_sql_guardrails.py` — 60+ tests covering lexical block, scope check, injection shield, prompt sanitizer, and live MySQL validation.
 
 ---
 
@@ -1006,7 +1009,7 @@ This phase gives the AI the ability to run the SQL it wrote.
 | **PHASE 1** | Infra & Cache | Cost savings, high speed, and Azure scalability. | ✅ |
 | **PHASE 2** | Embeddings | Ability for the machine to "understand" user intent. | ✅ |
 | **PHASE 2.5** | Similarity Search | Semantic retrieval: find similar questions, serve cached answers, skip the LLM. | ✅ |
-| **PHASE 3** | Reasoning (SQL Architect) | Schema pruning, dynamic context, SQL guardrails. | Step 1 ✅, Steps 2–3 Planned |
+| **PHASE 3** | Reasoning (SQL Architect) | Schema pruning, dynamic context, SQL guardrails. | Step 1 ✅, Step 2 Planned, Step 3 ✅ |
 | **PHASE 4** | Execution | Real answers from real data delivered to the user. | Pending |
 | **PHASE 5** | Containerization & Hardening | Docker, CI/CD, Managed Identity. | Pending |
 
