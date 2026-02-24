@@ -48,3 +48,30 @@ class CacheManager:
             return client.ping()
         except Exception:
             return False
+
+    def get(self, key: str) -> Optional[str]:
+        """
+        Get a value by key.
+        Returns the value if found, None if the key does not exist.
+        """
+        try:
+            client = self._get_client()
+            if client is None:
+                return None
+            return client.get(key)
+        except Exception:
+            return None
+
+    def set(self, key: str, value: str, ttl: int = 3600) -> bool:
+        """
+        Set a key-value pair with optional TTL (time-to-live in seconds).
+        Uses Redis ex parameter for TTL. Returns True on success, False on error.
+        """
+        try:
+            client = self._get_client()
+            if client is None:
+                return False
+            client.set(key, value, ex=ttl)
+            return True
+        except Exception:
+            return False

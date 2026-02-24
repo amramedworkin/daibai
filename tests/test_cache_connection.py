@@ -1,8 +1,11 @@
 """
 Tests for CacheManager Redis connectivity.
 
-Uses @patch("redis.Redis.from_url") to mock the connection and avoid hitting the cloud.
+- Unit tests: Use @patch("redis.Redis.from_url") to mock the connection (no cloud).
+- Integration test: test_cache_manager_ping_live hits real Redis when REDIS_URL is set.
 """
+
+import os
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -72,3 +75,23 @@ def test_cache_manager_ping_returns_false_on_redis_error(mock_from_url):
     result = manager.ping()
 
     assert result is False
+
+
+@pytest.mark.cloud
+@pytest.mark.skipif(
+    not (
+        os.environ.get("REDIS_URL", "").strip()
+        or os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
+    ),
+    reason="REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live test requires Redis",
+)
+def test_cache_manager_ping_live():
+    """
+    CacheManager.ping() against real Redis (Azure or local).
+    Run with REDIS_URL set to verify actual connectivity.
+    """
+    from daibai.core.cache import CacheManager
+
+    manager = CacheManager()
+    result = manager.ping()
+    assert result is True

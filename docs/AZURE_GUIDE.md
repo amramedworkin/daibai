@@ -407,8 +407,9 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | `./scripts/cli.sh test` | Unit tests (excludes cloud; ~1s) |
 | `./scripts/cli.sh test-cosmos` | Cosmos DB E2E (CosmosStore lifecycle; requires `COSMOS_ENDPOINT`) |
 | `./scripts/cli.sh test-redis` | Redis add/retrieve/delete (requires `REDIS_URL`) |
+| `./scripts/cli.sh test-cache-connection` | CacheManager ping (mocked + live when `REDIS_URL` set) |
 | `./scripts/cli.sh test-db` | Golden Ticket (Cosmos Read/Write/Delete validation) |
-| `python3 -m pytest tests/ -v -s` | Full suite (cloud tests skip when env not set) |
+| `python3 -m pytest tests/ -v -s` | **Full suite** (all tests; cloud tests skip when env not set) |
 
 *Note: `test-cloud` was renamed to `test-cosmos` to reflect Cosmos DB specifically.*
 
@@ -430,8 +431,23 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | **14** | Cache | `test_exact_match_retrieval` | Semantic cache: exact prompt returns cached response | `tests/test_semantic_cache.py` | SemanticCache | `✓ [CLOUD-CACHE]` | `AssertionError` |
 | **15** | Cache | `test_semantic_similarity_retrieval` | Similar prompts (cosine > 0.95) return cached response | `tests/test_semantic_cache.py` | SemanticCache | `✓ [CLOUD-CACHE]` | `AssertionError` |
 | **16** | Cache | `test_resilience_redis_down` | Redis down: graceful fallback to LLM | `tests/test_semantic_cache.py` | Resilience | `✓ [CLOUD-CACHE]` | `ConnectionError` |
+| **17** | Conn | `test_cache_manager_ping_calls_mock_and_returns_true` | CacheManager.ping() via mocked Redis | `tests/test_cache_connection.py` | CacheManager (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
+| **18** | Conn | `test_cache_manager_ping_loads_connection_from_env` | Connection string from config/env | `tests/test_cache_connection.py` | Config (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
+| **19** | Conn | `test_cache_manager_ping_returns_false_when_no_connection_string` | No config → ping returns False | `tests/test_cache_connection.py` | Graceful fallback (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
+| **20** | Conn | `test_cache_manager_ping_returns_false_on_redis_error` | Redis error → ping returns False | `tests/test_cache_connection.py` | Error handling (mock) | `✓ [CLOUD-CONN]` | `AssertionError` |
+| **21** | Conn | `test_cache_manager_ping_live` | CacheManager.ping() against real Redis | `tests/test_cache_connection.py` | Live connectivity | `✓ [CLOUD-CONN]` | Skip if no `REDIS_URL`; fail if Redis unreachable |
+| **22** | L1 | `test_set_and_get_returns_value` | Set value and get it back (exact match) | `tests/test_cache_logic.py` | Key-value get/set | `✓ [CLOUD-L1]` | `AssertionError` |
+| **23** | L1 | `test_get_nonexistent_key_returns_none` | Non-existent key returns None | `tests/test_cache_logic.py` | Graceful miss | `✓ [CLOUD-L1]` | `AssertionError` |
+| **24** | L1 | `test_set_ttl_passed_to_redis` | TTL correctly passed to set (ex param) | `tests/test_cache_logic.py` | TTL handling | `✓ [CLOUD-L1]` | `AssertionError` |
 
-**Dashboard tags:** Cloud tests use component-specific tags (`[CLOUD-COSMOS]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-CACHE]`) so admins can see which service each test targets.
+**Dashboard tags:** Cloud tests use component-specific tags (`[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`) so admins can see which service each test targets.
+
+**Cache connection tests (mocked vs live)**
+
+`tests/test_cache_connection.py` verifies `CacheManager.ping()` in two modes:
+
+- **Mocked (always run):** Four tests use `@patch("redis.Redis.from_url")` so no Redis connection is made. They validate that `CacheManager` calls the right APIs, reads config from `.env`, and returns `False` when no connection string or when Redis raises. These run with `./scripts/cli.sh test` (unit tests) and do not require `REDIS_URL`.
+- **Live (optional):** `test_cache_manager_ping_live` hits real Redis when `REDIS_URL` or `AZURE_REDIS_CONNECTION_STRING` is set. It is marked `@pytest.mark.cloud` and skipped when neither env var is set. Run with `./scripts/cli.sh test-cache-connection` or `REDIS_URL=rediss://... python3 -m pytest tests/test_cache_connection.py -v` to verify actual connectivity.
 
 **Lifespan tests**
 
@@ -446,11 +462,22 @@ The test uses `TestClient(app)` to trigger lifespan events and requires `COSMOS_
 **Quick run commands:**
 
 ```bash
-./scripts/cli.sh test          # Unit tests (excludes cloud)
-./scripts/cli.sh test-cosmos    # CosmosStore E2E (requires COSMOS_ENDPOINT)
-./scripts/cli.sh test-redis     # Redis add/retrieve/delete (requires REDIS_URL)
-python3 -m pytest tests/ -v -s # Full suite (all tests; cloud/Redis skip when env not set)
+./scripts/cli.sh test               # Unit tests (excludes cloud; ~1s)
+./scripts/cli.sh test-cache-connection   # CacheManager ping (mocked + live when REDIS_URL set)
+./scripts/cli.sh test-cosmos        # CosmosStore E2E (requires COSMOS_ENDPOINT)
+./scripts/cli.sh test-redis         # Redis add/retrieve/delete (requires REDIS_URL)
+python3 -m pytest tests/ -v -s      # Full suite (all tests; cloud skip when env not set)
 ```
+
+**Full test (all tests, including cloud when env is set):**
+
+```bash
+# Load .env (REDIS_URL, COSMOS_ENDPOINT, etc.) then run full suite
+source .env 2>/dev/null || true
+python3 -m pytest tests/ -v -s
+```
+
+Cloud tests (Redis, Cosmos, lifespan) are skipped when their env vars are unset. With `REDIS_URL` and `COSMOS_ENDPOINT` configured, the full suite runs all integration tests.
 
 **Integrated Test Dashboard**
 
@@ -461,8 +488,10 @@ At the end of each run, `conftest.py` prints a dashboard summarizing key tests b
 | `[DB]` | Cyan | Database logic (mocked) |
 | `[API]` | Green | API flow |
 | `[CLOUD-COSMOS]` | Yellow | Cosmos DB |
-| `[CLOUD-REDIS]` | Yellow | Azure Cache for Redis |
+| `[CLOUD-CONN]` | Yellow | Redis connection/ping (mock + live) |
+| `[CLOUD-REDIS]` | Yellow | Azure Cache for Redis (add/retrieve/delete) |
 | `[CLOUD-LIFESPAN]` | Yellow | FastAPI lifespan |
+| `[CLOUD-L1]` | Yellow | L1 key-value cache (get/set, fakeredis) |
 | `[CLOUD-CACHE]` | Yellow | Semantic cache (Redis + embeddings) |
 
 **Example output:**

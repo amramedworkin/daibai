@@ -136,6 +136,7 @@ Commands (mirrors menu.sh):
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
     redis-create             Create Azure Cache for Redis (RG + Basic C0, auto-writes REDIS_URL to .env)
     test-redis               Redis integration test (add/retrieve/delete keys, requires REDIS_URL)
+    test-cache-connection    CacheManager ping (mocked + live when REDIS_URL set)
     cache-stats              Redis info stats and keyspace (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
     cache-monitor            Redis live monitor (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
     cache-info               Show parsed Redis connection info for Redis Insight
@@ -179,6 +180,7 @@ Examples:
     $(basename "$0") test-cosmos
     $(basename "$0") redis-create
     $(basename "$0") test-redis
+    $(basename "$0") test-cache-connection
     $(basename "$0") cache-stats
     $(basename "$0") cache-monitor
     $(basename "$0") cache-info
@@ -433,7 +435,8 @@ cmd_redis_create() {
 }
 
 cmd_test_redis() {
-    if [[ -z "${REDIS_URL:-}" ]]; then
+    load_env_for_redis
+    if [[ -z "${REDIS_URL:-}${AZURE_REDIS_CONNECTION_STRING:-}" ]]; then
         print_error "REDIS_URL not set. Run redis-create first (writes to .env automatically)"
         echo ""
         echo '  ./scripts/cli.sh redis-create'
@@ -442,6 +445,12 @@ cmd_test_redis() {
     fi
     print_header "Redis Integration Test (Add/Retrieve/Delete Keys)"
     run_pytest tests/test_redis.py -v -s
+}
+
+cmd_test_cache_connection() {
+    load_env_for_redis
+    print_header "CacheManager Ping (Mocked + Live when REDIS_URL set)"
+    run_pytest tests/test_cache_connection.py -v -s
 }
 
 cmd_cache_stats() {
@@ -791,6 +800,9 @@ main() {
             ;;
         test-redis)
             cmd_test_redis
+            ;;
+        test-cache-connection)
+            cmd_test_cache_connection
             ;;
         cache-stats)
             cmd_cache_stats

@@ -28,8 +28,12 @@ def _get_category(nodeid):
         return "DB", _CYAN
     if "test_api" in nodeid:
         return "API", _GREEN
+    if "test_cache_connection" in nodeid:
+        return "CLOUD-CONN", _YELLOW
     if "test_redis" in nodeid:
         return "CLOUD-REDIS", _YELLOW
+    if "test_cache_logic" in nodeid:
+        return "CLOUD-L1", _YELLOW
     if "test_semantic_cache" in nodeid:
         return "CLOUD-CACHE", _YELLOW
     if "test_server_lifespan" in nodeid:
@@ -50,10 +54,10 @@ def pytest_runtest_setup(item):
         return
     doc = _test_docs[item.nodeid]
     mod = item.module.__name__
-    if mod in ("tests.test_database_logic", "tests.test_api", "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_server_lifespan", "tests.test_redis", "tests.test_semantic_cache"):
+    if mod in ("tests.test_database_logic", "tests.test_api", "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection", "tests.test_cache_logic", "tests.test_semantic_cache"):
         cat, color = _get_category(item.nodeid)
         if cat:
-            prefix = f"{color}{_BOLD}[{cat}]"
+            prefix = f"{color}{_BOLD}[{cat}]{_RESET}"
             print(f"\n  {prefix} {doc}{_RESET}", flush=True)
 
 
@@ -67,7 +71,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     skipped = stats.get("skipped", [])
     all_reports = [(r, "passed") for r in passed] + [(r, "failed") for r in failed] + [(r, "skipped") for r in skipped]
     # Only show dashboard for our key test modules
-    key_mods = ("test_database_logic", "test_api", "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store", "test_server_lifespan", "test_redis", "test_semantic_cache")
+    key_mods = ("test_database_logic", "test_api", "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store", "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic", "test_semantic_cache")
     dashboard = [(r, status) for r, status in all_reports if any(m in r.nodeid for m in key_mods)]
     if not dashboard:
         return
@@ -85,7 +89,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             sym = pass_sym if status == "passed" else (fail_sym if status == "failed" else skip_sym)
             c = color if use_color else ""
             doc = _test_docs.get(report.nodeid, report.nodeid.split("::")[-1])
-            if len(doc) > 58:
-                doc = doc[:55] + "..."
+            if len(doc) > 78:
+                doc = doc[:75] + "..."
             terminalreporter.write_line(f"  {sym} {c}[{cat}]{r} {doc}")
     terminalreporter.write_line(f"{b}{'─' * 70}{r}")
