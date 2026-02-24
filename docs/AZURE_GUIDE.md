@@ -356,7 +356,7 @@ pip install -e ".[gui,dev]"
 
 ```bash
 daibai-server
-# or: python -m daibai.api.server
+# or: python3 -m daibai.api.server
 ```
 
 Open http://localhost:8080 in your browser.

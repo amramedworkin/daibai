@@ -4,9 +4,13 @@ Cache manager for Redis connectivity.
 Uses AZURE_REDIS_CONNECTION_STRING or REDIS_URL from .env (via config).
 """
 
-from typing import Optional
+import hashlib
+import json
+from typing import List, Optional
 
 from .config import get_redis_connection_string
+
+SEMANTIC_KEY_PREFIX = "semantic:"
 
 
 class CacheManager:
@@ -72,6 +76,23 @@ class CacheManager:
             if client is None:
                 return False
             client.set(key, value, ex=ttl)
+            return True
+        except Exception:
+            return False
+
+    def set_semantic(self, text: str, vector: List[float], response: str, ttl: int = 3600) -> bool:
+        """
+        Store a semantic cache entry: text, embedding vector, and response.
+        Key format: semantic:<hash_of_text>. Value: JSON with vector and response.
+        """
+        try:
+            client = self._get_client()
+            if client is None:
+                return False
+            key_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+            key = f"{SEMANTIC_KEY_PREFIX}{key_hash}"
+            payload = {"text": text, "vector": vector, "response": response}
+            client.set(key, json.dumps(payload), ex=ttl)
             return True
         except Exception:
             return False

@@ -115,6 +115,11 @@ packages = ["daibai"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:fakeredis.*",
+    "ignore::DeprecationWarning:redis.*",
+    "ignore::DeprecationWarning:tests.test_cache_logic",
+]
 markers = [
     "cloud: marks tests as cloud integration (require COSMOS_ENDPOINT, skip when offline)",
 ]

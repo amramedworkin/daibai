@@ -468,6 +468,10 @@ cmd_cache_stats() {
     redis-cli -u "$conn" $tls info stats
     echo ""
     redis-cli -u "$conn" $tls info keyspace
+    local semantic_count
+    semantic_count=$(redis-cli --raw -u "$conn" $tls KEYS "semantic:*" 2>/dev/null | grep -c . || echo "0")
+    echo ""
+    echo "semantic: keys: $semantic_count"
 }
 
 cmd_cache_monitor() {

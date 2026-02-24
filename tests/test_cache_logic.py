@@ -51,3 +51,28 @@ def test_set_ttl_passed_to_redis(cache_manager):
     ttl = cache_manager._get_client().ttl("ttl_key")
     assert ttl > 0
     assert ttl <= 120
+
+
+def test_set_semantic_stores_json_structure(cache_manager):
+    """set_semantic stores a JSON object with vector and response under semantic: prefix."""
+    import json
+
+    from daibai.core.cache import SEMANTIC_KEY_PREFIX
+
+    vector = [0.1, 0.2, 0.3]
+    text = "What is Azure?"
+    response = "Azure is a cloud platform."
+
+    ok = cache_manager.set_semantic(text, vector, response)
+    assert ok is True
+
+    client = cache_manager._get_client()
+    keys = [k for k in client.keys("*") if k.startswith(SEMANTIC_KEY_PREFIX)]
+    assert len(keys) == 1
+    assert keys[0].startswith(SEMANTIC_KEY_PREFIX)
+
+    raw = client.get(keys[0])
+    payload = json.loads(raw)
+    assert payload["text"] == text
+    assert payload["vector"] == vector
+    assert payload["response"] == response

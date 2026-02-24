@@ -227,7 +227,7 @@ The interactive chat interface is the primary way to use DaiBai. Start it with:
 ```bash
 daibai
 # or
-python -m daibai
+python3 -m daibai
 ```
 
 ### Basic SQL Generation
@@ -737,7 +737,7 @@ git clone https://github.com/amramedworkin/daibai.git
 cd daibai
 
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 
 # Install with dev dependencies
