@@ -156,3 +156,35 @@ def test_embedding_graceful_degradation_when_model_fails(cache_manager):
             assert ok is False
     finally:
         CacheManager._embed_model = None
+
+
+def test_semantic_hit(cache_manager):
+    """Store 'What is the price?' then ask 'What's the price?' — system identifies as same, returns cached answer."""
+    pytest.importorskip("sentence_transformers")
+
+    cache_manager.set_semantic("What is the price?", "The price is $10.")
+    # Paraphrase with contraction; semantically equivalent, high similarity
+    result = cache_manager.check_semantic("What's the price?", threshold=0.90)
+
+    assert result == "The price is $10."
+
+
+def test_semantic_miss(cache_manager):
+    """Store 'What is the price?' then ask 'Who is the CEO?' — system identifies as different, returns None."""
+    pytest.importorskip("sentence_transformers")
+
+    cache_manager.set_semantic("What is the price?", "The price is $10.")
+    result = cache_manager.check_semantic("Who is the CEO?", threshold=0.70)
+
+    assert result is None
+
+
+def test_threshold_tuning(cache_manager):
+    """With threshold 0.999, a slightly different question returns None (near-perfect match required)."""
+    pytest.importorskip("sentence_transformers")
+
+    cache_manager.set_semantic("What is the capital of France?", "Paris.")
+    # "Which city is the capital of France?" is similar but typically below 0.999
+    result = cache_manager.check_semantic("Which city is the capital of France?", threshold=0.999)
+
+    assert result is None

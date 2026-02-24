@@ -8,10 +8,22 @@ import hashlib
 import json
 from typing import List, Optional
 
-from .config import get_redis_connection_string
+from .config import get_redis_connection_string, get_semantic_similarity_threshold
 
 SEMANTIC_KEY_PREFIX = "semantic:"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    """Compute cosine similarity between two vectors (0.0 to 1.0)."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 class CacheManager:
@@ -137,3 +149,45 @@ class CacheManager:
             return True
         except Exception:
             return False
+
+    def check_semantic(
+        self,
+        prompt: str,
+        threshold: Optional[float] = None,
+    ) -> Optional[str]:
+        """
+        Search semantic cache for a similar prompt.
+        Generates embedding for prompt, scans semantic: keys, computes cosine similarity.
+        Returns cached response if a match exceeds threshold, else None.
+        Threshold defaults to SEMANTIC_SIMILARITY_THRESHOLD from .env (0.90).
+        """
+        if threshold is None:
+            threshold = get_semantic_similarity_threshold()
+        query_vector = self.get_embedding(prompt)
+        if query_vector is None:
+            return None
+        try:
+            client = self._get_client()
+            if client is None:
+                return None
+            keys = client.keys(f"{SEMANTIC_KEY_PREFIX}*")
+            best_response = None
+            best_sim = 0.0
+            for key in keys:
+                raw = client.get(key)
+                if not raw:
+                    continue
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                stored_vector = payload.get("vector")
+                if not stored_vector or not isinstance(stored_vector, list):
+                    continue
+                sim = _cosine_similarity(query_vector, stored_vector)
+                if sim >= threshold and sim > best_sim:
+                    best_sim = sim
+                    best_response = payload.get("response")
+            return best_response
+        except Exception:
+            return None

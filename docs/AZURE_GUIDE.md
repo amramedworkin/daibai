@@ -92,11 +92,12 @@ This section captures the actual process we are undertaking as we go along.
 |-----------|---|--------|
 | Infrastructure (Azure setup) | 10% | ✅ |
 | Basic Caching logic | 15% | ✅ |
-| Embedding Intelligence (Phase 2) | 10% | ✅ ⬅️ Just completed |
+| Embedding Intelligence (Phase 2) | 10% | ✅ |
+| Similarity Search (Semantic Retrieval) | 10% | ✅ |
 | SQL Agent & DDL Reasoning (The "Thinking") | 30% | Pending |
-| Tool Use & Execution (The "Action") | 20% | Pending |
-| UI & Deployment | 15% | Pending |
-| **Total** | **~35%** | |
+| Tool Use & Execution (The "Action") | 25% | Pending |
+| UI & Deployment | 25% | Pending |
+| **Total** | **~55%** | |
 
 ### Pre-Phase 1: Identity-First Hybrid Strategy
 
@@ -359,25 +360,78 @@ The following work has been implemented and is ready for use.
 
 Follow these steps to run and verify the current implementation.
 
-### 1. Install Dependencies
+### 1. Setup (Install Dependencies & Initialize)
+
+**One-command setup** (recommended):
+
+```bash
+cd /path/to/daibai
+./scripts/cli.sh setup
+```
+
+This creates `.venv`, installs `[gui,dev,cache]` (FastAPI, pytest, rich, sentence-transformers, torch), and creates `.env` from `.env.example` if missing. **Idempotent:** safe to run repeatedly; skips existing components.
+
+**Manual setup** (if you prefer):
 
 ```bash
 cd /path/to/daibai
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[gui,dev]"
+pip install -e ".[gui,dev,cache]"
 ```
 
-The `[dev]` extra includes `pytest-sugar` (live progress bar) and `rich` (styled heatmap/status panel) for the visual test dashboard.
+The `[cache]` extra installs `sentence-transformers` and `torch`. The first run will download the `all-MiniLM-L6-v2` model (~80MB) from Hugging Face.
 
-**For Phase 2 (Embedding Intelligence):** Add the `cache` extra to enable semantic embeddings:
+**Optional Azure services** (Redis, Cosmos):
 
 ```bash
-pip install -e ".[gui,dev,cache]"
-# Or: pip install -e ".[cache]"  # if you only need embeddings
+az login
+./scripts/cli.sh redis-create    # Creates Azure Cache for Redis, writes REDIS_URL to .env (idempotent)
+./scripts/cli.sh cosmos-role     # Grants Cosmos DB access to your identity
 ```
 
-This installs `sentence-transformers` and `torch`. The first run will download the `all-MiniLM-L6-v2` model (~80MB) from Hugging Face.
+**Idempotency:** All setup scripts are safe to run multiple times. `setup` skips venv/.env if they exist. `redis-create` skips resource group and Redis if they exist; `.env` updates use **Smart Append** (no duplicate keys).
+
+### Smart Append: No Duplicate .env Entries
+
+When setup scripts run multiple times, a "dumb" append (`echo "KEY=val" >> .env`) would create duplicate entries:
+
+```
+REDIS_URL=example.com
+REDIS_URL=example.com
+REDIS_URL=example.com
+```
+
+Python reads only the first, but the file becomes bloated and confusing. **Smart Append** (`scripts/update_env.py`) prevents this:
+
+1. **Search:** Look for the key (e.g. `REDIS_URL`) in the file.
+2. **If found:** Update the value on that line (in-place replace).
+3. **If not found:** Append `KEY=VALUE` at the end.
+
+**Result:** Exactly one entry per setting, no matter how many times you run setup.
+
+```bash
+# Single key-value (KEY VALUE format)
+python3 scripts/update_env.py .env REDIS_URL "rediss://:xxx@host:6380"
+
+# Multiple keys (KEY=value format)
+python3 scripts/update_env.py .env REDIS_URL="$URL" REDIS_RESOURCE_GROUP="$RG"
+```
+
+`setup_redis.sh` uses Smart Append when writing `REDIS_URL`, `REDIS_RESOURCE_GROUP`, and `REDIS_NAME` to `.env`.
+
+### Clean .env: Fix Existing Duplicates
+
+If your `.env` was corrupted by old "dumb" appends before Smart Append was in place, run:
+
+```bash
+./scripts/cli.sh env-clean
+# Or: python3 scripts/clean_env.py [path/to/.env]
+```
+
+This removes duplicate keys (keeps last value), removes malformed lines, and leaves a clean file. **Idempotent:** safe to run on an already-clean `.env`.
+
+**Tests:** `tests/test_env_integrity.py` checks for duplicates and malformed entries. Run `python3 -m pytest tests/test_env_integrity.py -v` to verify.
 
 ### 2. Run the Application (Local)
 
@@ -423,22 +477,23 @@ If you want to pull LLM keys from Key Vault instead of `.env`:
 pytest tests/test_auth.py tests/test_azure_config.py -v
 ```
 
-**Full visual dashboard (heatmap, status gauge, progress bar):**
+**Full visual dashboard (temperature gauge, status, progress bar):**
 
 ```bash
 python3 -m pytest tests/ -v -s
+# Or: ./scripts/cli.sh test run tests/
 ```
 
-Requires `pytest-sugar` and `rich` (`pip install -e ".[dev]"`). You get a live progress bar, Test Dashboard with category tags, Catalog Summary (pass/fail meaning per category), Status Heatmap (🟩🟥🟨 grid), and a bold success percentage.
+Requires `pytest-sugar` and `rich` (`pip install -e ".[dev]"`). You get a live progress bar, Test Dashboard with category tags, Catalog Summary (pass/fail meaning per category), and a **Success Gauge** (temperature-style bar with Pass/Fail/Skip counts).
 
-**Phase 2 (Embedding) tests:** Run cache logic tests including embedding generation and singleton behavior:
+**Phase 2 (Embedding + Similarity Search) tests:** Run cache logic tests including semantic hit/miss:
 
 ```bash
-python3 -m pytest tests/test_cache_logic.py -v
-# Or: ./scripts/cli.sh test  # runs unit tests (includes cache_logic when [cache] installed)
+python3 -m pytest tests/test_cache_logic.py -v -s
+# Or: ./scripts/cli.sh test file test_cache_logic.py
 ```
 
-Requires `sentence-transformers` and `torch` (`pip install -e ".[cache]"`). Tests 25–29 validate semantic storage, embedding generation, singleton loading, auto-vector, and graceful degradation.
+Requires `sentence-transformers` and `torch` (`pip install -e ".[cache]"`). Tests 22–32 validate key-value storage, semantic storage, embedding generation, singleton loading, and similarity search (test_semantic_hit, test_semantic_miss, test_threshold_tuning).
 
 ### 5.1 DaiBai Test Suite Catalog
 
@@ -450,6 +505,7 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 |---------|-------------|
 | `./scripts/cli.sh test` | Unit tests (excludes cloud; ~1s) |
 | `./scripts/cli.sh test file test_cache_logic.py` | L1 cache + embedding tests (requires `[cache]` for embedding tests) |
+| `./scripts/cli.sh test file test_env_integrity.py` | .env integrity (no duplicates, no malformed entries) |
 | `./scripts/cli.sh test-cosmos` | Cosmos DB E2E (CosmosStore lifecycle; requires `COSMOS_ENDPOINT`) |
 | `./scripts/cli.sh test-redis` | Redis add/retrieve/delete (requires `REDIS_URL`) |
 | `./scripts/cli.sh test-cache-connection` | CacheManager ping (mocked + live when `REDIS_URL` set) |
@@ -489,8 +545,16 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | **27** | L1 | `test_embedding_model_loaded_once` | Embedding model loaded as singleton (no reload lag) | `tests/test_cache_logic.py` | Singleton | `✓ [CLOUD-L1]` | `AssertionError` |
 | **28** | L1 | `test_set_semantic_auto_generates_vector` | set_semantic with no vector auto-generates embedding | `tests/test_cache_logic.py` | Auto-vector | `✓ [CLOUD-L1]` | `AssertionError` |
 | **29** | L1 | `test_embedding_graceful_degradation_when_model_fails` | Model load failure → get_embedding returns None, set_semantic returns False | `tests/test_cache_logic.py` | Graceful degradation | `✓ [CLOUD-L1]` | `AssertionError` |
+| **30** | L1 | `test_semantic_hit` | "What is the price?" then "What's the price?" → same intent, returns cached answer | `tests/test_cache_logic.py` | Similarity search | `✓ [CLOUD-L1]` | `AssertionError` |
+| **31** | L1 | `test_semantic_miss` | "What is the price?" then "Who is the CEO?" → different intent, returns None | `tests/test_cache_logic.py` | Similarity search | `✓ [CLOUD-L1]` | `AssertionError` |
+| **32** | L1 | `test_threshold_tuning` | High threshold (0.99) + slightly different question → returns None (strict match) | `tests/test_cache_logic.py` | Threshold config | `✓ [CLOUD-L1]` | `AssertionError` |
+| **33** | Env | `test_env_no_duplicate_keys` | .env has no duplicate keys; each setting appears once | `tests/test_env_integrity.py` | .env integrity | `✓ [ENV-INTEGRITY]` | Duplicate keys; run `env-clean` |
+| **34** | Env | `test_env_no_malformed_entries` | All non-comment lines match KEY=value format | `tests/test_env_integrity.py` | .env integrity | `✓ [ENV-INTEGRITY]` | Malformed lines; run `env-clean` |
+| **35** | Env | `test_clean_env_removes_duplicates` | clean_env.py removes duplicate keys, keeps last value | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
+| **36** | Env | `test_clean_env_removes_malformed` | clean_env.py removes malformed lines, preserves valid | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
+| **37** | Env | `test_clean_env_idempotent_on_clean_file` | clean_env.py leaves already-clean .env unchanged | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
 
-**Dashboard tags:** Tests use component-specific tags (`[DB]`, `[API]`, `[AUTH]`, `[CONFIG]`, `[LLM-PROVIDERS]`, `[LLM-REGISTRY]`, `[LLM-MODELS]`, `[LLM-GEMINI]`, `[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`, `[CLOUD-AZURE]`) so admins can see which service each test targets.
+**Dashboard tags:** Tests use component-specific tags (`[DB]`, `[API]`, `[AUTH]`, `[CONFIG]`, `[LLM-PROVIDERS]`, `[LLM-REGISTRY]`, `[LLM-MODELS]`, `[LLM-GEMINI]`, `[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`, `[CLOUD-AZURE]`, `[ENV-INTEGRITY]`) so admins can see which service each test targets.
 
 **Cache connection tests (mocked vs live)**
 
@@ -538,8 +602,7 @@ When you run `python3 -m pytest tests/ -v -s`, you get:
 | **Progress Bar** | pytest-sugar shows a live green/red bar as tests run (e.g. `17% ██▊`). |
 | **Test Dashboard** | Per-test results with category tags (`[CLOUD-L1]`, `[CONFIG]`, etc.). |
 | **Catalog Summary** | For each category: what it tests, Pass-Technical, Pass-Big Picture (or Fail-Technical, Fail-Big Picture when tests fail). |
-| **Status Heatmap** | A grid of blocks: 🟩 pass, 🟥 fail, 🟨 skip. One block per test in execution order. |
-| **Success Gauge** | A bold percentage (e.g. `100% SUCCESS` or `93% SUCCESSFUL`) and project phase. |
+| **Success Gauge** | Temperature-style bar (`[████████████████████] 100%`) with legend: Pass/Fail/Skip counts. Replaces the former heatmap grid. |
 
 **Dependencies:** `pytest-sugar` (progress bar) and `rich` (styled status panel) are in the `[dev]` extra. Install with `pip install -e ".[dev]"`.
 
@@ -586,11 +649,11 @@ At the end of each run, `conftest.py` prints a dashboard summarizing key tests b
 ──────────────────────────────────────────────────────────────────────
 
 ──────────────────────────────────────────────────────────────────────
-  DAIBAI TEST HEATMAP
+  SESSION STATUS (Temperature Gauge)
 ──────────────────────────────────────────────────────────────────────
-  🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩
-  🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩
-  ...
+  [████████████████████] 100% SUCCESS
+  >> Legend: Pass=42  Fail=0  Skip=0  (total 42)
+  >> PROJECT PHASE: Phase 2 (COMPLETE)
 ──────────────────────────────────────────────────────────────────────
 ╭─────────────────────────────── SESSION STATUS ───────────────────────────────╮
 │ 100% SUCCESS                                                                 │
@@ -771,6 +834,29 @@ The final daibai needs to be an **enterprise-grade SQL Agent**.
 
 When this phase is finished, you have a **"Sentient Cache."** You can feed it a user question, and it will generate a permanent, mathematical "fingerprint" of that question. You are now 100% ready to build the SQL Agent because you have a high-speed memory system waiting to store every successful query the Agent writes.
 
+**Phase 2.5: The Semantic Retrieval Engine (Similarity Search)** ⬅️ *In progress*
+
+##### What It Is & What It Means
+
+This is the **Similarity Threshold Logic**—the difference between a database that just stores data and one that understands data.
+
+| Concept | Description |
+|---------|-------------|
+| **What it is** | A mathematical comparison layer (using Cosine Similarity) that calculates the distance between a new user question and all the questions stored in your Azure Redis cache. |
+| **What it means** | When a user asks a question, daibai scans its "memory" and can say: "This new question is a 97% match to a question I answered yesterday. I'll serve that answer instead of wasting money on the LLM." |
+| **Without this** | We can store vectors, but we cannot find them. The cache is write-only. |
+| **With this** | A fully functional **Semantic Cache**. "How do I see sales?" and "Show me the sales data" both return a Cache Hit in under 50ms without ever hitting an LLM. |
+
+##### What We Will Have When It's Done
+
+- **Configurable Similarity Threshold** (e.g., 0.90 via `.env`) so you can control how "strict" or "loose" the AI's memory is.
+- **Cache Hit flow:** Incoming prompt → embedding → scan `semantic:*` keys → cosine similarity vs. stored vectors → if match exceeds threshold, return cached response; otherwise return `None`.
+- **Planned tests** (in `tests/test_cache_logic.py`): `test_semantic_hit`, `test_semantic_miss`, `test_threshold_tuning` (see Test Catalog IDs 30–32).
+
+Once this stage is green, the **Azure-ified Cache** is finished. We then move into the **SQL Brain** where the actual data analysis happens.
+
+*Implementation details will be documented after the implementation completes and runs cleanly.*
+
 **Phase 3: The SQL "Expert" Agent**
 
 This is the "Brain Surgery" that connects natural language to your database.
@@ -798,12 +884,13 @@ This phase gives the AI the ability to run the SQL it wrote.
 |-------|-------|-----------------|--------|
 | **PHASE 1** | Infra & Cache | Cost savings, high speed, and Azure scalability. | ✅ |
 | **PHASE 2** | Embeddings | Ability for the machine to "understand" user intent. | ✅ |
+| **PHASE 2.5** | Similarity Search | Semantic retrieval: find similar questions, serve cached answers, skip the LLM. | ⬅️ In progress |
 | **PHASE 3** | SQL Agent | Automating the bridge between English and SQL code. | Next |
 | **PHASE 4** | Execution | Real answers from real data delivered to the user. | Pending |
 
 **Your Next Step in Cursor**
 
-Phase 2 (Embedding Engine) is complete. The cache now generates 384-dimension vectors from text via `get_embedding()` and stores them via `set_semantic()`. The model is loaded once as a singleton. Proceed to **Phase 3: The SQL "Expert" Agent** to connect natural language to your database schema and generate SQL.
+Phase 2 (Embedding Engine) is complete. The cache now generates 384-dimension vectors from text via `get_embedding()` and stores them via `set_semantic()`. **Phase 2.5 (Similarity Search)** is in progress: implementing `check_semantic()` to scan stored vectors, compute cosine similarity, and return cached responses when a match exceeds the configurable threshold. Once the Azure-ified cache is green, proceed to **Phase 3: The SQL "Expert" Agent**.
 
 ---
 

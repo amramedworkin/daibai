@@ -142,6 +142,9 @@ Commands (mirrors menu.sh):
     cache-info               Show parsed Redis connection info for Redis Insight
     cache-test               Test Redis connection (host, port, username, password from .env)
 
+  SETUP (idempotent)
+    setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
+
   SUPPORT & UTILITIES (menu 4)
     config-path             Show config file locations (● found ○ not found)
     config-edit             Edit daibai.yaml
@@ -149,6 +152,7 @@ Commands (mirrors menu.sh):
     docs-azure              Show Azure deployment guide (stdout, no pager)
     env-check               Check .env files (variable names only)
     env-edit                Edit .env file
+    env-clean [path]        Remove duplicate keys and malformed entries from .env
     env-preferences         Show preferences path and content
 
   TESTS (menu 5)
@@ -389,6 +393,27 @@ cmd_env_edit() {
     local env_file="$PROJECT_DIR/.env"
     [[ ! -f "$env_file" && -f "$PROJECT_DIR/.env.example" ]] && cp "$PROJECT_DIR/.env.example" "$env_file"
     "${EDITOR:-nano}" "$env_file"
+}
+
+cmd_env_clean() {
+    local env_file="${1:-$PROJECT_DIR/.env}"
+    print_header "Clean .env (remove duplicates, malformed entries)"
+    if [[ -f "$env_file" ]]; then
+        python3 "$SCRIPT_DIR/clean_env.py" "$env_file"
+        print_success "Done. Run env-check to verify."
+    else
+        print_error ".env not found: $env_file"
+        exit 1
+    fi
+}
+
+cmd_setup() {
+    if [[ -x "$SCRIPT_DIR/setup.sh" ]]; then
+        bash "$SCRIPT_DIR/setup.sh"
+    else
+        print_error "scripts/setup.sh not found"
+        exit 1
+    fi
 }
 
 # ============================================================================
@@ -693,7 +718,7 @@ run_pytest() {
         print_error "pytest not installed. Run: pip install -e \".[dev]\""
         return 1
     fi
-    # pytest-sugar (progress bar) and rich (heatmap/success gauge) activate when installed
+    # pytest-sugar (progress bar) and rich (success gauge) activate when installed
     "$py" -m pytest "$@"
 }
 
@@ -821,6 +846,9 @@ main() {
         cache-test)
             cmd_cache_test
             ;;
+        setup|install)
+            cmd_setup
+            ;;
         config-path)
             cmd_config_path
             ;;
@@ -838,6 +866,9 @@ main() {
             ;;
         env-edit)
             cmd_env_edit
+            ;;
+        env-clean)
+            cmd_env_clean "$@"
             ;;
         env-preferences)
             cmd_env_preferences

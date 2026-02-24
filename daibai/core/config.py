@@ -350,6 +350,31 @@ def get_redis_connection_string() -> Optional[str]:
     )
 
 
+def get_semantic_similarity_threshold() -> float:
+    """
+    Get similarity threshold for semantic cache retrieval (0.0–1.0).
+    Reads SEMANTIC_SIMILARITY_THRESHOLD from .env. Default 0.90.
+    """
+    # Ensure .env is loaded
+    env_locations = []
+    try:
+        env_locations.append(Path.cwd() / ".env")
+    except OSError:
+        pass
+    env_locations.extend([Path.home() / ".daibai" / ".env"])
+    for loc in env_locations:
+        if loc.exists():
+            load_dotenv(loc)
+            break
+
+    raw = os.environ.get("SEMANTIC_SIMILARITY_THRESHOLD", "0.90").strip()
+    try:
+        val = float(raw)
+        return max(0.0, min(1.0, val))
+    except ValueError:
+        return 0.90
+
+
 def load_user_preferences() -> Dict[str, Any]:
     """Load user preferences (current database, LLM, etc.)."""
     import json

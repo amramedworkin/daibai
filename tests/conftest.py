@@ -46,6 +46,8 @@ def _get_category(nodeid):
         return "AUTH", _GREEN
     if "test_config" in nodeid:
         return "CONFIG", _CYAN
+    if "test_env_integrity" in nodeid:
+        return "ENV-INTEGRITY", _CYAN
     if "test_cache_connection" in nodeid:
         return "CLOUD-CONN", _YELLOW
     if "test_redis" in nodeid:
@@ -101,6 +103,7 @@ def pytest_runtest_setup(item):
     mod = item.module.__name__
     _dashboard_mods = (
         "tests.test_database_logic", "tests.test_api", "tests.test_auth", "tests.test_config",
+        "tests.test_env_integrity",
         "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_cosmos_integration",
         "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection",
         "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_azure_config",
@@ -114,37 +117,27 @@ def pytest_runtest_setup(item):
             print(f"\n  {prefix} {doc}{_RESET}", flush=True)
 
 
-def _print_status_heatmap(terminalreporter, use_color, passed, failed, skipped):
-    """Print heatmap grid and success percentage. Uses rich when available."""
+def _print_status_gauge(terminalreporter, use_color, passed, failed, skipped):
+    """Print temperature-gauge style success indicator with legend."""
     total = len(passed) + len(failed) + len(skipped)
     if total == 0:
         return
     n_passed = len(passed)
+    n_failed = len(failed)
+    n_skipped = len(skipped)
     pct = round(100 * n_passed / total) if total else 0
-
-    # Heatmap from ordered results
-    blocks = []
-    for outcome in _test_results_ordered:
-        if outcome == "passed":
-            blocks.append("🟩")
-        elif outcome == "failed":
-            blocks.append("🟥")
-        else:
-            blocks.append("🟨")
 
     terminalreporter.write_line("")
     terminalreporter.write_line(f"{'─' * 70}")
-    terminalreporter.write_line("  DAIBAI TEST HEATMAP")
+    terminalreporter.write_line("  SESSION STATUS (Temperature Gauge)")
     terminalreporter.write_line(f"{'─' * 70}")
 
-    # Grid: 10 per row
-    row_size = 10
-    for i in range(0, len(blocks), row_size):
-        row = " ".join(blocks[i : i + row_size])
-        terminalreporter.write_line(f"  {row}")
-    terminalreporter.write_line(f"{'─' * 70}")
+    # Temperature bar: 20 chars wide, filled proportionally
+    bar_width = 20
+    filled = int(bar_width * n_passed / total) if total else 0
+    bar = "█" * filled + "░" * (bar_width - filled)
 
-    # Success gauge - use rich for bold/color when available
+    # Temperature gauge + legend
     try:
         from rich.console import Console
         from rich.panel import Panel
@@ -153,22 +146,26 @@ def _print_status_heatmap(terminalreporter, use_color, passed, failed, skipped):
         console = Console(force_terminal=use_color)
         if pct == 100:
             style = "bold green"
-            label = "100% SUCCESS"
+            label = f"[{bar}] 100% SUCCESS"
         elif pct >= 80:
             style = "bold yellow"
-            label = f"{pct}% SUCCESSFUL"
+            label = f"[{bar}] {pct}% SUCCESSFUL"
         else:
             style = "bold red"
-            label = f"{pct}% SUCCESSFUL"
+            label = f"[{bar}] {pct}% SUCCESSFUL"
         text = Text(label, style=style)
-        console.print(Panel(text, title="SESSION STATUS", border_style="dim"))
-        # Project phase (Phase 2 = Embeddings complete when CLOUD-L1 passes)
+        console.print(Panel(text, title="SUCCESS GAUGE", border_style="dim"))
+        # Legend: what the gauge represents
+        console.print(f"  >> Legend: Pass={n_passed}  Fail={n_failed}  Skip={n_skipped}  (total {total})")
+        # Project phase (Phase 2 = Embeddings + Similarity Search complete)
         phase = 2 if n_passed == total and total > 0 else 1
         phase_text = f"Phase {phase} (COMPLETE)" if pct == 100 else f"Phase {phase} (IN PROGRESS)"
         console.print(f"  >> PROJECT PHASE: {phase_text}")
     except ImportError:
         # Fallback: plain text or ANSI
         b, g, r = (_BOLD, _GREEN, _RESET) if use_color else ("", "", "")
+        terminalreporter.write_line(f"  [{bar}] {pct}%")
+        terminalreporter.write_line(f"  >> Legend: Pass={n_passed}  Fail={n_failed}  Skip={n_skipped}  (total {total})")
         if pct == 100:
             terminalreporter.write_line(f"  >> SESSION STATUS: {b}{g}100% SUCCESS{r}")
         else:
@@ -181,7 +178,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     key_mods = (
-        "test_database_logic", "test_api", "test_auth", "test_config",
+        "test_database_logic", "test_api", "test_auth", "test_config", "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
         "test_semantic_cache", "test_azure_config", "test_llm_providers", "test_new_providers",
@@ -223,25 +220,52 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     failed = terminalreporter.stats.get("failed", [])
     skipped = terminalreporter.stats.get("skipped", [])
     all_reports = [(r, "passed") for r in passed] + [(r, "failed") for r in failed] + [(r, "skipped") for r in skipped]
-    dashboard = [(r, status) for r, status in all_reports if any(m in r.nodeid for m in key_mods)]
+    dashboard_raw = [(r, status) for r, status in all_reports if any(m in r.nodeid for m in key_mods)]
+    # Deduplicate by nodeid (some envs report same test multiple times); keep worst status
+    _status_rank = {"failed": 3, "skipped": 2, "passed": 1}
+    by_nodeid = {}
+    for r, status in dashboard_raw:
+        if r.nodeid not in by_nodeid or _status_rank.get(status, 0) > _status_rank.get(by_nodeid[r.nodeid][1], 0):
+            by_nodeid[r.nodeid] = (r, status)
+    dashboard = list(by_nodeid.values())
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     pass_sym = _PASS if use_color else "PASS"
     fail_sym = _FAIL if use_color else "FAIL"
     skip_sym = _SKIP if use_color else "SKIP"
     if dashboard:
+        # For parametrized tests, extract [param] from nodeid so each variant has a unique line
+        def _display_doc(report):
+            doc = _test_docs.get(report.nodeid, report.nodeid.split("::")[-1])
+            tail = report.nodeid.split("::")[-1] if "::" in report.nodeid else report.nodeid
+            param_suffix = ""
+            if "[" in tail and "]" in tail:
+                param = tail[tail.index("[") + 1 : tail.rindex("]")]
+                param_suffix = f" [{param}]"
+            # Truncate base doc so total fits in 78 chars (param_suffix stays visible)
+            max_base = 78 - len(param_suffix)
+            if len(doc) > max_base:
+                doc = doc[: max_base - 3] + "..."
+            return doc + param_suffix
+
+        _cat_colors = {
+            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "ENV-INTEGRITY": _CYAN,
+            "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
+            "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
+            "CLOUD-AZURE": _YELLOW,
+            "LLM-PROVIDERS": _MAGENTA, "LLM-REGISTRY": _MAGENTA,
+            "LLM-MODELS": _MAGENTA, "LLM-GEMINI": _MAGENTA,
+        }
         terminalreporter.write_line("")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
         terminalreporter.write_line(f"{b}  Test Dashboard{r}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
         for report, status in dashboard:
-            cat, color = _get_category(report.nodeid)
+            cat, _ = _get_category(report.nodeid)
             if cat:
                 sym = pass_sym if status == "passed" else (fail_sym if status == "failed" else skip_sym)
-                c = color if use_color else ""
-                doc = _test_docs.get(report.nodeid, report.nodeid.split("::")[-1])
-                if len(doc) > 78:
-                    doc = doc[:75] + "..."
-                terminalreporter.write_line(f"  {sym} {c}[{cat}]{r} {doc}")
+                cc = _cat_colors.get(cat, _CYAN) if use_color else ""
+                doc = _display_doc(report)
+                terminalreporter.write_line(f"  {sym} {cc}[{cat}]{r} {doc}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
     # Catalog Summary: what each category tests and what pass/fail means (only when dashboard tests ran)
@@ -275,6 +299,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "AI providers and database connections are configured.",
             "Config may be wrong or missing; LLM keys may not resolve.",
             "The app may not connect to AI or your database.",
+        ),
+        "ENV-INTEGRITY": (
+            ".env file integrity (no duplicate keys, no malformed KEY=value lines).",
+            "Each key appears once; all entries match KEY=value format; clean_env works.",
+            "Your .env is clean and predictable; Smart Append and clean_env keep it that way.",
+            "Duplicate keys or malformed lines detected; run ./scripts/cli.sh env-clean to fix.",
+            "Config may load wrong values; run env-clean to deduplicate and fix.",
         ),
         "CLOUD-CONN": (
             "Redis connection (CacheManager.ping, config wiring).",
@@ -360,7 +391,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             if status == "failed" and _get_category(r.nodeid)[0]
         }
         _CAT_COLORS = {
-            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN,
+            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "ENV-INTEGRITY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
             "CLOUD-AZURE": _YELLOW,
@@ -425,5 +456,5 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"      {msg}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
-    # Status Heatmap and Success Gauge
-    _print_status_heatmap(terminalreporter, use_color, passed, failed, skipped)
+    # Status Gauge (temperature-style bar + legend)
+    _print_status_gauge(terminalreporter, use_color, passed, failed, skipped)

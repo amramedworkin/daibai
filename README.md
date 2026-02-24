@@ -731,25 +731,50 @@ open http://localhost:8080
 
 ### Setup
 
+**One-command setup** (recommended):
+
 ```bash
-# Clone the repository
 git clone https://github.com/amramedworkin/daibai.git
 cd daibai
+./scripts/cli.sh setup
+```
 
-# Create virtual environment
+This creates `.venv`, installs `[gui,dev,cache]`, and creates `.env` from `.env.example` if missing.
+
+**Manual setup:**
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -e ".[gui,dev,cache]"
+```
 
-# Install with dev dependencies
-pip install -e ".[dev,all]"
+**Run tests:**
 
-# Run tests
-pytest
+```bash
+python3 -m pytest tests/ -v -s          # Full suite with visual gauge
+./scripts/cli.sh test file test_cache_logic.py   # Cache + semantic tests
+```
 
-# Run linting
+**Run linting:**
+
+```bash
 ruff check .
 black --check .
 ```
+
+### Idempotency (Gold Standard)
+
+All DaiBai setup and installation scripts are **idempotent**: safe to run repeatedly.
+
+| Component | Behavior |
+|-----------|----------|
+| **`./scripts/cli.sh setup`** | Skips venv creation if `.venv` exists; skips `.env` creation if it exists; `pip install -e` is safe to run multiple times. |
+| **`./scripts/cli.sh redis-create`** | Skips resource group if it exists; skips Redis instance if it exists; uses **Smart Append** for `.env` (no duplicate keys). |
+| **Smart Append** (`scripts/update_env.py`) | Updates existing keys in place; appends only if key is missing. Prevents the "duplicate entry mess" when setup runs multiple times. |
+| **Python config** | All `mkdir`/`makedirs` use `exist_ok=True`; no destructive side effects on repeated load. |
+
+**Why it matters:** If a deployment is interrupted by a network failure, you can run setup again. It will skip what's done and finish what's missing. You won't risk wiping out existing Azure resources or corrupting your `.env` file.
 
 ### Project Structure
 

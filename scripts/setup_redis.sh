@@ -43,10 +43,14 @@ else
 fi
 echo ""
 
-# 1. Create Resource Group (idempotent)
+# 1. Create Resource Group (idempotent: skip if exists)
 echo "[1/4] Creating resource group (if not exists)..."
-az group create --name "$REDIS_RESOURCE_GROUP" --location "$REDIS_LOCATION" -o none
-echo "  Done."
+if [[ "$(az group exists --name "$REDIS_RESOURCE_GROUP" 2>/dev/null)" == "true" ]]; then
+    echo "  Already exists. Skipping."
+else
+    az group create --name "$REDIS_RESOURCE_GROUP" --location "$REDIS_LOCATION" -o none
+    echo "  Done."
+fi
 echo ""
 
 # 2. Create Azure Cache for Redis (Basic C0 - skip if already exists)
@@ -102,47 +106,13 @@ print(f'rediss://:{safe_pass}@{host_port}')
 
 [[ -z "$REDIS_URL" ]] && REDIS_URL="$PRIMARY_CS"
 
-# 4. Write REDIS_URL to .env
+# 4. Write REDIS_URL to .env (Smart Append: update existing keys, append only if missing)
 echo "[4/4] Writing REDIS_URL to .env..."
 ENV_FILE="$PROJECT_DIR/.env"
-if [[ ! -f "$ENV_FILE" && -f "$PROJECT_DIR/.env.example" ]]; then
-    cp "$PROJECT_DIR/.env.example" "$ENV_FILE"
-fi
-
-python3 -c "
-import sys
-env_path = sys.argv[1]
-redis_url = sys.argv[2]
-rg = sys.argv[3]
-name = sys.argv[4]
-lines = []
-found_url = found_rg = found_name = False
-if __import__('pathlib').Path(env_path).exists():
-    with open(env_path) as f:
-        for line in f:
-            if line.strip().startswith('REDIS_URL='):
-                lines.append(f'REDIS_URL={redis_url}\n')
-                found_url = True
-            elif line.strip().startswith('REDIS_RESOURCE_GROUP='):
-                lines.append(f'REDIS_RESOURCE_GROUP={rg}\n')
-                found_rg = True
-            elif line.strip().startswith('REDIS_NAME='):
-                lines.append(f'REDIS_NAME={name}\n')
-                found_name = True
-            else:
-                lines.append(line)
-if not found_url:
-    if lines and not lines[-1].endswith('\n'):
-        lines[-1] += '\n'
-    lines.append('\n# Azure Cache for Redis (from setup_redis.sh)\n')
-    lines.append(f'REDIS_URL={redis_url}\n')
-if not found_rg:
-    lines.append(f'REDIS_RESOURCE_GROUP={rg}\n')
-if not found_name:
-    lines.append(f'REDIS_NAME={name}\n')
-with open(env_path, 'w') as f:
-    f.writelines(lines)
-" "$ENV_FILE" "$REDIS_URL" "$REDIS_RESOURCE_GROUP" "$REDIS_NAME"
+python3 "$SCRIPT_DIR/update_env.py" "$ENV_FILE" \
+    "REDIS_URL=$REDIS_URL" \
+    "REDIS_RESOURCE_GROUP=$REDIS_RESOURCE_GROUP" \
+    "REDIS_NAME=$REDIS_NAME"
 
 echo ""
 echo "============================================================================"
