@@ -70,6 +70,8 @@ def _get_category(nodeid):
         return "CONFIG", _CYAN
     if "test_schema_discovery" in nodeid or "test_schema_mapping" in nodeid or "test_schema_indexing" in nodeid:
         return "SCHEMA", _CYAN
+    if "test_sql_guardrails" in nodeid:
+        return "GUARDRAILS", _CYAN
     if "test_env_integrity" in nodeid:
         return "ENV-INTEGRITY", _CYAN
     if "test_cache_connection" in nodeid:
@@ -190,7 +192,7 @@ def pytest_runtest_setup(item):
     mod = item.module.__name__
     _dashboard_mods = (
         "tests.test_database_logic", "tests.test_api", "tests.test_auth", "tests.test_config",
-        "tests.test_schema_discovery", "tests.test_schema_mapping", "tests.test_schema_indexing", "tests.test_env_integrity",
+        "tests.test_schema_discovery", "tests.test_schema_mapping", "tests.test_schema_indexing", "tests.test_sql_guardrails", "tests.test_env_integrity",
         "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_cosmos_integration",
         "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection",
         "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_semantic_precision",
@@ -305,7 +307,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     key_mods = (
-        "test_database_logic", "test_api", "test_auth", "test_config",         "test_schema_discovery", "test_schema_mapping", "test_schema_indexing",
+        "test_database_logic", "test_api", "test_auth", "test_config",         "test_schema_discovery", "test_schema_mapping", "test_schema_indexing", "test_sql_guardrails",
         "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
@@ -385,7 +387,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             return doc + param_suffix
 
         _cat_colors = {
-            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN,
+            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN, "GUARDRAILS": _CYAN,
             "ENV-INTEGRITY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
@@ -455,6 +457,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "The agent sends only relevant tables to the LLM; table pruning reduces cost and confusion.",
             "Schema extraction or vector store may fail; fallback to full schema or empty context.",
             "SQL may reference wrong tables; SCHEMA_VECTOR_LIMIT and threshold affect pruning quality.",
+        ),
+        "GUARDRAILS": (
+            "SQL guardrails (lexical block, scope check, injection shield).",
+            "SQLValidator blocks DML, out-of-scope tables, and multi-statement injection.",
+            "LLM-generated SQL cannot damage data; only allowed read-only queries execute.",
+            "Validator may block valid queries or miss novel attack patterns.",
+            "Malicious or buggy SQL could reach the database.",
         ),
         "ENV-INTEGRITY": (
             ".env file integrity (no duplicate keys, no malformed KEY=value lines).",
@@ -547,7 +556,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             if status == "failed" and _get_category(r.nodeid)[0]
         }
         _CAT_COLORS = {
-            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN,
+            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN, "GUARDRAILS": _CYAN,
             "ENV-INTEGRITY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,

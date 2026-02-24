@@ -37,11 +37,12 @@ print_info() {
     echo "[INFO] $1"
 }
 
-# Load .env from project and home (for Redis connection string)
+# Load .env from project and home (for Redis, MySQL, etc.)
 load_env_for_redis() {
     [[ -f "$PROJECT_DIR/.env" ]] && set -a && source "$PROJECT_DIR/.env" 2>/dev/null && set +a
     [[ -f "$HOME/.daibai/.env" ]] && set -a && source "$HOME/.daibai/.env" 2>/dev/null && set +a
 }
+load_env() { load_env_for_redis; }
 
 # Get Redis connection string: prefer Azure primary key, fallback to .env
 # Uses az redis show + az redis list-keys (Authentication -> Show Access Keys -> Primary Key)
@@ -166,6 +167,7 @@ Commands (mirrors menu.sh):
     test collect           List all test names (--collect-only)
     test coverage          Run with coverage report
     test full              Run full suite including cloud (REDIS_URL, COSMOS_ENDPOINT for live tests)
+    test-guardrails        Run SQL guardrail tests (30 mock + 8 live; live use daibai config or MYSQL_*)
 
   META
     status                  Alias for chat-status
@@ -197,6 +199,7 @@ Examples:
     $(basename "$0") test gemini
     $(basename "$0") test gemini --live
     $(basename "$0") test coverage
+    $(basename "$0") test-guardrails
 
 EOF
 }
@@ -477,6 +480,14 @@ cmd_test_cache_connection() {
     load_env_for_redis
     print_header "CacheManager Ping (Mocked + Live when REDIS_URL set)"
     run_pytest tests/test_cache_connection.py -v -s
+}
+
+cmd_test_guardrails() {
+    load_env
+    print_header "SQL Guardrail Tests (30 mock + 8 live)"
+    echo "  Mock: always run. Live: run when MySQL configured (MYSQL_* or daibai.yaml database)"
+    echo ""
+    run_pytest tests/test_sql_guardrails.py -v -s
 }
 
 cmd_cache_stats() {
@@ -837,6 +848,9 @@ main() {
             ;;
         test-cache-connection)
             cmd_test_cache_connection
+            ;;
+        test-guardrails)
+            cmd_test_guardrails
             ;;
         cache-stats)
             cmd_cache_stats

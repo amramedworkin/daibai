@@ -10,12 +10,13 @@ import json
 import hashlib
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Set, Tuple, Dict, Any, List
 from pathlib import Path
 
 import pandas as pd
 
 from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_redis_connection_string
+from .guardrails import SQLValidator, SecurityViolation
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
@@ -81,12 +82,14 @@ class SchemaCache:
 
 
 class DatabaseRunner:
-    """Executes SQL against a database connection."""
-    
+    """Executes SQL against a database connection. All queries pass through SQLValidator."""
+
+    _validator = SQLValidator()
+
     def __init__(self, config: DatabaseConfig):
         self.config = config
         self._connection = None
-    
+
     def _ensure_connection(self):
         """Ensure database connection is established."""
         if self._connection is None:
@@ -102,10 +105,15 @@ class DatabaseRunner:
             except ImportError:
                 raise ImportError("MySQL support requires mysql-connector-python")
     
-    def run_sql(self, sql: str) -> Optional[pd.DataFrame]:
-        """Execute SQL and return results as DataFrame."""
+    def run_sql(
+        self,
+        sql: str,
+        allowed_tables: Optional[Set[str]] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Execute SQL and return results as DataFrame. Validates through SQLValidator first."""
+        self._validator.validate(sql, allowed_tables=allowed_tables)
         self._ensure_connection()
-        
+
         try:
             cursor = self._connection.cursor(dictionary=True)
             cursor.execute(sql)
@@ -122,10 +130,14 @@ class DatabaseRunner:
             self._connection.rollback()
             raise e
     
-    async def run_sql_async(self, sql: str) -> Optional[pd.DataFrame]:
+    async def run_sql_async(
+        self,
+        sql: str,
+        allowed_tables: Optional[Set[str]] = None,
+    ) -> Optional[pd.DataFrame]:
         """Async SQL execution (runs sync in executor)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.run_sql, sql)
+        return await loop.run_in_executor(None, lambda: self.run_sql(sql, allowed_tables))
     
     def close(self):
         """Close database connection."""
@@ -347,15 +359,25 @@ class DaiBaiAgent:
                 status[db_name] = {"trained": False}
         return status
     
-    def run_sql(self, sql: str, db_name: Optional[str] = None) -> Optional[pd.DataFrame]:
-        """Execute SQL and return results."""
+    def run_sql(
+        self,
+        sql: str,
+        db_name: Optional[str] = None,
+        allowed_tables: Optional[Set[str]] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Execute SQL and return results. Validates through SQLValidator first."""
         runner = self._get_runner(db_name)
-        return runner.run_sql(sql)
-    
-    async def run_sql_async(self, sql: str, db_name: Optional[str] = None) -> Optional[pd.DataFrame]:
-        """Execute SQL asynchronously."""
+        return runner.run_sql(sql, allowed_tables=allowed_tables)
+
+    async def run_sql_async(
+        self,
+        sql: str,
+        db_name: Optional[str] = None,
+        allowed_tables: Optional[Set[str]] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Execute SQL asynchronously. Validates through SQLValidator first."""
         runner = self._get_runner(db_name)
-        return await runner.run_sql_async(sql)
+        return await runner.run_sql_async(sql, allowed_tables=allowed_tables)
     
     def _fetch_schema_from_db(self, db_name: str) -> str:
         """Fetch fresh schema from database."""

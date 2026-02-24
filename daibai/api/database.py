@@ -4,6 +4,9 @@ Stateless conversation store backed by Azure Cosmos DB.
 Uses azure.cosmos.aio.CosmosClient with DefaultAzureCredential. Async is critical
 for web servers so one user's database save doesn't block others.
 No local storage—all data lives in Cosmos DB.
+
+SQL execution: Use daibai.core.guardrails.validate_and_execute (or agent.run_sql
+which validates internally) to force every query through SQLValidator before execution.
 """
 
 import os
