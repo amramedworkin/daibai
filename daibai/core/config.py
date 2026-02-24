@@ -17,6 +17,27 @@ from dataclasses import dataclass, field
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field, field_validator
+
+# ---------------------------------------------------------------------------
+# Cache settings (Pydantic-validated)
+# ---------------------------------------------------------------------------
+
+
+class CacheConfig(BaseModel):
+    """Semantic cache configuration. CACHE_THRESHOLD controls match strictness."""
+
+    CACHE_THRESHOLD: float = Field(
+        default=0.90,
+        description="Cosine similarity threshold for semantic cache matches. 1.0 is exact match, 0.0 is anything goes.",
+    )
+
+    @field_validator("CACHE_THRESHOLD")
+    @classmethod
+    def clamp_threshold(cls, v: float) -> float:
+        """Ensure CACHE_THRESHOLD stays within 0.0–1.0."""
+        return max(0.0, min(1.0, v))
+
 
 # Key Vault secret name -> provider_type for LLM API keys
 _KEYVAULT_LLM_MAPPING = {
@@ -353,8 +374,8 @@ def get_redis_connection_string() -> Optional[str]:
 def get_semantic_similarity_threshold() -> float:
     """
     Get similarity threshold for semantic cache retrieval (0.0–1.0).
-    Precision for semantic cache matching. High values = stricter.
-    Reads CACHE_THRESHOLD or SEMANTIC_SIMILARITY_THRESHOLD from .env. Default 0.90.
+    Uses CacheConfig (Pydantic-validated). Reads CACHE_THRESHOLD or
+    SEMANTIC_SIMILARITY_THRESHOLD from .env. Default 0.90.
     """
     # Ensure .env is loaded
     env_locations = []
@@ -374,9 +395,10 @@ def get_semantic_similarity_threshold() -> float:
     )
     try:
         val = float(raw)
-        return max(0.0, min(1.0, val))  # Clamp to 0.0–1.0
+        cfg = CacheConfig(CACHE_THRESHOLD=val)
+        return cfg.CACHE_THRESHOLD
     except ValueError:
-        return 0.90
+        return CacheConfig().CACHE_THRESHOLD
 
 
 def load_user_preferences() -> Dict[str, Any]:

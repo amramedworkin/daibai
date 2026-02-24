@@ -695,6 +695,19 @@ The `redis-create` command automatically writes `REDIS_URL` to `.env` (creates t
 export DAIBAI_DISABLE_SEMANTIC_CACHE=1   # Bypass cache (error isolation, testing)
 ```
 
+**CACHE_THRESHOLD (precision knob):** Controls how strict the semantic cache matching is. Set in `.env`:
+
+```bash
+# Cosine similarity threshold for semantic cache matches. 1.0 = exact match, 0.0 = anything goes.
+CACHE_THRESHOLD=0.90
+```
+
+- **0.90** (default): Balanced—similar questions reuse answers; very different ones get fresh AI calls.
+- **Higher (0.95–1.0):** Stricter—fewer cache hits, more accurate matches.
+- **Lower (0.80–0.88):** Looser—more cache hits, lower cost, but risk of wrong answers from tangentially related questions.
+
+The setting is validated by Pydantic and clamped to 0.0–1.0. See `daibai/core/config.py` (`CacheConfig`) and `docs/SETTINGS_GUIDE.md`.
+
 Then run the Redis integration tests:
 
 ```bash

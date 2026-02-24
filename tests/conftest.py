@@ -302,11 +302,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "Anyone might access your data, or you may be locked out.",
         ),
         "CONFIG": (
-            "Config loading (env vars, .env injection).",
-            "Secrets and settings load from env/YAML as expected.",
-            "AI providers and database connections are configured.",
-            "Config may be wrong or missing; LLM keys may not resolve.",
-            "The app may not connect to AI or your database.",
+            "Config loading (env vars, .env injection, CACHE_THRESHOLD).",
+            "Secrets and settings load from env/YAML; CACHE_THRESHOLD (0.0–1.0) for semantic cache precision.",
+            "AI providers and database connections are configured; cache matching strictness is tunable.",
+            "Config may be wrong or missing; LLM keys or CACHE_THRESHOLD may not resolve.",
+            "The app may not connect to AI or your database; cache may be too strict or too loose.",
         ),
         "ENV-INTEGRITY": (
             ".env file integrity (no duplicate keys, no malformed KEY=value lines).",
@@ -337,10 +337,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "Repeated questions may not get cached; higher AI bills.",
         ),
         "CLOUD-CACHE": (
-            "Semantic cache (similarity search, retrieval by intent).",
-            "Similar prompts return cached responses; LLM cost savings active.",
+            "Semantic cache (similarity search, CACHE_THRESHOLD, retrieval by intent).",
+            "Similar prompts return cached responses; CACHE_THRESHOLD (0.0–1.0) controls match strictness.",
             "Ask the same thing different ways—you get cached answers, not new AI calls.",
-            "Similarity retrieval broken; cache may miss or never hit.",
+            "Similarity retrieval broken; CACHE_THRESHOLD may be misconfigured; cache may miss or never hit.",
             "You pay for every query even when you already asked something similar.",
         ),
         "CLOUD-LIFESPAN": (

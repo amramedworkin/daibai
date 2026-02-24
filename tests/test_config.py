@@ -8,8 +8,10 @@ import os
 from daibai.core.config import (
     load_config,
     Config,
+    CacheConfig,
     DatabaseConfig,
     LLMProviderConfig,
+    get_semantic_similarity_threshold,
     _resolve_env_vars,
 )
 
@@ -143,3 +145,34 @@ def test_config_get_llm():
     
     with pytest.raises(ValueError):
         config.get_llm("nonexistent")
+
+
+def test_cache_config_default():
+    """CacheConfig defaults to CACHE_THRESHOLD=0.90."""
+    cfg = CacheConfig()
+    assert cfg.CACHE_THRESHOLD == 0.90
+
+
+def test_cache_config_validator_clamps():
+    """CACHE_THRESHOLD validator clamps to 0.0–1.0."""
+    assert CacheConfig(CACHE_THRESHOLD=0.5).CACHE_THRESHOLD == 0.5
+    assert CacheConfig(CACHE_THRESHOLD=0.0).CACHE_THRESHOLD == 0.0
+    assert CacheConfig(CACHE_THRESHOLD=1.0).CACHE_THRESHOLD == 1.0
+    assert CacheConfig(CACHE_THRESHOLD=1.5).CACHE_THRESHOLD == 1.0
+    assert CacheConfig(CACHE_THRESHOLD=-0.1).CACHE_THRESHOLD == 0.0
+
+
+def test_get_semantic_similarity_threshold(monkeypatch):
+    """get_semantic_similarity_threshold reads CACHE_THRESHOLD from env."""
+    monkeypatch.setenv("CACHE_THRESHOLD", "0.85")
+    monkeypatch.setenv("SEMANTIC_SIMILARITY_THRESHOLD", "")
+    assert get_semantic_similarity_threshold() == 0.85
+
+    monkeypatch.setenv("CACHE_THRESHOLD", "")
+    monkeypatch.setenv("SEMANTIC_SIMILARITY_THRESHOLD", "0.95")
+    assert get_semantic_similarity_threshold() == 0.95
+
+    # Default when both empty (set to empty; load_dotenv won't override existing)
+    monkeypatch.setenv("CACHE_THRESHOLD", "")
+    monkeypatch.setenv("SEMANTIC_SIMILARITY_THRESHOLD", "")
+    assert get_semantic_similarity_threshold() == 0.90
