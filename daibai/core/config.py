@@ -39,6 +39,32 @@ class CacheConfig(BaseModel):
         return max(0.0, min(1.0, v))
 
 
+def get_schema_vector_limit() -> int:
+    """
+    Get max number of tables to send to LLM (semantic schema pruning).
+    Reads SCHEMA_VECTOR_LIMIT from .env. Default 5.
+    """
+    import os
+    from pathlib import Path
+    from dotenv import load_dotenv
+    env_locations = []
+    try:
+        env_locations.append(Path.cwd() / ".env")
+    except OSError:
+        pass
+    env_locations.extend([Path.home() / ".daibai" / ".env"])
+    for loc in env_locations:
+        if loc.exists():
+            load_dotenv(loc)
+            break
+    raw = os.environ.get("SCHEMA_VECTOR_LIMIT", "5").strip()
+    try:
+        val = int(raw)
+        return max(1, min(20, val))
+    except ValueError:
+        return 5
+
+
 # Key Vault secret name -> provider_type for LLM API keys
 _KEYVAULT_LLM_MAPPING = {
     "OPENAI-API-KEY": "openai",

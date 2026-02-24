@@ -897,6 +897,21 @@ This is the "Brain Surgery" that connects natural language to your database.
 | **Self-Correction** | If the SQL fails (e.g., syntax error), the agent reads the error, fixes the code, and tries again. |
 | **Cache Loop** | Before the Agent does any of this work, it checks the Semantic Cache to see if it already knows the answer. |
 
+##### Schema Mapping and Management (Phase 3, Step 2)
+
+**Methodology:** Instead of sending every table to the LLM, DaiBai uses **semantic schema mapping** (table pruning) to select only relevant tables for each query.
+
+| Step | Description |
+|------|-------------|
+| **1. Schema Discovery** | `SchemaManager.get_schema_metadata()` queries `information_schema.COLUMNS` to fetch table and column metadata. |
+| **2. DDL Extraction** | Each table's structure is converted to a DDL-like string (table name, column names, types, keys). |
+| **3. Vectorization** | `vectorize_schema()` embeds each table DDL using the same embedding model as the semantic cache (`all-MiniLM-L6-v2`). |
+| **4. Redis Storage** | Embeddings are stored in Redis under `schema:<db>:<table>` with a set index `schema:<db>:index`. |
+| **5. Similarity Search** | When a user asks a question, `get_relevant_tables(query)` embeds the query, computes cosine similarity against all stored table vectors, and returns the top N (default 5, configurable via `SCHEMA_VECTOR_LIMIT`) most relevant table DDLs. |
+| **6. Context Injection** | Only these relevant DDLs are sent to the LLM, reducing token cost and avoiding confusion from irrelevant tables. |
+
+**Benefits:** Table pruning cuts prompt size, lowers LLM cost, and improves accuracy by focusing the model on tables that match the user's intent (e.g., "salaries" → Employees table, not WeatherForecast).
+
 **Phase 4: Tool-Use & Execution (The "Hands")**
 
 This phase gives the AI the ability to run the SQL it wrote.

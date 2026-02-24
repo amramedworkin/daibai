@@ -63,7 +63,7 @@ def _get_category(nodeid):
         return "AUTH", _GREEN
     if "test_config" in nodeid:
         return "CONFIG", _CYAN
-    if "test_schema_discovery" in nodeid:
+    if "test_schema_discovery" in nodeid or "test_schema_mapping" in nodeid:
         return "SCHEMA", _CYAN
     if "test_env_integrity" in nodeid:
         return "ENV-INTEGRITY", _CYAN
@@ -147,7 +147,7 @@ def pytest_runtest_setup(item):
     mod = item.module.__name__
     _dashboard_mods = (
         "tests.test_database_logic", "tests.test_api", "tests.test_auth", "tests.test_config",
-        "tests.test_schema_discovery", "tests.test_env_integrity",
+        "tests.test_schema_discovery", "tests.test_schema_mapping", "tests.test_env_integrity",
         "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_cosmos_integration",
         "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection",
         "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_semantic_precision",
@@ -221,7 +221,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     key_mods = (
-        "test_database_logic", "test_api", "test_auth", "test_config", "test_schema_discovery",
+        "test_database_logic", "test_api", "test_auth", "test_config",         "test_schema_discovery", "test_schema_mapping",
         "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
@@ -364,11 +364,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "The app may not connect to AI or your database; cache may be too strict or too loose.",
         ),
         "SCHEMA": (
-            "Schema discovery (information_schema, SchemaManager, DDL extraction).",
-            "SchemaManager extracts table/column metadata; get_schema_ddl produces grounding text for SQL generation.",
-            "The agent uses schema metadata to ground its SQL generation; correct tables and columns are used.",
-            "Schema extraction may fail; information_schema query or connection may be wrong.",
-            "SQL may reference wrong tables or columns; hallucinations more likely without schema context.",
+            "Schema discovery and semantic mapping (information_schema, vectorize_schema, get_relevant_tables).",
+            "SchemaManager extracts metadata; vectorize_schema stores DDL embeddings; get_relevant_tables prunes by query.",
+            "The agent sends only relevant tables to the LLM; table pruning reduces cost and confusion.",
+            "Schema extraction or vector store may fail; fallback to full schema or empty context.",
+            "SQL may reference wrong tables; SCHEMA_VECTOR_LIMIT and threshold affect pruning quality.",
         ),
         "ENV-INTEGRITY": (
             ".env file integrity (no duplicate keys, no malformed KEY=value lines).",

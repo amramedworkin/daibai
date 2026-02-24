@@ -10,6 +10,12 @@ The agent uses **schema metadata** to ground its SQL generation. Before generati
 
 **Impact:** Without schema grounding, the LLM may invent table or column names. With it, SQL generation is constrained to your actual schema, reducing errors and improving accuracy.
 
+**Semantic Schema Mapping (Table Pruning):** Instead of sending every table to the LLM, DaiBai uses embeddings to select only relevant tables. `SchemaManager.vectorize_schema()` stores table DDL embeddings in Redis (`schema:<db>:<table>`). `get_relevant_tables(query)` performs a similarity search and returns the top N table DDLs for the user's question. This reduces token cost and improves accuracy by avoiding irrelevant context.
+
+| Setting | Technical Name | Description | Default |
+|---------|----------------|-------------|---------|
+| **Schema Vector Limit** | `SCHEMA_VECTOR_LIMIT` | Max number of tables to send to the LLM (semantic pruning). Higher = more context, higher cost. | `5` |
+
 ---
 
 ### **Daibai Master Configuration Manifest**
