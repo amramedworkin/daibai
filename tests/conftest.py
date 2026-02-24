@@ -63,6 +63,8 @@ def _get_category(nodeid):
         return "AUTH", _GREEN
     if "test_config" in nodeid:
         return "CONFIG", _CYAN
+    if "test_schema_discovery" in nodeid:
+        return "SCHEMA", _CYAN
     if "test_env_integrity" in nodeid:
         return "ENV-INTEGRITY", _CYAN
     if "test_cache_connection" in nodeid:
@@ -145,7 +147,7 @@ def pytest_runtest_setup(item):
     mod = item.module.__name__
     _dashboard_mods = (
         "tests.test_database_logic", "tests.test_api", "tests.test_auth", "tests.test_config",
-        "tests.test_env_integrity",
+        "tests.test_schema_discovery", "tests.test_env_integrity",
         "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_cosmos_integration",
         "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection",
         "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_semantic_precision",
@@ -219,7 +221,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     key_mods = (
-        "test_database_logic", "test_api", "test_auth", "test_config", "test_env_integrity",
+        "test_database_logic", "test_api", "test_auth", "test_config", "test_schema_discovery",
+        "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
         "test_semantic_cache", "test_semantic_precision", "test_azure_config", "test_llm_providers", "test_new_providers",
@@ -297,7 +300,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             return doc + param_suffix
 
         _cat_colors = {
-            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "ENV-INTEGRITY": _CYAN,
+            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN,
+            "ENV-INTEGRITY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
             "CLOUD-AZURE": _YELLOW,
@@ -358,6 +362,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "AI providers and database connections are configured; cache matching strictness is tunable.",
             "Config may be wrong or missing; LLM keys or CACHE_THRESHOLD may not resolve.",
             "The app may not connect to AI or your database; cache may be too strict or too loose.",
+        ),
+        "SCHEMA": (
+            "Schema discovery (information_schema, SchemaManager, DDL extraction).",
+            "SchemaManager extracts table/column metadata; get_schema_ddl produces grounding text for SQL generation.",
+            "The agent uses schema metadata to ground its SQL generation; correct tables and columns are used.",
+            "Schema extraction may fail; information_schema query or connection may be wrong.",
+            "SQL may reference wrong tables or columns; hallucinations more likely without schema context.",
         ),
         "ENV-INTEGRITY": (
             ".env file integrity (no duplicate keys, no malformed KEY=value lines).",
@@ -450,7 +461,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             if status == "failed" and _get_category(r.nodeid)[0]
         }
         _CAT_COLORS = {
-            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "ENV-INTEGRITY": _CYAN,
+            "DB": _CYAN, "API": _GREEN, "AUTH": _GREEN, "CONFIG": _CYAN, "SCHEMA": _CYAN,
+            "ENV-INTEGRITY": _CYAN,
             "CLOUD-CONN": _YELLOW, "CLOUD-REDIS": _YELLOW, "CLOUD-L1": _YELLOW,
             "CLOUD-CACHE": _YELLOW, "CLOUD-LIFESPAN": _YELLOW, "CLOUD-COSMOS": _YELLOW,
             "CLOUD-AZURE": _YELLOW,

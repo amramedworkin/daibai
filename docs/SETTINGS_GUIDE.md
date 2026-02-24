@@ -1,3 +1,17 @@
+### **Schema Metadata and SQL Grounding**
+
+The agent uses **schema metadata** to ground its SQL generation. Before generating SQL from natural language, DaiBai extracts the database schema (table names, column names, data types) via `SchemaManager` (`daibai/core/schema.py`). This metadata is injected into the LLM prompt so the model sees the actual structure of your database.
+
+**How it works:**
+- `SchemaManager.get_schema_metadata()` queries `information_schema.COLUMNS` (MySQL) to fetch table and column metadata.
+- The raw rows are transformed into a structured dict: `{table_name: [column_info, ...]}`.
+- `get_schema_ddl()` produces a DDL-like text block (table names, column types, keys) suitable for prompt context.
+- The agent includes this schema text when calling the LLM, so generated SQL references real tables and columns instead of hallucinating.
+
+**Impact:** Without schema grounding, the LLM may invent table or column names. With it, SQL generation is constrained to your actual schema, reducing errors and improving accuracy.
+
+---
+
 ### **Daibai Master Configuration Manifest**
 
 | Grouping | Analysis Name (UI Label) | Technical Name | Description | Range / Expected Values | Impact (Correct vs. Incorrect) | Source | Presentation Note |
