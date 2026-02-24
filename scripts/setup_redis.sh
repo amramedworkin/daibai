@@ -70,7 +70,7 @@ echo ""
 echo "[3/4] Retrieving connection string..."
 HOSTNAME=$(az redis show --name "$REDIS_NAME" --resource-group "$REDIS_RESOURCE_GROUP" --query hostName -o tsv 2>/dev/null)
 SSL_PORT=$(az redis show --name "$REDIS_NAME" --resource-group "$REDIS_RESOURCE_GROUP" --query sslPort -o tsv 2>/dev/null)
-PRIMARY_KEY=$(az redis list-keys --name "$REDIS_NAME" --resource-group "$REDIS_RESOURCE_GROUP" --query primaryKey -o tsv 2>/dev/null)
+PRIMARY_KEY=$(az redis list-keys --name "$REDIS_NAME" --resource-group "$REDIS_RESOURCE_GROUP" --query "primaryKey" -o tsv 2>/dev/null | tr -d '\n\r')
 
 if [[ -z "$HOSTNAME" || -z "$PRIMARY_KEY" ]]; then
     echo "[ERROR] Could not retrieve Redis connection info." >&2
@@ -113,24 +113,36 @@ python3 -c "
 import sys
 env_path = sys.argv[1]
 redis_url = sys.argv[2]
+rg = sys.argv[3]
+name = sys.argv[4]
 lines = []
-found = False
+found_url = found_rg = found_name = False
 if __import__('pathlib').Path(env_path).exists():
     with open(env_path) as f:
         for line in f:
             if line.strip().startswith('REDIS_URL='):
                 lines.append(f'REDIS_URL={redis_url}\n')
-                found = True
+                found_url = True
+            elif line.strip().startswith('REDIS_RESOURCE_GROUP='):
+                lines.append(f'REDIS_RESOURCE_GROUP={rg}\n')
+                found_rg = True
+            elif line.strip().startswith('REDIS_NAME='):
+                lines.append(f'REDIS_NAME={name}\n')
+                found_name = True
             else:
                 lines.append(line)
-if not found:
+if not found_url:
     if lines and not lines[-1].endswith('\n'):
         lines[-1] += '\n'
     lines.append('\n# Azure Cache for Redis (from setup_redis.sh)\n')
     lines.append(f'REDIS_URL={redis_url}\n')
+if not found_rg:
+    lines.append(f'REDIS_RESOURCE_GROUP={rg}\n')
+if not found_name:
+    lines.append(f'REDIS_NAME={name}\n')
 with open(env_path, 'w') as f:
     f.writelines(lines)
-" "$ENV_FILE" "$REDIS_URL"
+" "$ENV_FILE" "$REDIS_URL" "$REDIS_RESOURCE_GROUP" "$REDIS_NAME"
 
 echo ""
 echo "============================================================================"

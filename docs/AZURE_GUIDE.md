@@ -530,6 +530,76 @@ Then run the Redis integration tests:
 
 **Override via env:** `REDIS_RESOURCE_GROUP`, `REDIS_NAME`, `REDIS_LOCATION`. The script registers the Microsoft.Cache provider if needed and blocks until the full Redis deployment completes (~15 min).
 
+#### Redis Insight Setup (Visual Monitoring)
+
+To visually inspect your semantic cache (keys, memory, profiler), use Redis Insight. The CLI provides a cheat sheet that parses your `.env` and prints all values needed to connect:
+
+**1. Install Redis Insight**
+
+- **macOS:** `brew install --cask redisinsight`
+- **Windows:** `winget install Redis.RedisInsight`
+- Or download from [redis.io/insight](https://redis.io/insight/)
+
+**2. Get the cheat sheet**
+
+Run this in your project directory. It reads `REDIS_URL` or `AZURE_REDIS_CONNECTION_STRING` from `.env` and prints a structured table. If the connection string is missing, you'll see: `Error: No Redis connection string found in .env.`
+
+```bash
+./scripts/cli.sh cache-info
+```
+
+Example output:
+
+```
+============================================================================
+Redis Insight Cheat Sheet
+============================================================================
+
+[ CONNECTION SETTINGS ]
+
+  Host:                  daibai-redis.redis.cache.windows.net
+  Port:                  6380
+  Force Standalone:      Enabled (Required for Azure non-clustered)
+  Connection Timeout:    5000 ms (Recommended for Cloud)
+  Logical Database:      0
+  Databases Available:   16
+
+[ SECURITY ]
+
+  Username:              default
+  Password:              <your-access-key>
+  Use TLS:               Yes (Required)
+
+[ VIEWING DATA ]
+
+  Decompression:         None
+  Formatter:             JSON (Recommended for LLM data)
+```
+
+**3. Connect in Redis Insight**
+
+1. Launch the app and click **Add Redis Database**.
+2. Fill the fields using the values from `cache-info`:
+   - **Host:** Paste from terminal.
+   - **Port:** 6380.
+   - **Username:** default.
+   - **Database Alias:** DaiBai-Brain-Cache.
+   - **Password:** Paste the key from the terminal.
+   - **Use TLS:** Check this box (required for Azure).
+   - **Force Standalone:** Enabled (required for Azure non-clustered).
+   - **Connection Timeout:** 5000 ms.
+   - **Logical Database:** 0.
+   - **Formatter:** JSON (recommended for LLM cache data).
+3. Click **Test Connection**. Once it passes, you're in.
+
+**Why this is the least complicated path**
+
+- **No Docker overhead:** No container networking or memory limits to manage.
+- **Persistence:** The desktop app remembers your connection settings across restarts.
+- **Feature rich:** Profiler and Workbench are built in, useful for debugging cache hits and misses.
+
+For CLI-only monitoring (no GUI), use `./scripts/cli.sh cache-stats` or `./scripts/cli.sh cache-monitor`. See `docs/MONITORING.md` for more detail.
+
 ### 7. (Optional) Validate Cosmos DB Access
 
 If you have Cosmos DB configured (role assignment + `COSMOS_ENDPOINT`), run the Golden Ticket check:

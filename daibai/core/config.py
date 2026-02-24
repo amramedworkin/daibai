@@ -326,9 +326,23 @@ _USER_PREFS_FILE = Path.home() / ".daibai" / "preferences.json"
 def get_redis_connection_string() -> Optional[str]:
     """
     Get Azure Redis connection string for semantic caching.
-    Reads from AZURE_REDIS_CONNECTION_STRING or REDIS_URL (env).
-    Returns None if not configured.
+    Loads .env from standard locations, then reads AZURE_REDIS_CONNECTION_STRING
+    or REDIS_URL. Returns None if not configured.
     """
+    # Ensure .env is loaded so AZURE_REDIS_CONNECTION_STRING / REDIS_URL are available
+    env_locations = []
+    try:
+        env_locations.append(Path.cwd() / ".env")
+    except OSError:
+        pass
+    env_locations.extend([
+        Path.home() / ".daibai" / ".env",
+    ])
+    for loc in env_locations:
+        if loc.exists():
+            load_dotenv(loc)
+            break
+
     return (
         os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
         or os.environ.get("REDIS_URL", "").strip()

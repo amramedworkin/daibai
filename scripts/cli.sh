@@ -37,6 +37,65 @@ print_info() {
     echo "[INFO] $1"
 }
 
+# Load .env from project and home (for Redis connection string)
+load_env_for_redis() {
+    [[ -f "$PROJECT_DIR/.env" ]] && set -a && source "$PROJECT_DIR/.env" 2>/dev/null && set +a
+    [[ -f "$HOME/.daibai/.env" ]] && set -a && source "$HOME/.daibai/.env" 2>/dev/null && set +a
+}
+
+# Get Redis connection string: prefer Azure primary key, fallback to .env
+# Uses az redis show + az redis list-keys (Authentication -> Show Access Keys -> Primary Key)
+get_redis_connection() {
+    load_env_for_redis
+    local conn=""
+    local rg="${REDIS_RESOURCE_GROUP:-daibai-rg}"
+    local name="${REDIS_NAME:-daibai-redis}"
+
+    # Try Azure: fetch hostname and primary key (Authentication -> Show Access Keys -> Primary Key)
+    if command -v az &>/dev/null; then
+        local host ssl_port primary_key
+        host=$(az redis show --name "$name" --resource-group "$rg" --query hostName -o tsv 2>/dev/null)
+        ssl_port=$(az redis show --name "$name" --resource-group "$rg" --query sslPort -o tsv 2>/dev/null)
+        primary_key=$(az redis list-keys --name "$name" --resource-group "$rg" --query "primaryKey" -o tsv 2>/dev/null | tr -d '\n\r')
+        if [[ -n "$host" && -n "$primary_key" ]]; then
+            [[ -z "$ssl_port" ]] && ssl_port=6380
+            conn=$(python3 -c "
+import sys
+from urllib.parse import quote
+host, port, key = sys.argv[1], sys.argv[2], sys.argv[3]
+safe_pass = quote(key, safe='') if key else ''
+print(f'rediss://:{safe_pass}@{host}:{port}')
+" "$host" "$ssl_port" "$primary_key" 2>/dev/null)
+        fi
+    fi
+
+    # Fallback to .env
+    [[ -z "${conn// }" ]] && conn="${AZURE_REDIS_CONNECTION_STRING:-${REDIS_URL:-}}"
+    echo "$conn"
+}
+
+check_redis_cli() {
+    if command -v redis-cli &>/dev/null; then
+        return 0
+    fi
+    print_info "redis-cli not found. Installing..."
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release 2>/dev/null
+        if [[ "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
+            sudo apt-get update -qq && sudo apt-get install -y redis-tools
+            return $?
+        fi
+    fi
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        brew install redis
+        return $?
+    fi
+    print_error "Could not install redis-cli. Install manually:"
+    echo "  Ubuntu/Debian: sudo apt-get install -y redis-tools"
+    echo "  macOS: brew install redis"
+    return 1
+}
+
 # ============================================================================
 # HELP
 # ============================================================================
@@ -77,6 +136,10 @@ Commands (mirrors menu.sh):
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
     redis-create             Create Azure Cache for Redis (RG + Basic C0, auto-writes REDIS_URL to .env)
     test-redis               Redis integration test (add/retrieve/delete keys, requires REDIS_URL)
+    cache-stats              Redis info stats and keyspace (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
+    cache-monitor            Redis live monitor (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
+    cache-info               Show parsed Redis connection info for Redis Insight
+    cache-test               Test Redis connection (host, port, username, password from .env)
 
   SUPPORT & UTILITIES (menu 4)
     config-path             Show config file locations (● found ○ not found)
@@ -116,6 +179,10 @@ Examples:
     $(basename "$0") test-cosmos
     $(basename "$0") redis-create
     $(basename "$0") test-redis
+    $(basename "$0") cache-stats
+    $(basename "$0") cache-monitor
+    $(basename "$0") cache-info
+    $(basename "$0") cache-test
     $(basename "$0") test
     $(basename "$0") test -x
     $(basename "$0") test file test_config.py
@@ -377,6 +444,174 @@ cmd_test_redis() {
     run_pytest tests/test_redis.py -v -s
 }
 
+cmd_cache_stats() {
+    local conn
+    conn=$(get_redis_connection)
+    if [[ -z "${conn// }" ]]; then
+        print_error "No Redis connection. Run: az login, then ./scripts/cli.sh redis-create"
+        echo "  Or set REDIS_URL or AZURE_REDIS_CONNECTION_STRING in .env"
+        exit 1
+    fi
+    check_redis_cli || exit 1
+    print_header "Redis Stats"
+    local tls=""
+    [[ "$conn" == rediss://* ]] && tls="--tls"
+    redis-cli -u "$conn" $tls info stats
+    echo ""
+    redis-cli -u "$conn" $tls info keyspace
+}
+
+cmd_cache_monitor() {
+    local conn
+    conn=$(get_redis_connection)
+    if [[ -z "${conn// }" ]]; then
+        print_error "No Redis connection. Run: az login, then ./scripts/cli.sh redis-create"
+        echo "  Or set REDIS_URL or AZURE_REDIS_CONNECTION_STRING in .env"
+        exit 1
+    fi
+    check_redis_cli || exit 1
+    print_header "Redis Live Monitor (Ctrl+C to stop)"
+    local tls=""
+    [[ "$conn" == rediss://* ]] && tls="--tls"
+    redis-cli -u "$conn" $tls monitor
+}
+
+cmd_cache_info() {
+    local conn
+    conn=$(get_redis_connection)
+
+    if [[ -z "${conn// }" ]]; then
+        echo "Error: No Redis connection string found." >&2
+        echo "  Run: az login, then ./scripts/cli.sh redis-create" >&2
+        echo "  Or set REDIS_URL or AZURE_REDIS_CONNECTION_STRING in .env" >&2
+        exit 1
+    fi
+
+    # Extract Hostname and Password (primary key) from connection string
+    local host pass
+    if [[ "$conn" == *password=* ]]; then
+        host="${conn%%,*}"
+        host="${host%%:*}"
+        pass="${conn#*password=}"
+        pass="${pass%%,*}"
+        pass="${pass%%,ssl=*}"
+    elif [[ "$conn" == *"://"* && "$conn" == *@* ]]; then
+        local rest="${conn#*://}"
+        pass="${rest%%@*}"
+        pass="${pass#:}"
+        local hostport="${rest#*@}"
+        host="${hostport%:*}"
+    else
+        print_error "Could not parse connection string."
+        echo "  Expected: rediss://:password@host:port  OR  host:port,password=xxx,ssl=True"
+        exit 1
+    fi
+
+    # Decode URL-encoded password for display (e.g. %3D -> =) so it's copy-pasteable into Redis Insight
+    pass=$(python3 -c "import sys; from urllib.parse import unquote; print(unquote(sys.argv[1]))" "$pass" 2>/dev/null || echo "$pass")
+
+    echo ""
+    echo "========== REDIS INSIGHT SETUP CHEAT SHEET =========="
+    echo ""
+    echo "[ GENERAL ]"
+    echo ""
+    echo "  Database Alias:              DaiBai-Brain"
+    echo "  Host:                       $host"
+    echo "  Port:                       6380"
+    echo "  Username:                   default"
+    echo "  Password:                   $pass"
+    echo "  Timeout (s):                5"
+    echo "  Select Logical Database:    0 (checked)"
+    echo "  Force Standalone Connection: Enabled (checked)"
+    echo ""
+    echo "----------------------------------------"
+    echo ""
+    echo "[ SECURITY ]"
+    echo ""
+    echo "  Use TLS:                            Enabled (checked)"
+    echo "  Use SNI:                            Disabled (unchecked)"
+    echo "  Verify TLS Certificate:            Disabled (unchecked)"
+    echo "  CA Certificate:                    No CA Certificate"
+    echo "    Options: No CA Certificate | Add CA Certificate"
+    echo "  Require TLS Client Authentication: Disabled (unchecked)"
+    echo "  Use SSH Tunnel:                    Disabled (unchecked)"
+    echo ""
+    echo "----------------------------------------"
+    echo ""
+    echo "[ DECOMPRESSION & FORMATTERS ]"
+    echo ""
+    echo "  Enable Automatic Data Decompression: Disabled (unchecked)"
+    echo "  Decompression format:                No decompression"
+    echo "    Options: No decompression | GZIP | LZ4 | SNAPPY | ZSTD | Brotli | PHP GZCompress"
+    echo "  Key name format:                     Unicode (recommended) | HEX"
+    echo ""
+    echo "Run './scripts/cli.sh cache-test' to verify connectivity before opening the Desktop App."
+    echo ""
+}
+
+cmd_cache_test() {
+    local conn
+    conn=$(get_redis_connection)
+
+    if [[ -z "${conn// }" ]]; then
+        echo "Error: No Redis connection string found." >&2
+        echo "  Run: az login, then ./scripts/cli.sh redis-create" >&2
+        echo "  Or set REDIS_URL or AZURE_REDIS_CONNECTION_STRING in .env" >&2
+        exit 1
+    fi
+
+    # Extract host, port, password (same logic as cache-info)
+    local host pass port=6380
+    if [[ "$conn" == *password=* ]]; then
+        host="${conn%%,*}"
+        host="${host%%:*}"
+        pass="${conn#*password=}"
+        pass="${pass%%,*}"
+        pass="${pass%%,ssl=*}"
+    elif [[ "$conn" == *"://"* && "$conn" == *@* ]]; then
+        local rest="${conn#*://}"
+        pass="${rest%%@*}"
+        pass="${pass#:}"
+        local hostport="${rest#*@}"
+        host="${hostport%:*}"
+        [[ "$hostport" == *:* ]] && port="${hostport##*:}"
+    else
+        print_error "Could not parse connection string."
+        exit 1
+    fi
+
+    check_redis_cli || exit 1
+
+    print_header "Redis Connection Test"
+    echo ""
+    echo "  Host:     $host"
+    echo "  Port:     $port"
+    echo "  Username: default"
+    echo ""
+    echo -n "  Testing connection... "
+
+    local tls=""
+    [[ "$conn" == rediss://* || "$port" == "6380" ]] && tls="--tls"
+    local result
+    result=$(redis-cli -u "$conn" $tls PING 2>&1)
+
+    if [[ "$result" == "PONG" ]]; then
+        echo -e "${GREEN}OK${NC}"
+        echo ""
+        print_success "Redis is reachable. Connection verified."
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo ""
+        print_error "Could not connect to Redis."
+        echo "  Response: ${result:- (no response)}"
+        echo ""
+        echo "  Check: Host, Port, Password in .env"
+        echo "  Run: ./scripts/cli.sh cache-info"
+        exit 1
+    fi
+    echo ""
+}
+
 cmd_cosmos_role() {
     local principal_id=""
     while [[ -n "$1" ]]; do
@@ -556,6 +791,18 @@ main() {
             ;;
         test-redis)
             cmd_test_redis
+            ;;
+        cache-stats)
+            cmd_cache_stats
+            ;;
+        cache-monitor)
+            cmd_cache_monitor
+            ;;
+        cache-info)
+            cmd_cache_info
+            ;;
+        cache-test)
+            cmd_cache_test
             ;;
         config-path)
             cmd_config_path

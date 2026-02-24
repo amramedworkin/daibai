@@ -91,6 +91,10 @@ show_main_menu() {
         "config, docs, environment"
     print_submenu_option "5" "Tests" \
         "pytest, run, list, coverage"
+    print_submenu_option "6" "Redis Management" \
+        "monitor, stats, Redis Insight setup"
+    print_submenu_option "7" "Monitoring" \
+        "Redis connection info for Redis Insight"
     echo ""
     print_action_option "q" "Quick Commit & Push ${YELLOW}${DIM}(gitqik.sh)${NC}"
     print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle, opens browser on start)${NC}"
@@ -630,6 +634,116 @@ handle_test_menu() {
 }
 
 # =============================================================================
+# REDIS MANAGEMENT SUBMENU (6)
+# =============================================================================
+
+show_redis_menu() {
+    show_header "Redis Management"
+    echo -e "  ${DIM}Monitor, stats, and Redis Insight setup for Azure Cache for Redis${NC}"
+    echo ""
+    print_action_option "1" "Live Monitor ${YELLOW}${DIM}(redis-cli monitor)${NC}"
+    print_action_option "2" "Stats Overview ${YELLOW}${DIM}(info stats, info keyspace)${NC}"
+    print_action_option "3" "Setup Visual Tools ${YELLOW}${DIM}(Redis Insight how-to)${NC}"
+    print_action_option "4" "Test Connection ${YELLOW}${DIM}(verify host, port, credentials)${NC}"
+    echo ""
+    print_action_option "0" "Back to Main Menu"
+    echo ""
+    echo -n "  Select > "
+}
+
+handle_redis_menu() {
+    while true; do
+        show_redis_menu
+        read_menu_choice
+        case $choice in
+            1)
+                clear
+                "$SCRIPT_DIR/cli.sh" cache-monitor
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            2)
+                clear
+                "$SCRIPT_DIR/cli.sh" cache-stats
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            3)
+                clear
+                echo -e "${CYAN}Redis Insight - How to connect to Azure Cache for Redis${NC}"
+                echo ""
+                if [[ -f "$PROJECT_DIR/docs/MONITORING.md" ]]; then
+                    "${PAGER:-less}" "$PROJECT_DIR/docs/MONITORING.md"
+                else
+                    echo -e "${YELLOW}docs/MONITORING.md not found.${NC}"
+                    echo ""
+                    echo "Quick setup:"
+                    echo "  1. Download Redis Insight from https://redis.io/insight/"
+                    echo "  2. Add database: use AZURE_REDIS_CONNECTION_STRING or REDIS_URL from .env"
+                    echo "  3. Enable 'Use TLS' (required for Azure)"
+                    echo "  4. Port is typically 6380 for Azure Cache for Redis"
+                    echo ""
+                fi
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            4)
+                clear
+                "$SCRIPT_DIR/cli.sh" cache-test
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+# =============================================================================
+# MONITORING SUBMENU (7)
+# =============================================================================
+
+show_monitoring_menu() {
+    show_header "Monitoring"
+    echo -e "  ${DIM}Redis Insight and connection info${NC}"
+    echo ""
+    print_action_option "1" "Show Redis Connection Info ${YELLOW}${DIM}(cache-info cheat sheet)${NC}"
+    print_action_option "2" "Test Redis Connection ${YELLOW}${DIM}(verify host, port, credentials)${NC}"
+    echo ""
+    print_action_option "0" "Back to Main Menu"
+    echo ""
+    echo -n "  Select > "
+}
+
+handle_monitoring_menu() {
+    while true; do
+        show_monitoring_menu
+        read_menu_choice
+        case $choice in
+            1)
+                clear
+                "$SCRIPT_DIR/cli.sh" cache-info
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            2)
+                clear
+                "$SCRIPT_DIR/cli.sh" cache-test
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+# =============================================================================
 # MAIN LOOP
 # =============================================================================
 
@@ -642,6 +756,8 @@ while true; do
         3) handle_command_line_menu ;;
         4) handle_support_menu ;;
         5) handle_test_menu ;;
+        6) handle_redis_menu ;;
+        7) handle_monitoring_menu ;;
         q|Q) handle_quick_commit ;;
         s|S) handle_start_stop_chat_service ;;
         0)
