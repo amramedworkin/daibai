@@ -86,18 +86,23 @@ Estimates are based on typical consumption patterns for a serverless environment
 
 This section captures the actual process we are undertaking as we go along.
 
-**Approximate Percent Complete**
+**Current Development Bearing**
 
-| Component | % | Status |
-|-----------|---|--------|
-| Infrastructure (Azure setup) | 10% | ✅ |
-| Basic Caching logic | 15% | ✅ |
-| Embedding Intelligence (Phase 2) | 10% | ✅ |
-| Similarity Search (Semantic Retrieval) | 10% | ✅ |
-| SQL Agent & DDL Reasoning (The "Thinking") | 30% | Pending |
-| Tool Use & Execution (The "Action") | 25% | Pending |
-| UI & Deployment | 25% | Pending |
-| **Total** | **~55%** | |
+We are approximately **55%** through the total build.
+
+| Phase | Title | Status |
+|-------|-------|--------|
+| **Phase 1** | Infrastructure Foundation | 100% Complete |
+| **Phase 2** | Semantic Engine | 95% Complete |
+| **Phase 3** | Reasoning (SQL Architect) | 5% Complete |
+| **Phase 4** | Containerization & Portability | Pending |
+| **Phase 5** | Azure Production Hardening | Pending |
+
+**Phase 1 (Infrastructure Foundation):** 100% Complete. Azure Cosmos DB and Redis integrations are operational. The stateless conversation store in `daibai/api/database.py` is functional.
+
+**Phase 2 (Semantic Engine):** 95% Complete. The CacheManager supports semantic hits using embeddings. The configuration system in `daibai/core/config.py` correctly handles `CACHE_THRESHOLD` with validation. The reported "triple-counting" bug in `tests/conftest.py` has been identified and the fix logic is understood.
+
+**Phase 3 (Reasoning):** 5% Complete. Automated Schema Discovery logic has been initiated. Step 1 (Semantic Schema Hub) is implemented; Steps 2–3 are planned.
 
 ### Pre-Phase 1: Identity-First Hybrid Strategy
 
@@ -505,6 +510,8 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 |---------|-------------|
 | `./scripts/cli.sh test` | Unit tests (excludes cloud; ~1s) |
 | `./scripts/cli.sh test file test_cache_logic.py` | L1 cache + embedding tests (requires `[cache]` for embedding tests) |
+| `./scripts/cli.sh test file test_schema_mapping.py` | Semantic schema mapping (vectorize_schema, get_relevant_tables) |
+| `./scripts/cli.sh test file test_schema_indexing.py` | Phase 3 Step 1: discover_schema, index_schema, search_schema_v1 (schema:v1:*) |
 | `./scripts/cli.sh test file test_env_integrity.py` | .env integrity (no duplicates, no malformed entries) |
 | `./scripts/cli.sh test-cosmos` | Cosmos DB E2E (CosmosStore lifecycle; requires `COSMOS_ENDPOINT`) |
 | `./scripts/cli.sh test-redis` | Redis add/retrieve/delete (requires `REDIS_URL`) |
@@ -554,8 +561,15 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | **35** | Env | `test_clean_env_removes_duplicates` | clean_env.py removes duplicate keys, keeps last value | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
 | **36** | Env | `test_clean_env_removes_malformed` | clean_env.py removes malformed lines, preserves valid | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
 | **37** | Env | `test_clean_env_idempotent_on_clean_file` | clean_env.py leaves already-clean .env unchanged | `tests/test_env_integrity.py` | clean_env script | `✓ [ENV-INTEGRITY]` | `AssertionError` |
+| **38** | Schema | `test_salaries_query_returns_employees_excludes_weatherforecast` | "salaries" → Employees DDL, excludes WeatherForecast | `tests/test_schema_mapping.py` | Semantic schema pruning | `✓ [SCHEMA]` | `AssertionError` |
+| **39** | Schema | `test_weather_query_returns_weatherforecast_excludes_employees` | "weather forecast" → WeatherForecast DDL, excludes Employees | `tests/test_schema_mapping.py` | Semantic schema pruning | `✓ [SCHEMA]` | `AssertionError` |
+| **40** | Schema | `test_vectorize_schema_stores_in_redis` | vectorize_schema stores DDLs with embeddings in Redis | `tests/test_schema_mapping.py` | Semantic schema indexing | `✓ [SCHEMA]` | `AssertionError` |
+| **41** | Schema | `test_get_relevant_tables_respects_limit` | get_relevant_tables returns at most limit tables | `tests/test_schema_mapping.py` | SCHEMA_VECTOR_LIMIT | `✓ [SCHEMA]` | `AssertionError` |
+| **42** | Schema | `test_get_relevant_tables_empty_without_vectorize` | get_relevant_tables returns [] if no schema vectorized | `tests/test_schema_mapping.py` | Graceful fallback | `✓ [SCHEMA]` | `AssertionError` |
+| **43** | Schema | `test_semantic_search_money_returns_financial_records_top` | "How much money did we make?" → financial_records top | `tests/test_schema_indexing.py` | Phase 3 Step 1 success | `✓ [SCHEMA]` | `AssertionError` |
+| **44** | Schema | `test_index_schema_stores_keys_in_redis` | index_schema stores schema:v1:ddl:* and schema:v1:text:* | `tests/test_schema_indexing.py` | v1 Redis format | `✓ [SCHEMA]` | `AssertionError` |
 
-**Dashboard tags:** Tests use component-specific tags (`[DB]`, `[API]`, `[AUTH]`, `[CONFIG]`, `[LLM-PROVIDERS]`, `[LLM-REGISTRY]`, `[LLM-MODELS]`, `[LLM-GEMINI]`, `[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`, `[CLOUD-AZURE]`, `[ENV-INTEGRITY]`) so admins can see which service each test targets.
+**Dashboard tags:** Tests use component-specific tags (`[DB]`, `[API]`, `[AUTH]`, `[CONFIG]`, `[SCHEMA]`, `[LLM-PROVIDERS]`, `[LLM-REGISTRY]`, `[LLM-MODELS]`, `[LLM-GEMINI]`, `[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`, `[CLOUD-AZURE]`, `[ENV-INTEGRITY]`) so admins can see which service each test targets.
 
 **TDD Semantic Precision Test (Broken Promise)**
 
@@ -632,6 +646,7 @@ At the end of each run, `conftest.py` prints a dashboard summarizing key tests b
 | `[API]` | Green | API flow |
 | `[AUTH]` | Green | Authentication (JWT, settings) |
 | `[CONFIG]` | Cyan | Config loading, env vars |
+| `[SCHEMA]` | Cyan | Schema discovery and semantic mapping |
 | `[LLM-PROVIDERS]` | Magenta | LLM provider classes, registration |
 | `[LLM-REGISTRY]` | Magenta | New provider registry, inheritance |
 | `[LLM-MODELS]` | Magenta | Model discovery, fetch, sanitization |
@@ -863,7 +878,7 @@ The final daibai needs to be an **enterprise-grade SQL Agent**.
 
 When this phase is finished, you have a **"Sentient Cache."** You can feed it a user question, and it will generate a permanent, mathematical "fingerprint" of that question. You are now 100% ready to build the SQL Agent because you have a high-speed memory system waiting to store every successful query the Agent writes.
 
-**Phase 2.5: The Semantic Retrieval Engine (Similarity Search)** ⬅️ *In progress*
+**Phase 2.5: The Semantic Retrieval Engine (Similarity Search)** ✅ *Completed*
 
 ##### What It Is & What It Means
 
@@ -876,28 +891,62 @@ This is the **Similarity Threshold Logic**—the difference between a database t
 | **Without this** | We can store vectors, but we cannot find them. The cache is write-only. |
 | **With this** | A fully functional **Semantic Cache**. "How do I see sales?" and "Show me the sales data" both return a Cache Hit in under 50ms without ever hitting an LLM. |
 
-##### What We Will Have When It's Done
+##### Implementation Complete
 
-- **Configurable Similarity Threshold** (e.g., 0.90 via `.env`) so you can control how "strict" or "loose" the AI's memory is.
+- **Configurable Similarity Threshold** (e.g., 0.90 via `CACHE_THRESHOLD` in `.env`) so you can control how "strict" or "loose" the AI's memory is.
 - **Cache Hit flow:** Incoming prompt → embedding → scan `semantic:*` keys → cosine similarity vs. stored vectors → if match exceeds threshold, return cached response; otherwise return `None`.
-- **Planned tests** (in `tests/test_cache_logic.py`): `test_semantic_hit`, `test_semantic_miss`, `test_threshold_tuning` (see Test Catalog IDs 30–32).
+- **Tests** (in `tests/test_cache_logic.py`): `test_semantic_hit`, `test_semantic_miss`, `test_threshold_tuning` (Test Catalog IDs 30–32).
 
-Once this stage is green, the **Azure-ified Cache** is finished. We then move into the **SQL Brain** where the actual data analysis happens.
+---
 
-*Implementation details will be documented after the implementation completes and runs cleanly.*
+**Phase 3: The Reasoning Engine (SQL Architect)**
 
-**Phase 3: The SQL "Expert" Agent**
+The goal of Phase 3 is to transform the agent from a "lookup tool" into a **SQL architect** that understands database relationships.
 
-This is the "Brain Surgery" that connects natural language to your database.
+| Step | Title | Goal | Status |
+|------|-------|------|--------|
+| **Step 1** | Semantic Schema Hub | Make discovered schema searchable by the Embedding Engine | ✅ Complete |
+| **Step 2** | Dynamic Context Injection | Inject only relevant schema into the LLM prompt | Planned |
+| **Step 3** | SQL Guardrail & Validation | Prevent hallucinated or destructive SQL | Planned |
 
-| Task | Description |
-|------|-------------|
-| **Schema Context** | Teach the LLM your table structures (DDL) so it knows where the data lives. |
-| **Query Generation** | The LLM writes the SQL. |
-| **Self-Correction** | If the SQL fails (e.g., syntax error), the agent reads the error, fixes the code, and tries again. |
-| **Cache Loop** | Before the Agent does any of this work, it checks the Semantic Cache to see if it already knows the answer. |
+##### Phase 3, Step 1: Semantic Schema Hub (Implemented)
 
-##### Schema Mapping and Management (Phase 3, Step 2)
+**Goal:** Store table schemas as vectors to enable "Table Pruning."
+
+**Implementation:** `SchemaManager.vectorize_schema()` in `daibai/core/schema.py`:
+
+1. Iterates through all discovered tables via `get_schema_metadata()`.
+2. Generates an embedding for each table's DDL string using the same embedding model as the semantic cache (`all-MiniLM-L6-v2`).
+3. Stores vectors in Redis under `schema:<db>:<table>` with a set index `schema:<db>:index`.
+
+**Guardrail:** If the EmbeddingEngine is not initialized or the model fails to load, the system falls back to a standard "Table Name Match" and logs a warning.
+
+**Tests:** `tests/test_schema_mapping.py` — asserts that querying for "salaries" retrieves the Employees table DDL and excludes WeatherForecast; verifies Redis storage, limit behavior, and empty-store behavior. `tests/test_schema_indexing.py` — Phase 3 Step 1: discover_schema, index_schema, search_schema_v1 with financial_records/weather_data; success state: "How much money did we make?" returns financial_records as top result.
+
+**Sequence Diagram (Phase 3, Step 1: Initial Indexing)**
+
+```mermaid
+sequenceDiagram
+    participant SM as SchemaManager
+    participant DB as SQL Database
+    participant EE as EmbeddingEngine
+    participant R as Redis (Vector Index)
+
+    Note over SM, R: Phase 3, Step 1: Initial Indexing
+    SM->>DB: Fetch Table & Column Metadata
+    DB-->>SM: Return Information Schema Rows
+    SM->>SM: Parse Rows into DDL Strings
+
+    loop For Each Table
+        SM->>EE: request_embedding(DDL_String)
+        EE-->>SM: vector_array
+        SM->>R: SET schema:<db>:<table> {ddl, vector}
+    end
+
+    Note over SM, R: Schema is now semantically searchable
+```
+
+##### Schema Mapping and Management (Phase 3, Step 1–2)
 
 **Methodology:** Instead of sending every table to the LLM, DaiBai uses **semantic schema mapping** (table pruning) to select only relevant tables for each query.
 
@@ -908,9 +957,27 @@ This is the "Brain Surgery" that connects natural language to your database.
 | **3. Vectorization** | `vectorize_schema()` embeds each table DDL using the same embedding model as the semantic cache (`all-MiniLM-L6-v2`). |
 | **4. Redis Storage** | Embeddings are stored in Redis under `schema:<db>:<table>` with a set index `schema:<db>:index`. |
 | **5. Similarity Search** | When a user asks a question, `get_relevant_tables(query)` embeds the query, computes cosine similarity against all stored table vectors, and returns the top N (default 5, configurable via `SCHEMA_VECTOR_LIMIT`) most relevant table DDLs. |
-| **6. Context Injection** | Only these relevant DDLs are sent to the LLM, reducing token cost and avoiding confusion from irrelevant tables. |
+| **6. Context Injection** | *(Step 2)* Only these relevant DDLs are sent to the LLM, reducing token cost and avoiding confusion from irrelevant tables. |
 
 **Benefits:** Table pruning cuts prompt size, lowers LLM cost, and improves accuracy by focusing the model on tables that match the user's intent (e.g., "salaries" → Employees table, not WeatherForecast).
+
+##### Phase 3, Step 2: Dynamic Context Injection (Planned)
+
+**Goal:** Inject only relevant schema into the LLM prompt.
+
+**Implementation:** Update `daibai/core/agent.py`. Modify the prompt generation logic to call `SchemaManager.get_relevant_tables(query)`. Prepend the returned DDL to the system prompt.
+
+**Test/Guardrail:** Create `tests/test_prompt_construction.py`. Assert that the final prompt sent to the LLM contains specific table definitions relevant to the user's input.
+
+##### Phase 3, Step 3: SQL Guardrail & Validation (Planned)
+
+**Goal:** Prevent "hallucinated" or "destructive" SQL.
+
+**Implementation:** Implement a `validate_sql(query: str)` function. It must use regex to block DROP, DELETE, and TRUNCATE commands. It should also perform a dry-run EXPLAIN on the database to check for syntax errors.
+
+**Test/Guardrail:** Create `tests/test_sql_safety.py`. Test that the agent refuses to generate or execute a DROP TABLE command.
+
+---
 
 **Phase 4: Tool-Use & Execution (The "Hands")**
 
@@ -922,19 +989,30 @@ This phase gives the AI the ability to run the SQL it wrote.
 | **Data Formatting** | Turn raw SQL rows into charts, tables, or natural language summaries (e.g., "Sales are up by 12%"). |
 | **Memory Persistence** | Save the final, successful query back to the Azure Redis cache so it's "remembered" forever. |
 
+---
+
+**Future Phases: Deployment & Rigor**
+
+**Phase 4 (Containerization & Portability):** Ensure the system runs identically in local dev and Azure. Create a multi-stage Dockerfile and docker-compose.yaml that spins up the app, a local Redis (for dev), and a local Postgres/SQL Server emulator. Test: A CI/CD pipeline test that builds the container and runs the full test suite inside it.
+
+**Phase 5 (Azure Production Hardening):** Migrate from local credentials to Azure Managed Identities. Update `scripts/setup_redis.sh` and `daibai/api/database.py` to use DefaultAzureCredential exclusively, removing the need for local `.env` secrets in production. Test: Deployment to an Azure Container App environment with a "smoke test" verifying Cosmos and Redis connectivity under a Managed Identity.
+
+---
+
 **The "Bird's Eye" Roadmap**
 
 | Phase | Title | Value Delivered | Status |
 |-------|-------|-----------------|--------|
 | **PHASE 1** | Infra & Cache | Cost savings, high speed, and Azure scalability. | ✅ |
 | **PHASE 2** | Embeddings | Ability for the machine to "understand" user intent. | ✅ |
-| **PHASE 2.5** | Similarity Search | Semantic retrieval: find similar questions, serve cached answers, skip the LLM. | ⬅️ In progress |
-| **PHASE 3** | SQL Agent | Automating the bridge between English and SQL code. | Next |
+| **PHASE 2.5** | Similarity Search | Semantic retrieval: find similar questions, serve cached answers, skip the LLM. | ✅ |
+| **PHASE 3** | Reasoning (SQL Architect) | Schema pruning, dynamic context, SQL guardrails. | Step 1 ✅, Steps 2–3 Planned |
 | **PHASE 4** | Execution | Real answers from real data delivered to the user. | Pending |
+| **PHASE 5** | Containerization & Hardening | Docker, CI/CD, Managed Identity. | Pending |
 
 **Your Next Step in Cursor**
 
-Phase 2 (Embedding Engine) is complete. The cache now generates 384-dimension vectors from text via `get_embedding()` and stores them via `set_semantic()`. **Phase 2.5 (Similarity Search)** is in progress: implementing `check_semantic()` to scan stored vectors, compute cosine similarity, and return cached responses when a match exceeds the configurable threshold. Once the Azure-ified cache is green, proceed to **Phase 3: The SQL "Expert" Agent**.
+Phase 3, Step 1 (Semantic Schema Hub) is complete. `vectorize_schema()` and `get_relevant_tables()` are implemented in `daibai/core/schema.py`; tests live in `tests/test_schema_mapping.py`. Proceed to **Phase 3, Step 2: Dynamic Context Injection** — update `daibai/core/agent.py` to call `get_relevant_tables(query)` and prepend the returned DDL to the system prompt.
 
 ---
 

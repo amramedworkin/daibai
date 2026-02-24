@@ -165,6 +165,7 @@ Commands (mirrors menu.sh):
     test list              List test files
     test collect           List all test names (--collect-only)
     test coverage          Run with coverage report
+    test full              Run full suite including cloud (REDIS_URL, COSMOS_ENDPOINT for live tests)
 
   META
     status                  Alias for chat-status
@@ -769,6 +770,9 @@ cmd_test() {
             ;;
         coverage)
             run_pytest tests/ -v --cov=daibai --cov-report=term-missing 2>/dev/null || run_pytest tests/ -v
+            ;;
+        full)
+            run_pytest tests/ -v -s "$@"
             ;;
         *)
             # Pass-through: test -x, test -k foo, test tests/file.py

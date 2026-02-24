@@ -2,7 +2,10 @@
 Tests for SemanticCache and CachedLLMProvider.
 
 Uses mocks for Redis and embeddings so tests run without API keys or live Redis.
+Live test (test_semantic_cache_live) uses real Redis + real embeddings when REDIS_URL is set.
 """
+
+import os
 
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -176,3 +179,42 @@ def test_integration_with_azure_provider(mock_redis, mock_embedding):
                 r2 = cached_provider.generate("What is Azure?")
                 assert r2.text == "Azure says hi"
                 assert mock_gen.call_count == 1  # Still 1, not 2
+
+
+# --- Live test (real Redis + real embeddings) ---
+
+
+def _get_redis_url():
+    return (
+        os.environ.get("REDIS_URL", "").strip()
+        or os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
+    )
+
+
+@pytest.mark.cloud
+@pytest.mark.skipif(
+    not _get_redis_url(),
+    reason="REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live test requires Redis",
+)
+def test_semantic_cache_live():
+    """
+    SemanticCache against real Redis with real embeddings (sentence-transformers).
+    Store "What is Azure?" then retrieve with similar "Tell me about Azure".
+    """
+    pytest.importorskip("sentence_transformers")
+
+    from daibai.core.config import get_redis_connection_string
+    from daibai.llm.base import SemanticCache
+
+    conn = get_redis_connection_string()
+    if not conn:
+        pytest.skip("No Redis connection string")
+
+    cache = SemanticCache(connection_string=conn, similarity_threshold=0.85)
+    try:
+        ok = cache.set_cached_response("What is Azure?", "Azure is a cloud platform.")
+        assert ok is True
+        result = cache.get_cached_response("Tell me about Azure")
+        assert result == "Azure is a cloud platform."
+    finally:
+        cache.close()

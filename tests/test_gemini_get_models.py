@@ -53,7 +53,7 @@ async def test_gemini_get_models_mocked():
     assert "error" not in result
     # JSON serializable (no encoding errors)
     json.dumps(result)
-    print("\nModels (mocked):", ", ".join(result["models"]))
+    print("\nModels returned:", len(result["models"]))
 
 
 @pytest.mark.asyncio
@@ -61,7 +61,7 @@ async def test_gemini_get_models_mocked():
     not _get_gemini_api_key(),
     reason="No Gemini API key in daibai.yaml, .env, or GEMINI_API_KEY env",
 )
-async def test_gemini_get_models_live():
+async def test_gemini_get_models_live(request):
     """Gemini get models against real API (uses key from config or env)."""
     api_key = _get_gemini_api_key()
     result = await fetch_provider_models("gemini", api_key=api_key)
@@ -74,5 +74,10 @@ async def test_gemini_get_models_live():
         assert m.isascii(), f"Model name has non-ASCII: {m!r}"
     json.dumps(result)
     print("\nModels returned:", len(result["models"]))
-    for m in result["models"]:
-        print("  -", m)
+    # In quiet mode, suppress per-model list; always show total
+    quiet = request.config.getoption("--quiet-mode", default=False) and not request.config.getoption(
+        "--no-quiet-mode", default=False
+    )
+    if not quiet:
+        for m in result["models"]:
+            print("  -", m)

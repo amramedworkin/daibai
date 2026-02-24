@@ -42,7 +42,8 @@ class CacheConfig(BaseModel):
 def get_schema_vector_limit() -> int:
     """
     Get max number of tables to send to LLM (semantic schema pruning).
-    Reads SCHEMA_VECTOR_LIMIT from .env. Default 5.
+    Reads SCHEMA_VECTOR_LIMIT from .env. Default 5. Clamped 1–20.
+    Higher limit increases accuracy but also increases token cost.
     """
     import os
     from pathlib import Path
@@ -63,6 +64,33 @@ def get_schema_vector_limit() -> int:
         return max(1, min(20, val))
     except ValueError:
         return 5
+
+
+def get_schema_refresh_interval() -> int:
+    """
+    Get how often (in seconds) the agent re-scans the physical database structure.
+    Reads SCHEMA_REFRESH_INTERVAL from .env. Default 86400 (24 hours).
+    Prevents re-indexing if the interval has not yet passed.
+    """
+    import os
+    from pathlib import Path
+    from dotenv import load_dotenv
+    env_locations = []
+    try:
+        env_locations.append(Path.cwd() / ".env")
+    except OSError:
+        pass
+    env_locations.extend([Path.home() / ".daibai" / ".env"])
+    for loc in env_locations:
+        if loc.exists():
+            load_dotenv(loc)
+            break
+    raw = os.environ.get("SCHEMA_REFRESH_INTERVAL", "86400").strip()
+    try:
+        val = int(raw)
+        return max(60, val)  # Minimum 1 minute
+    except ValueError:
+        return 86400
 
 
 # Key Vault secret name -> provider_type for LLM API keys

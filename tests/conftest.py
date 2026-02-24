@@ -3,6 +3,7 @@ Pytest configuration: colorized test descriptions and dashboard summary.
 
 Run with: pytest tests/ -v -s
 Colors: [DB]=cyan, [API]=green, [CLOUD-<component>]=yellow (e.g. CLOUD-REDIS, CLOUD-COSMOS, CLOUD-LIFESPAN)
+Mock vs physical: [CAT] = mock (fakeredis, mocked embeddings, etc.); [CAT☁] = physical (real Redis, Cosmos, embeddings).
 """
 
 import sys
@@ -33,10 +34,14 @@ _SKIP = "\033[93m⊘\033[0m"
 
 # Map module to category and docstrings (populated during run)
 _test_docs = {}
+# Nodeids of tests that hit real cloud services (from @pytest.mark.cloud)
+_physical_test_nodeids = set()
 # Ordered list of test outcomes for heatmap (populated during run)
 _test_results_ordered = []
 # Session stats: only count 'call' phase to avoid triple-counting (setup/call/teardown)
 _session_stats = {"passed": 0, "failed": 0, "skipped": 0}
+# Mock vs physical: passed/failed/skipped per category
+_mock_physical_stats = {"mock": {"passed": 0, "failed": 0, "skipped": 0}, "physical": {"passed": 0, "failed": 0, "skipped": 0}}
 
 
 def pytest_addoption(parser):
@@ -63,7 +68,7 @@ def _get_category(nodeid):
         return "AUTH", _GREEN
     if "test_config" in nodeid:
         return "CONFIG", _CYAN
-    if "test_schema_discovery" in nodeid or "test_schema_mapping" in nodeid:
+    if "test_schema_discovery" in nodeid or "test_schema_mapping" in nodeid or "test_schema_indexing" in nodeid:
         return "SCHEMA", _CYAN
     if "test_env_integrity" in nodeid:
         return "ENV-INTEGRITY", _CYAN
@@ -92,43 +97,81 @@ def _get_category(nodeid):
     return None, None
 
 
+def _is_physical_test(nodeid):
+    """True if test hits real Redis, Cosmos, embeddings, etc. (not mocked)."""
+    if nodeid in _physical_test_nodeids:
+        return True
+    if "_live" in nodeid:
+        return True
+    cloud_only_modules = (
+        "test_redis",
+        "test_cosmos_store",
+        "test_cosmos_cloud",
+        "test_cosmos_integration",
+        "test_server_lifespan",
+    )
+    if any(m in nodeid for m in cloud_only_modules):
+        return True
+    return False
+
+
+def _format_category(cat, nodeid):
+    """Return category string with mock/physical indicator: [CAT] or [CAT☁]."""
+    if not cat:
+        return cat
+    return f"{cat}☁" if _is_physical_test(nodeid) else cat
+
+
 def pytest_sessionstart(session):
     """Clear ordered results and session stats at session start."""
-    global _test_results_ordered, _session_stats
+    global _test_results_ordered, _session_stats, _physical_test_nodeids, _mock_physical_stats
     _test_results_ordered = []
     _session_stats = {"passed": 0, "failed": 0, "skipped": 0}
+    _physical_test_nodeids = set()
+    _mock_physical_stats = {"mock": {"passed": 0, "failed": 0, "skipped": 0}, "physical": {"passed": 0, "failed": 0, "skipped": 0}}
 
 
 def pytest_runtest_logreport(report):
     """Collect test outcomes. ONLY count 'call' phase to avoid triple-counting setup/teardown.
     Exception: count skipped in 'setup' too (tests skipped before call never reach call).
     XFAIL (expected failure): count as passed so dashboard shows success."""
+    outcome = None
     if report.when == "call":
         wasxfail = getattr(report, "wasxfail", None)
         if report.passed:
+            outcome = "passed"
             _session_stats["passed"] += 1
             _test_results_ordered.append("passed")
         elif report.failed and wasxfail:
-            # Expected failure (xfail): treat as success
+            outcome = "passed"
             _session_stats["passed"] += 1
             _test_results_ordered.append("passed")
         elif report.failed:
+            outcome = "failed"
             _session_stats["failed"] += 1
             _test_results_ordered.append("failed")
         elif report.skipped and wasxfail:
-            # XFAIL can appear as skipped in some pytest versions; treat as success
+            outcome = "passed"
             _session_stats["passed"] += 1
             _test_results_ordered.append("passed")
         elif report.skipped:
+            outcome = "skipped"
             _session_stats["skipped"] += 1
             _test_results_ordered.append("skipped")
     elif report.when == "setup" and report.skipped:
+        outcome = "skipped"
         _session_stats["skipped"] += 1
         _test_results_ordered.append("skipped")
+
+    if outcome:
+        bucket = "physical" if _is_physical_test(report.nodeid) else "mock"
+        _mock_physical_stats[bucket][outcome] += 1
 
 
 def pytest_runtest_setup(item):
     """Print the test's docstring in color before each test runs."""
+    if item.get_closest_marker("cloud"):
+        _physical_test_nodeids.add(item.nodeid)
     if item.function.__doc__:
         doc = item.function.__doc__.strip().split("\n")[0]
         _test_docs[item.nodeid] = doc
@@ -147,7 +190,7 @@ def pytest_runtest_setup(item):
     mod = item.module.__name__
     _dashboard_mods = (
         "tests.test_database_logic", "tests.test_api", "tests.test_auth", "tests.test_config",
-        "tests.test_schema_discovery", "tests.test_schema_mapping", "tests.test_env_integrity",
+        "tests.test_schema_discovery", "tests.test_schema_mapping", "tests.test_schema_indexing", "tests.test_env_integrity",
         "tests.test_cosmos_cloud", "tests.test_cosmos_store", "tests.test_cosmos_integration",
         "tests.test_server_lifespan", "tests.test_redis", "tests.test_cache_connection",
         "tests.test_cache_logic", "tests.test_semantic_cache", "tests.test_semantic_precision",
@@ -158,7 +201,8 @@ def pytest_runtest_setup(item):
     if mod in _dashboard_mods:
         cat, color = _get_category(item.nodeid)
         if cat:
-            prefix = f"{color}{_BOLD}[{cat}]{_RESET}"
+            tag = _format_category(cat, item.nodeid)
+            prefix = f"{color}{_BOLD}[{tag}]{_RESET}"
             print(f"\n  {prefix} {doc}{_RESET}", flush=True)
 
 
@@ -216,12 +260,52 @@ def _print_status_gauge(terminalreporter, use_color, n_passed, n_failed, n_skipp
         terminalreporter.write_line("  >> PROJECT PHASE: 1 (COMPLETE)" if pct == 100 else "  >> PROJECT PHASE: 1 (IN PROGRESS)")
 
 
+def _print_mock_physical_section(terminalreporter, use_color):
+    """Print Mock vs Physical test counts and a small bar chart."""
+    mock = _mock_physical_stats["mock"]
+    phys = _mock_physical_stats["physical"]
+    mock_total = mock["passed"] + mock["failed"] + mock["skipped"]
+    phys_total = phys["passed"] + phys["failed"] + phys["skipped"]
+    total = mock_total + phys_total
+    if total == 0:
+        return
+
+    b, r = (_BOLD, _RESET) if use_color else ("", "")
+    g, red, y = (_GREEN, _RED, _YELLOW) if use_color else ("", "", "")
+    dim = _DIM if use_color else ""
+
+    terminalreporter.write_line("")
+    terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+    terminalreporter.write_line(f"{b}  Mock vs Physical{r}")
+    terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+
+    # Counts
+    terminalreporter.write_line(
+        f"  Mock:     {mock_total} run  →  {g}{mock['passed']} pass{r}  {red}{mock['failed']} fail{r}  {y}{mock['skipped']} skip{r}"
+    )
+    terminalreporter.write_line(
+        f"  Physical: {phys_total} run  →  {g}{phys['passed']} pass{r}  {red}{phys['failed']} fail{r}  {y}{phys['skipped']} skip{r}"
+    )
+
+    # Bar chart: 40 chars wide, scaled to max of the two
+    bar_width = 40
+    max_val = max(mock_total, phys_total, 1)
+    mock_fill = int(bar_width * mock_total / max_val) if max_val else 0
+    phys_fill = int(bar_width * phys_total / max_val) if max_val else 0
+    mock_bar = "█" * mock_fill + "░" * (bar_width - mock_fill)
+    phys_bar = "█" * phys_fill + "░" * (bar_width - phys_fill)
+    terminalreporter.write_line("")
+    terminalreporter.write_line(f"  {dim}Mock     [{mock_bar}] {mock_total}{r}")
+    terminalreporter.write_line(f"  {dim}Physical [{phys_bar}] {phys_total}{r}")
+    terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """Print a dashboard-style summary of test results at the end."""
     use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     key_mods = (
-        "test_database_logic", "test_api", "test_auth", "test_config",         "test_schema_discovery", "test_schema_mapping",
+        "test_database_logic", "test_api", "test_auth", "test_config",         "test_schema_discovery", "test_schema_mapping", "test_schema_indexing",
         "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
@@ -251,11 +335,12 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             cat, color = _get_category(nodeid)
             if not cat:
                 continue
+            tag = _format_category(cat, nodeid)
             doc = _test_docs.get(nodeid, nodeid.split("::")[-1])
             msg = msg_full[:72] + "..." if len(msg_full) > 75 else msg_full
             c = color if use_color else ""
             count = f" ({len(nodeids)} occurrence{'s' if len(nodeids) > 1 else ''})" if len(nodeids) > 1 else ""
-            terminalreporter.write_line(f"  {warn_sym} {c}[{cat}]{r} {doc}{count}")
+            terminalreporter.write_line(f"  {warn_sym} {c}[{tag}]{r} {doc}{count}")
             terminalreporter.write_line(f"      {msg}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
@@ -321,6 +406,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 continue
             cat, _ = _get_category(report.nodeid)
             if cat:
+                tag = _format_category(cat, report.nodeid)
                 sym = (
                     pass_sym
                     if status == "passed"
@@ -328,7 +414,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 )
                 cc = _cat_colors.get(cat, _CYAN) if use_color else ""
                 doc = _display_doc(report)
-                terminalreporter.write_line(f"  {sym} {cc}[{cat}]{r} {doc}")
+                terminalreporter.write_line(f"  {sym} {cc}[{tag}]{r} {doc}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
     # Catalog Summary: what each category tests and what pass/fail means (only when dashboard tests ran)
@@ -477,6 +563,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
         terminalreporter.write_line(f"{b}  Catalog Summary{r}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+        terminalreporter.write_line(f"  {_DIM if use_color else ''}[CAT]=mock (fakeredis, mocked embeddings)  [CAT☁]=physical (real Redis, Cosmos, embeddings){r}")
         for cat in sorted(_CATALOG.keys(), key=lambda c: (c.startswith("CLOUD-"), c)):
             if cat not in cats_in_run:
                 continue
@@ -515,6 +602,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             cat, color = _get_category(report.nodeid)
             if not cat:
                 continue
+            tag = _format_category(cat, report.nodeid)
             doc = _test_docs.get(report.nodeid, report.nodeid.split("::")[-1])
             if len(doc) > 78:
                 doc = doc[:75] + "..."
@@ -533,11 +621,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             if len(msg) > 58:
                 msg = msg[:55] + "..."
             c = color if use_color else ""
-            tag = f"[{cat}]" if cat else ""
-            terminalreporter.write_line(f"  {err_sym} {c}{tag}{r} {doc}")
+            tag_str = f"[{tag}]" if tag else ""
+            terminalreporter.write_line(f"  {err_sym} {c}{tag_str}{r} {doc}")
             if msg:
                 terminalreporter.write_line(f"      {msg}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+
+    # Mock vs Physical: counts and bar chart
+    _print_mock_physical_section(terminalreporter, use_color)
 
     # Status Gauge — xfailed counted as passed in pytest_runtest_logreport
     _print_status_gauge(

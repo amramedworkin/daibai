@@ -4,12 +4,19 @@ Schema discovery for database metadata.
 Uses information_schema to extract table names, column names, and data types
 for grounding SQL generation. Supports semantic schema mapping: vectorize
 table DDLs and retrieve only relevant tables for a given query (table pruning).
+
+Phase 3 Step 1: High-precision semantic schema indexing with discover_schema(),
+index_schema(), and search_schema_v1() using schema:v1:* Redis keys.
 """
 
 import json
+import logging
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .config import DatabaseConfig, get_schema_vector_limit
+from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
+
+logger = logging.getLogger(__name__)
 
 
 # Standard MySQL information_schema query for columns
@@ -32,6 +39,13 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
 
 SCHEMA_VECTOR_PREFIX = "schema:"
 SCHEMA_INDEX_KEY = "schema:index"
+
+# Phase 3 Step 1: High-precision semantic schema index (v1)
+SCHEMA_V1_PREFIX = "schema:v1:"
+SCHEMA_V1_DDL_PREFIX = "schema:v1:ddl:"
+SCHEMA_V1_TEXT_PREFIX = "schema:v1:text:"
+SCHEMA_V1_INDEX_KEY = "schema:v1:index"
+SCHEMA_V1_LAST_INDEXED = "schema:v1:last_indexed"
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -275,7 +289,10 @@ class SchemaManager:
 
         index_key = f"{SCHEMA_VECTOR_PREFIX}{db}:index"
         try:
-            table_names = list(redis.smembers(index_key)) or []
+            raw_names = list(redis.smembers(index_key)) or []
+            table_names = [
+                t.decode("utf-8") if isinstance(t, bytes) else t for t in raw_names
+            ]
         except Exception:
             table_names = []
 
@@ -296,6 +313,178 @@ class SchemaManager:
             sim = _cosine_similarity(query_vector, vector)
             if sim >= threshold:
                 scored.append((sim, ddl))
+
+        scored.sort(key=lambda x: -x[0])
+        return [ddl for _, ddl in scored[:limit]]
+
+    # -------------------------------------------------------------------------
+    # Phase 3 Step 1: High-precision semantic schema index (v1)
+    # -------------------------------------------------------------------------
+
+    def discover_schema(self, schema_name: Optional[str] = None) -> Dict[str, str]:
+        """
+        Discover all tables and return DDL strings.
+
+        Queries INFORMATION_SCHEMA.COLUMNS and aggregates into a dict where
+        the key is the table name and the value is a DDL-like string
+        (e.g. "CREATE TABLE users (id INT, email TEXT)").
+
+        Args:
+            schema_name: Database/schema to query. Defaults to config.database.
+
+        Returns:
+            Dict mapping table names to DDL strings.
+        """
+        metadata = self.get_schema_metadata(schema_name)
+        result: Dict[str, str] = {}
+        for table, columns in metadata.items():
+            ddl = self._table_ddl(metadata, table)
+            # Normalize to CREATE TABLE style for consistency
+            result[table] = ddl.strip()
+        return result
+
+    def index_schema(
+        self,
+        schema_name: Optional[str] = None,
+        force: bool = False,
+        ttl: int = 86400,
+    ) -> int:
+        """
+        Index schema into Redis using v1 key format for semantic search.
+
+        For each table: generates embedding, stores vector in schema:v1:ddl:{table},
+        raw DDL in schema:v1:text:{table}, and adds table to schema:v1:index.
+
+        Guardrails:
+        - If EmbeddingEngine is unavailable, logs CRITICAL and returns 0 (Lazy Discovery mode).
+        - Skips re-indexing if SCHEMA_REFRESH_INTERVAL has not passed (unless force=True).
+
+        Args:
+            schema_name: Database/schema to index.
+            force: If True, bypass refresh interval check.
+            ttl: Redis TTL in seconds for stored keys.
+
+        Returns:
+            Number of tables indexed.
+        """
+        db = schema_name or (self._config.database if self._config else None)
+        if not db:
+            raise ValueError("schema_name or config.database required")
+
+        redis = self._get_redis()
+        if redis is None:
+            logger.warning("Schema indexing skipped: no Redis client")
+            return 0
+
+        # Check refresh interval
+        if not force:
+            last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
+            try:
+                last_raw = redis.get(last_key)
+                if last_raw:
+                    last_ts = float(last_raw)
+                    interval = get_schema_refresh_interval()
+                    if time.time() - last_ts < interval:
+                        logger.debug(
+                            "Schema indexing skipped: SCHEMA_REFRESH_INTERVAL not elapsed"
+                        )
+                        return 0
+            except (ValueError, TypeError):
+                pass
+
+        tables_ddl = self.discover_schema(schema_name)
+        if not tables_ddl:
+            return 0
+
+        stored = 0
+        try:
+            for table, ddl in tables_ddl.items():
+                vector = self._get_embedding(ddl)
+                if vector is None:
+                    logger.critical(
+                        "Embedding model unavailable; schema indexing falling back to Lazy Discovery"
+                    )
+                    return 0
+                ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
+                text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+                try:
+                    redis.set(ddl_key, json.dumps(vector), ex=ttl)
+                    redis.set(text_key, ddl, ex=ttl)
+                    redis.sadd(SCHEMA_V1_INDEX_KEY, table)
+                    stored += 1
+                except Exception as e:
+                    logger.warning("Failed to store schema for table %s: %s", table, e)
+            if stored > 0:
+                last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
+                try:
+                    redis.set(last_key, str(time.time()), ex=ttl)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.critical(
+                "Schema indexing failed: %s; falling back to Lazy Discovery",
+                e,
+                exc_info=True,
+            )
+            return 0
+        return stored
+
+    def search_schema_v1(
+        self,
+        query: str,
+        schema_name: Optional[str] = None,
+        limit: Optional[int] = None,
+        threshold: float = 0.3,
+    ) -> List[str]:
+        """
+        Semantic search over v1-indexed schema.
+
+        Vectorizes the query, compares against stored schema:v1:ddl:* vectors,
+        and returns the top N matching DDL strings from schema:v1:text:*.
+
+        Args:
+            query: Natural language question (e.g. "How much money did we make?").
+            schema_name: Unused for v1 (all tables in index); kept for API consistency.
+            limit: Max tables to return (default from SCHEMA_VECTOR_LIMIT).
+            threshold: Minimum cosine similarity.
+
+        Returns:
+            List of DDL strings for the most relevant tables.
+        """
+        query_vector = self._get_embedding(query)
+        if query_vector is None:
+            return []
+
+        redis = self._get_redis()
+        if redis is None:
+            return []
+
+        limit = limit or get_schema_vector_limit()
+        try:
+            raw_names = list(redis.smembers(SCHEMA_V1_INDEX_KEY)) or []
+            table_names = [
+                t.decode("utf-8") if isinstance(t, bytes) else t for t in raw_names
+            ]
+        except Exception:
+            table_names = []
+
+        scored: List[Tuple[float, str]] = []
+        for table in table_names:
+            ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
+            text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+            raw_vector = redis.get(ddl_key)
+            raw_ddl = redis.get(text_key)
+            if not raw_vector or not raw_ddl:
+                continue
+            try:
+                vector = json.loads(raw_vector)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(vector, list):
+                continue
+            sim = _cosine_similarity(query_vector, vector)
+            if sim >= threshold:
+                scored.append((sim, raw_ddl))
 
         scored.sort(key=lambda x: -x[0])
         return [ddl for _, ddl in scored[:limit]]

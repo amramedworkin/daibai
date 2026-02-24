@@ -3,9 +3,12 @@ Tests for semantic schema mapping (table pruning).
 
 Verifies that get_relevant_tables() returns only tables relevant to the query,
 e.g. "salaries" returns Employees DDL and excludes WeatherForecast.
+Live test (test_schema_mapping_live) uses real Redis + real embeddings when REDIS_URL set.
 """
 
 import json
+import os
+
 import pytest
 
 from daibai.core.schema import SchemaManager, SCHEMA_VECTOR_PREFIX
@@ -157,3 +160,56 @@ def test_get_relevant_tables_empty_without_vectorize(schema_manager):
     """get_relevant_tables returns empty list if no schema vectorized."""
     result = schema_manager.get_relevant_tables("salaries", "testdb")
     assert result == []
+
+
+# --- Live test (real Redis + real embeddings, mock DB) ---
+
+
+def _get_redis_url():
+    return (
+        os.environ.get("REDIS_URL", "").strip()
+        or os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
+    )
+
+
+@pytest.mark.cloud
+@pytest.mark.skipif(
+    not _get_redis_url(),
+    reason="REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live test requires Redis",
+)
+def test_schema_mapping_live():
+    """
+    vectorize_schema + get_relevant_tables against real Redis with real embeddings.
+    Mock DB (Employees, WeatherForecast); real Redis + sentence-transformers.
+    Verifies "salaries" returns Employees and excludes WeatherForecast.
+    """
+    pytest.importorskip("sentence_transformers")
+
+    from daibai.core.cache import CacheManager
+    from daibai.core.config import get_redis_connection_string
+
+    conn = get_redis_connection_string()
+    if not conn:
+        pytest.skip("No Redis connection string")
+
+    cache = CacheManager(connection_string=conn)
+    manager = SchemaManager(
+        execute_fn=_mock_execute,
+        cache_manager=cache,
+    )
+    try:
+        count = manager.vectorize_schema("testdb")
+        assert count == 2
+
+        result = manager.get_relevant_tables("What are the employee salaries?", "testdb", limit=5)
+        ddl_text = "\n".join(result)
+        assert "Employees" in ddl_text
+        assert "salary" in ddl_text
+        assert "WeatherForecast" not in ddl_text
+    finally:
+        # Clean up schema:testdb:* keys
+        client = cache._get_client()
+        if client:
+            for key in client.keys(f"{SCHEMA_VECTOR_PREFIX}testdb:*"):
+                client.delete(key)
+            client.delete(f"{SCHEMA_VECTOR_PREFIX}testdb:index")

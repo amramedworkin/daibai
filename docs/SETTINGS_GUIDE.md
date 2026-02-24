@@ -1,3 +1,15 @@
+### **Key Settings Reference**
+
+The following settings are present in the codebase and control semantic behavior. Set them in `.env`.
+
+| Setting | Technical Name | Range | Default | Description |
+|---------|----------------|-------|---------|-------------|
+| **Cache Matching Precision** | `CACHE_THRESHOLD` | `0.0` to `1.0` | `0.90` | Precision for semantic cache matching. High values (e.g. `0.95`–`1.0`) require nearly identical wording for a cache hit; low values (`0.80`–`0.88`) allow looser matches. Validated by Pydantic in `daibai/core/config.py`. |
+| **Schema Vector Limit** | `SCHEMA_VECTOR_LIMIT` | `1` to `20` | `5` | Max number of table schemas injected into the LLM prompt (semantic pruning). Higher = more context, higher token cost. Clamped in `get_schema_vector_limit()`. |
+| **Schema Refresh Interval** | `SCHEMA_REFRESH_INTERVAL` | `60`+ (seconds) | `86400` (24h) | How often (in seconds) the agent re-scans the physical database structure. Prevents re-indexing if the interval has not passed. Minimum 60. |
+
+---
+
 ### **Schema Metadata and SQL Grounding**
 
 The agent uses **schema metadata** to ground its SQL generation. Before generating SQL from natural language, DaiBai extracts the database schema (table names, column names, data types) via `SchemaManager` (`daibai/core/schema.py`). This metadata is injected into the LLM prompt so the model sees the actual structure of your database.
@@ -14,7 +26,7 @@ The agent uses **schema metadata** to ground its SQL generation. Before generati
 
 | Setting | Technical Name | Description | Default |
 |---------|----------------|-------------|---------|
-| **Schema Vector Limit** | `SCHEMA_VECTOR_LIMIT` | Max number of tables to send to the LLM (semantic pruning). Higher = more context, higher cost. | `5` |
+| **Schema Vector Limit** | `SCHEMA_VECTOR_LIMIT` | Max number of tables to send to the LLM (semantic pruning). Higher = more context, higher cost. Clamped 1–20. | `5` |
 
 ---
 
@@ -33,3 +45,5 @@ The agent uses **schema metadata** to ground its SQL generation. Before generati
 | **Azure Infra** | **Performance Tier** | `REDIS_SKU` | The Azure hardware tier (Basic vs. Standard vs. Premium). | `C0`, `C1`, `P1` | **Right:** Low latency for many concurrent users.<br>**Wrong:** `C0` (Basic) has no SLA and may experience latency spikes. | Azure Portal | "Cloud Hardware" status indicator. |
 | **API Server** | **Network Bind** | `HOST` / `PORT` | The internal address and port the DaiBai server listens on. | Port: `1024-65535` | **Right:** Accessible GUI and API.<br>**Wrong:** "Address already in use" error; server fails to start. | `cli.sh` | Read-only "Server URL" in settings. |
 | **Model** | **Embedding Engine** | `EMBEDDING_MODEL` | The specific NLP model used to turn text into math for the cache. | `all-MiniLM-L6-v2` | **Right:** High performance, low memory footprint.<br>**Wrong:** Model not found; system cannot "understand" similarities. | `cache.py` | Dropdown (initially fixed). |
+| **Schema** | **Table Pruning Limit** | `SCHEMA_VECTOR_LIMIT` | Max tables to inject into the LLM prompt (semantic pruning). | `1`–`20` (int, default `5`) | **Right:** Focused context, lower cost.<br>**Wrong:** Too low = missing tables; too high = token bloat. | `.env` | Number input. |
+| **Schema** | **Schema Refresh Interval** | `SCHEMA_REFRESH_INTERVAL` | How often (in seconds) the agent re-scans the physical database structure. | `60`–`86400` (int, default `86400`) | **Right:** Fresh schema when DB changes.<br>**Wrong:** Stale schema if DB updated but not re-scanned. | `.env` | Number input with "Minutes/Hours" conversion. |

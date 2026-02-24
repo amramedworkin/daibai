@@ -12,6 +12,8 @@ from daibai.core.config import (
     DatabaseConfig,
     LLMProviderConfig,
     get_semantic_similarity_threshold,
+    get_schema_vector_limit,
+    get_schema_refresh_interval,
     _resolve_env_vars,
 )
 
@@ -176,3 +178,38 @@ def test_get_semantic_similarity_threshold(monkeypatch):
     monkeypatch.setenv("CACHE_THRESHOLD", "")
     monkeypatch.setenv("SEMANTIC_SIMILARITY_THRESHOLD", "")
     assert get_semantic_similarity_threshold() == 0.90
+
+
+def test_get_schema_vector_limit_default(monkeypatch):
+    """get_schema_vector_limit defaults to 5 when unset."""
+    monkeypatch.delenv("SCHEMA_VECTOR_LIMIT", raising=False)
+    monkeypatch.setenv("SCHEMA_VECTOR_LIMIT", "")
+    assert get_schema_vector_limit() == 5
+
+
+def test_get_schema_vector_limit_clamped(monkeypatch):
+    """get_schema_vector_limit clamps to 1–20."""
+    monkeypatch.setenv("SCHEMA_VECTOR_LIMIT", "10")
+    assert get_schema_vector_limit() == 10
+
+    monkeypatch.setenv("SCHEMA_VECTOR_LIMIT", "0")
+    assert get_schema_vector_limit() == 1  # clamped to minimum 1
+
+    monkeypatch.setenv("SCHEMA_VECTOR_LIMIT", "25")
+    assert get_schema_vector_limit() == 20
+
+
+def test_get_schema_refresh_interval_default(monkeypatch):
+    """get_schema_refresh_interval defaults to 86400 (24h) when unset."""
+    monkeypatch.delenv("SCHEMA_REFRESH_INTERVAL", raising=False)
+    monkeypatch.setenv("SCHEMA_REFRESH_INTERVAL", "")
+    assert get_schema_refresh_interval() == 86400
+
+
+def test_get_schema_refresh_interval_minimum(monkeypatch):
+    """get_schema_refresh_interval enforces minimum 60 seconds."""
+    monkeypatch.setenv("SCHEMA_REFRESH_INTERVAL", "30")
+    assert get_schema_refresh_interval() == 60
+
+    monkeypatch.setenv("SCHEMA_REFRESH_INTERVAL", "3600")
+    assert get_schema_refresh_interval() == 3600

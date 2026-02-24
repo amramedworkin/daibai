@@ -2,9 +2,11 @@
 L1 cache tests: basic key-value get/set with fakeredis.
 
 Uses fakeredis for standalone tests (no real Redis required).
+Live tests (test_*_live) use real Redis when REDIS_URL is set.
 """
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -188,3 +190,80 @@ def test_threshold_tuning(cache_manager):
     result = cache_manager.check_semantic("Which city is the capital of France?", threshold=0.999)
 
     assert result is None
+
+
+# --- Live tests (real Redis when REDIS_URL set) ---
+
+
+def _get_redis_url():
+    return (
+        os.environ.get("REDIS_URL", "").strip()
+        or os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
+    )
+
+
+@pytest.mark.cloud
+@pytest.mark.skipif(
+    not _get_redis_url(),
+    reason="REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live test requires Redis",
+)
+def test_set_and_get_live():
+    """CacheManager set/get against real Redis."""
+    from daibai.core.cache import CacheManager
+
+    manager = CacheManager()
+    key = "daibai-test:cache_logic:set_get_live"
+    value = "live-test-value"
+    try:
+        manager.set(key, value, ttl=60)
+        assert manager.get(key) == value
+    finally:
+        client = manager._get_client()
+        if client:
+            client.delete(key)
+
+
+@pytest.mark.cloud
+@pytest.mark.skipif(
+    not _get_redis_url(),
+    reason="REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live test requires Redis",
+)
+def test_semantic_hit_live():
+    """Semantic cache hit against real Redis: store then retrieve similar question."""
+    pytest.importorskip("sentence_transformers")
+
+    from daibai.core.cache import CacheManager
+
+    manager = CacheManager()
+    try:
+        manager.set_semantic("What is the price?", "The price is $10.", ttl=60)
+        result = manager.check_semantic("What's the price?", threshold=0.90)
+        assert result == "The price is $10."
+    finally:
+        client = manager._get_client()
+        if client:
+            for k in client.keys("semantic:*"):
+                client.delete(k)
+
+
+@pytest.mark.cloud
+@pytest.mark.skipif(
+    not _get_redis_url(),
+    reason="REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live test requires Redis",
+)
+def test_semantic_miss_live():
+    """Semantic cache miss against real Redis: different questions return None."""
+    pytest.importorskip("sentence_transformers")
+
+    from daibai.core.cache import CacheManager
+
+    manager = CacheManager()
+    try:
+        manager.set_semantic("What is the price?", "The price is $10.", ttl=60)
+        result = manager.check_semantic("Who is the CEO?", threshold=0.70)
+        assert result is None
+    finally:
+        client = manager._get_client()
+        if client:
+            for k in client.keys("semantic:*"):
+                client.delete(k)
