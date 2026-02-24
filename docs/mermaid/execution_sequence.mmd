@@ -1,0 +1,42 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant CLI as CLI / API
+    participant Agent as DaiBai Agent
+    participant GuardPre as Pre-LLM Guardrail
+    participant Schema as Schema Manager
+    participant LLM as LLM Provider
+    participant GuardPost as Post-LLM AST Validator
+    participant DB as Target Database
+
+    User->>CLI: "Show me the top active users"
+    CLI->>Agent: generate_sql(prompt)
+
+    rect rgb(255, 200, 200)
+        Note over Agent, GuardPre: Stage 1 Security
+        Agent->>GuardPre: validate_prompt()
+        GuardPre-->>Agent: Pass (No in-band injection)
+    end
+
+    rect rgb(200, 230, 255)
+        Note over Agent, Schema: Semantic Pruning
+        Agent->>Schema: search_schema_v1(prompt)
+        Schema-->>Agent: Returns top 3 relevant table DDLs
+    end
+
+    Agent->>LLM: Generate SQL with pruned schema
+    LLM-->>Agent: Returns SELECT SQL
+
+    rect rgb(255, 200, 200)
+        Note over Agent, GuardPost: Stage 2 Security
+        Agent->>GuardPost: validate(sql, allowed_tables)
+        Note right of GuardPost: Deep AST Parsing<br/>Checks DML, DDL, DoS, Scope
+        GuardPost-->>Agent: Pass (Safe & In-Scope)
+    end
+
+    alt User requests execution
+        Agent->>DB: run_sql(validated_sql)
+        DB-->>Agent: pd.DataFrame (Results)
+        Agent-->>CLI: Formatted Markdown/Table
+        CLI-->>User: Display Results
+    end

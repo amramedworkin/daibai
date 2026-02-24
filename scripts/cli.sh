@@ -137,12 +137,20 @@ Commands (mirrors menu.sh):
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
     verify-azure-auth        Verify secretless Cosmos access (lists containers, no COSMOS_KEY)
     redis-create             Create Azure Cache for Redis (RG + Basic C0, auto-writes REDIS_URL to .env)
+    keyvault-create          Create Azure Key Vault (RG + RBAC, auto-writes KEY_VAULT_URL to .env)
     test-redis               Redis integration test (add/retrieve/delete keys, requires REDIS_URL)
     test-cache-connection    CacheManager ping (mocked + live when REDIS_URL set)
     cache-stats              Redis info stats and keyspace (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
     cache-monitor            Redis live monitor (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
     cache-info               Show parsed Redis connection info for Redis Insight
     cache-test               Test Redis connection (host, port, username, password from .env)
+
+  ENTRA ID
+    entra verify             CI-friendly: check tenant only, no login (exit 0/1)
+    entra identify [--ci]    Identify DaiBai directory; --ci = no interactive login
+    entra list               List active users
+    entra delete [--soft]    Delete single user (hard=permanent, soft=30-day recycle bin)
+    entra bulk-delete [--soft]  Bulk delete test users (prefix: daibai, override: USER_PREFIX=)
 
   SETUP (idempotent)
     setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
@@ -190,6 +198,12 @@ Examples:
     $(basename "$0") test-cosmos
     $(basename "$0") verify-azure-auth
     $(basename "$0") redis-create
+    $(basename "$0") keyvault-create
+    $(basename "$0") entra identify
+    $(basename "$0") entra list
+    $(basename "$0") entra delete
+    $(basename "$0") entra delete --soft
+    $(basename "$0") entra bulk-delete
     $(basename "$0") test-redis
     $(basename "$0") test-cache-connection
     $(basename "$0") cache-stats
@@ -493,6 +507,11 @@ cmd_verify_azure_auth() {
 cmd_redis_create() {
     print_header "Azure Cache for Redis Setup"
     bash "$SCRIPT_DIR/setup_redis.sh"
+}
+
+cmd_keyvault_create() {
+    print_header "Azure Key Vault Setup"
+    bash "$SCRIPT_DIR/setup_keyvault.sh"
 }
 
 cmd_test_redis() {
@@ -878,6 +897,9 @@ main() {
         redis-create)
             cmd_redis_create
             ;;
+        keyvault-create)
+            cmd_keyvault_create
+            ;;
         test-redis)
             cmd_test_redis
             ;;
@@ -934,6 +956,38 @@ main() {
             ;;
         status)
             cmd_chat_status "$@"
+            ;;
+        entra)
+            case "$1" in
+                verify)
+                    CI=1 bash "$SCRIPT_DIR/entra/00_verify_tenant.sh"
+                    ;;
+                identify)
+                    if [[ "$2" == "--ci" || "$2" == "-n" ]]; then
+                        CI=1 bash "$SCRIPT_DIR/entra/01_identify_directory.sh" --ci
+                    else
+                        bash "$SCRIPT_DIR/entra/01_identify_directory.sh"
+                    fi
+                    ;;
+                list) bash "$SCRIPT_DIR/entra/02_list_users.sh" ;;
+                delete)
+                    if [[ "$2" == "--soft" ]]; then
+                        bash "$SCRIPT_DIR/entra/03_delete_single.sh" --soft
+                    else
+                        bash "$SCRIPT_DIR/entra/03_delete_single.sh"
+                    fi
+                    ;;
+                bulk-delete)
+                    if [[ "$2" == "--soft" ]]; then
+                        bash "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft
+                    else
+                        bash "$SCRIPT_DIR/entra/04_delete_bulk.sh"
+                    fi
+                    ;;
+                *)
+                    echo "Usage: ./scripts/cli.sh entra {verify|identify|list|delete|bulk-delete} [--soft]"
+                    ;;
+            esac
             ;;
         help|--help|-h|"")
             show_help

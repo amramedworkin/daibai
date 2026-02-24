@@ -95,6 +95,8 @@ show_main_menu() {
         "monitor, stats, Redis Insight setup"
     print_submenu_option "7" "Monitoring" \
         "Redis connection info for Redis Insight"
+    print_submenu_option "8" "Entra ID Management" \
+        "identify, list users, delete (hard/soft)"
     echo ""
     print_action_option "q" "Quick Commit & Push ${YELLOW}${DIM}(gitqik.sh)${NC}"
     print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle, opens browser on start)${NC}"
@@ -754,6 +756,87 @@ handle_monitoring_menu() {
 }
 
 # =============================================================================
+# ENTRA ID MANAGEMENT SUBMENU (8)
+# =============================================================================
+
+show_entra_menu() {
+    show_header "Microsoft Entra ID Management"
+    echo -e "  ${DIM}Identify directory, list users, delete (hard=permanent, soft=30-day recycle bin)${NC}"
+    echo ""
+    print_action_option "1" "Identify Directory & Domain"
+    print_action_option "2" "List Active Users"
+    print_action_option "3" "Delete Single User (Hard)"
+    print_action_option "4" "Delete Single User (Soft)"
+    print_action_option "5" "Bulk Delete Test Users (Hard)"
+    print_action_option "6" "Bulk Delete Test Users (Soft)"
+    print_action_option "7" "Verify Tenant ${YELLOW}${DIM}(CI-friendly, no login)${NC}"
+    echo ""
+    print_action_option "0" "Back to Main Menu"
+    echo ""
+    echo -n "  Select > "
+}
+
+handle_entra_menu() {
+    while true; do
+        show_entra_menu
+        read_menu_choice
+        case $choice in
+            1)
+                clear
+                "$SCRIPT_DIR/entra/01_identify_directory.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            2)
+                clear
+                "$SCRIPT_DIR/entra/02_list_users.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            3)
+                clear
+                "$SCRIPT_DIR/entra/03_delete_single.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            4)
+                clear
+                "$SCRIPT_DIR/entra/03_delete_single.sh" --soft
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            5)
+                clear
+                "$SCRIPT_DIR/entra/04_delete_bulk.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            6)
+                clear
+                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            7)
+                clear
+                "$SCRIPT_DIR/entra/00_verify_tenant.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+# =============================================================================
 # MAIN LOOP
 # =============================================================================
 
@@ -768,6 +851,7 @@ while true; do
         5) handle_test_menu ;;
         6) handle_redis_menu ;;
         7) handle_monitoring_menu ;;
+        8) handle_entra_menu ;;
         q|Q) handle_quick_commit ;;
         s|S) handle_start_stop_chat_service ;;
         0)

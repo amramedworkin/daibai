@@ -1,0 +1,49 @@
+graph TD
+    classDef ui fill:#4285F4,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef core fill:#34A853,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef sec fill:#EA4335,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef data fill:#FBBC05,stroke:#fff,stroke-width:2px,color:#000;
+    classDef ext fill:#8E24AA,stroke:#fff,stroke-width:2px,color:#fff;
+
+    subgraph User_Interfaces [User Interfaces]
+        CLI[Interactive CLI / REPL]:::ui
+        API[FastAPI Server]:::ui
+        GUI[Web UI Assets]:::ui
+    end
+
+    subgraph DaiBai_Core [DaiBai Core Orchestration]
+        Agent[DaiBai Agent]:::core
+        Config[Config Manager]:::core
+        Trainer[Schema Trainer]:::core
+    end
+
+    subgraph Security_Layer [Security & Guardrails]
+        PreLLM[Pre-LLM Sanitizer]:::sec
+        PostLLM[Post-LLM AST Validator]:::sec
+    end
+
+    subgraph Cognitive_Data [Cognitive & Data Stores]
+        SchemaManager[Semantic Schema Manager]:::data
+        RedisCache[(Redis Semantic Cache)]:::data
+        LocalEmbed[Local Embedding Engine]:::data
+    end
+
+    subgraph External_Services [External Integrations]
+        LLMs((LLM Providers)):::ext
+        TargetDB[(Target SQL Databases)]:::ext
+    end
+
+    CLI --> Agent
+    API --> Agent
+    GUI --> API
+
+    Agent --> Config
+    Agent --> PreLLM
+    PreLLM --> SchemaManager
+    SchemaManager --> LocalEmbed
+    SchemaManager <--> RedisCache
+
+    Agent --> LLMs
+    LLMs --> PostLLM
+    PostLLM --> TargetDB
+    Trainer --> SchemaManager

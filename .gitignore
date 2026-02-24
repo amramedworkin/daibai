@@ -59,5 +59,22 @@ Thumbs.db
 .coverage.*
 pip-log.txt
 
+# Docker (local overrides, do not commit images or build cache)
+docker-compose.override.yml
+.docker/
+
+# Local databases and interim data
+*.db
+*.sqlite3
+*.sqlite
+
+# Additional caches and interim
+.mypy_cache/
+.ruff_cache/
+.tox/
+.hypothesis/
+.coverage
+*.cover
+
 # Workspace / IDE (optional, often personal)
 *.code-workspace

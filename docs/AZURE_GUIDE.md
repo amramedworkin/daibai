@@ -1034,9 +1034,55 @@ This phase gives the AI the ability to run the SQL it wrote.
 
 **Future Phases: Deployment & Rigor**
 
-**Phase 4 (Containerization & Portability):** Ensure the system runs identically in local dev and Azure. Create a multi-stage Dockerfile and docker-compose.yaml that spins up the app, a local Redis (for dev), and a local Postgres/SQL Server emulator. Test: A CI/CD pipeline test that builds the container and runs the full test suite inside it.
+**Phase 4 (Containerization & Portability):** ✅ Step 1 Complete. Multi-stage Dockerfile with CPU-optimized PyTorch and baked embedding model. See *Phase 4 Step 1: Optimized Containerization* below for full strategy. Next: docker-compose.yml for local sandbox (Redis + MySQL/Postgres).
 
 **Phase 5 (Azure Production Hardening):** Migrate from local credentials to Azure Managed Identities. Update `scripts/setup_redis.sh` and `daibai/api/database.py` to use DefaultAzureCredential exclusively, removing the need for local `.env` secrets in production. Test: Deployment to an Azure Container App environment with a "smoke test" verifying Cosmos and Redis connectivity under a Managed Identity.
+
+---
+
+### Phase 4 Step 1: Optimized Containerization ✅
+
+When containerizing an AI application like DaiBai, a critical challenge is the **PyTorch dependency**. The Semantic Schema Pruner uses `sentence-transformers`, which depends on PyTorch. A naive `pip install` pulls CUDA drivers and GPU binaries, resulting in a bloated **4GB+** container that takes forever to build and deploy.
+
+#### The Three-Pronged Strategy
+
+| Prong | Problem | Solution |
+|-------|---------|----------|
+| **1. CPU-Only PyTorch** | Default pip install pulls ~4GB of CUDA/GPU binaries | Use `--extra-index-url https://download.pytorch.org/whl/cpu` to force CPU wheels (~150MB) |
+| **2. Model Baking** | First run downloads `all-MiniLM-L6-v2` from HuggingFace → 2–3 min cold start | Pre-download model in Dockerfile build; bake into image |
+| **3. Multi-Stage Build** | Builder stage accumulates build tools and caches | Slim runtime stage copies only compiled code and runtime libs |
+
+#### Artifacts Created
+
+**`.dockerignore`** — Prevents local state from leaking into the container:
+
+```
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.github/
+tests/
+docs/
+*.db
+*.sqlite3
+~/.daibai/
+```
+
+**`Dockerfile`** — Multi-stage, CPU-optimized:
+
+- **Stage 1 (Builder):** Installs gcc, python3-dev; installs dependencies with `--extra-index-url https://download.pytorch.org/whl/cpu`; runs `SentenceTransformer('all-MiniLM-L6-v2')` to bake model.
+- **Stage 2 (Runtime):** Python 3.10-slim base; copies `/root/.local` and `/root/.cache/huggingface` from builder; copies `daibai/`, `scripts/`, `pyproject.toml`; `ENTRYPOINT ["python", "-m", "daibai"]`.
+
+**Build and run:**
+
+```bash
+docker build -t daibai:latest .
+docker run --rm -it daibai:latest
+```
+
+**Next step:** Create `docker-compose.yml` to orchestrate DaiBai + Redis + MySQL/Postgres for local sandbox testing before Azure deployment.
 
 ---
 
@@ -1048,8 +1094,8 @@ This phase gives the AI the ability to run the SQL it wrote.
 | **PHASE 2** | Embeddings | Ability for the machine to "understand" user intent. | ✅ |
 | **PHASE 2.5** | Similarity Search | Semantic retrieval: find similar questions, serve cached answers, skip the LLM. | ✅ |
 | **PHASE 3** | Reasoning (SQL Architect) | Schema pruning, dynamic context, SQL guardrails. | Step 1 ✅, Step 2 ✅, Step 3 ✅ |
-| **PHASE 4** | Execution | Real answers from real data delivered to the user. | Pending |
-| **PHASE 5** | Containerization & Hardening | Docker, CI/CD, Managed Identity. | Pending |
+| **PHASE 4** | Containerization & Portability | Multi-stage Dockerfile (CPU PyTorch, model baking). | Step 1 ✅ |
+| **PHASE 5** | Azure Production Hardening | Docker, CI/CD, Managed Identity. | Pending |
 
 **Phase 3 Complete.** Schema pruning (`search_schema_v1`), dynamic context injection, and SQL guardrails are implemented. The agent scales to production-level datasets (1000+ tables) with semantic table pruning and scope-enforced execution.
 

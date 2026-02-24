@@ -1,0 +1,32 @@
+flowchart LR
+    classDef threat fill:#ea4335,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef shield fill:#34a853,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef safe fill:#4285f4,stroke:#fff,stroke-width:2px,color:#fff;
+
+    Input[/User Prompt/]:::threat
+
+    subgraph Pre_LLM [Stage 1: Pre-LLM Sanitizer]
+        Regex1[UNION Smuggling Check]:::shield
+        Regex2[In-band DML/DDL Block]:::shield
+        Regex3[Tautology Regex]:::shield
+    end
+
+    LLM((LLM Generation)):::safe
+
+    subgraph Post_LLM [Stage 2: Post-LLM AST Validator]
+        AST1[Lexical DML/DDL Block]:::shield
+        AST2[System Schema Probing Block]:::shield
+        AST3[DoS Functions Block]:::shield
+        AST4[Out-of-Scope Table Block]:::shield
+        AST5[Multi-Statement Piggyback Check]:::shield
+    end
+
+    TargetDB[(SQL Database)]:::safe
+
+    Input --> Pre_LLM
+    Regex1 & Regex2 & Regex3 -->|Pass| LLM
+    LLM --> Post_LLM
+    AST1 & AST2 & AST3 & AST4 & AST5 -->|Pass| TargetDB
+
+    Pre_LLM -.->|Fail| Reject1[SecurityViolation]:::threat
+    Post_LLM -.->|Fail| Reject2[SecurityViolation]:::threat

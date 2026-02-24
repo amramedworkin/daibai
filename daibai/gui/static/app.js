@@ -146,11 +146,12 @@ async function getTokenPopup(request) {
     }
 }
 
-/** Get access token for DaiBai API. Uses openid scope; token is validated by backend. */
+/** Get token for DaiBai API. Backend validates JWT with aud=clientId; use idToken (not accessToken). */
 async function getApiToken() {
     const request = { scopes: ['openid', 'profile'] };
     const response = await getTokenPopup(request);
-    return response.accessToken;
+    // Use idToken: has aud=clientId. accessToken may have aud=Graph (00000003-...) and fails backend validation.
+    return response.idToken || response.accessToken;
 }
 
 /** Fetch wrapper that adds Bearer token for authenticated API calls. */

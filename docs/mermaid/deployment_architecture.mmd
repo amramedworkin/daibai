@@ -1,0 +1,28 @@
+graph TB
+    classDef local fill:#ECEFF1,stroke:#607D8B,stroke-width:2px,color:#263238;
+    classDef cloud fill:#E3F2FD,stroke:#2196F3,stroke-width:2px,color:#0D47A1;
+    classDef db fill:#FFF3E0,stroke:#FF9800,stroke-width:2px,color:#E65100;
+
+    subgraph Local_Workstation [Local Execution Environment]
+        App[DaiBai Python Process]:::local
+        Env[.env / daibai.yaml]:::local
+        LocalEmbed[Sentence Transformers]:::local
+
+        App <--> Env
+        App <--> LocalEmbed
+    end
+
+    subgraph Local_or_Cloud_Infra [Infrastructure]
+        Redis[(Redis Server)]:::db
+        TargetDB[(MySQL / Postgres)]:::db
+    end
+
+    subgraph Cloud_SaaS [External Cloud APIs]
+        Gemini[Google Gemini API]:::cloud
+        OpenAI[OpenAI / Azure API]:::cloud
+        Anthropic[Anthropic API]:::cloud
+    end
+
+    App <-->|Schema Vectors / Semantic Cache| Redis
+    App <-->|Target Queries| TargetDB
+    App <-->|Prompts| Gemini & OpenAI & Anthropic

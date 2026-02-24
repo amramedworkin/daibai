@@ -49,6 +49,7 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 
 - [Security & SQL Guardrails](#security--sql-guardrails)
 - [Architecture](#architecture)
+- [Architecture Guide](docs/ARCHITECTURE_GUIDE.md) (detailed diagrams)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Interactive Chat Interface](#interactive-chat-interface)

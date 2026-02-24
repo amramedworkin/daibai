@@ -1,0 +1,36 @@
+# Local state and caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Version control
+.git/
+.github/
+
+# Tests and docs (not needed in runtime image)
+tests/
+docs/
+*.md
+!README.md
+
+# Local databases
+*.db
+*.sqlite3
+
+# User data (mounted at runtime if needed)
+~/.daibai/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

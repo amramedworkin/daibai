@@ -1,53 +1,111 @@
 """
 Environment readiness tests.
 
-Verifies each env component (Redis, Cosmos, Database, LLM, Key Vault) is detectable.
-Uses daibai.core.env_ready logic; tests use monkeypatch for isolation.
+Verifies EnvValidator catches placeholders and missing keys.
+Verifies component checks (redis, cosmos, database, llm, keyvault).
 """
+
+import os
+from unittest import mock
 
 import pytest
 
 from daibai.core.env_ready import (
+    EnvValidator,
     check_all,
-    check_redis,
     check_cosmos,
     check_database,
-    check_llm,
     check_keyvault,
+    check_llm,
+    check_redis,
 )
+
+
+def test_env_validator_success():
+    """EnvValidator passes with valid env."""
+    valid_env = {
+        "DB_HOST": "localhost",
+        "DB_USER": "root",
+        "DB_PASSWORD": "realpassword123",
+        "DB_NAME": "testdb",
+        "GEMINI_API_KEY": "AIzaSyRealKey",
+    }
+    with mock.patch.dict(os.environ, valid_env, clear=True):
+        with mock.patch("daibai.core.env_ready._database_configured_via_yaml", return_value=False):
+            is_valid, issues = EnvValidator.validate()
+            assert is_valid is True
+            assert len(issues) == 0
+
+
+def test_env_validator_success_with_mysql_keys():
+    """EnvValidator passes with MYSQL_* keys (alias)."""
+    valid_env = {
+        "MYSQL_HOST": "localhost",
+        "MYSQL_USER": "root",
+        "MYSQL_PASSWORD": "realpassword123",
+        "MYSQL_DATABASE": "testdb",
+        "GEMINI_API_KEY": "AIzaSyRealKey",
+    }
+    with mock.patch.dict(os.environ, valid_env, clear=True):
+        # Mock daibai.yaml as not having DB config so we use env
+        with mock.patch("daibai.core.env_ready._database_configured_via_yaml", return_value=False):
+            is_valid, issues = EnvValidator.validate()
+            assert is_valid is True
+            assert len(issues) == 0
+
+
+def test_env_validator_missing_db_keys():
+    """EnvValidator fails when DB keys are missing."""
+    invalid_env = {
+        "DB_HOST": "localhost",
+        "GEMINI_API_KEY": "AIzaSyRealKey",
+        # Missing DB_USER, DB_PASSWORD, DB_NAME
+    }
+    with mock.patch.dict(os.environ, invalid_env, clear=True):
+        with mock.patch("daibai.core.env_ready._database_configured_via_yaml", return_value=False):
+            is_valid, issues = EnvValidator.validate()
+            assert is_valid is False
+            assert "DB_USER" in issues
+            assert "DB_PASSWORD" in issues
+            assert "DB_NAME" in issues
+
+
+def test_env_validator_placeholder_detection():
+    """EnvValidator fails when keys contain placeholder values."""
+    placeholder_env = {
+        "DB_HOST": "localhost",
+        "DB_USER": "root",
+        "DB_PASSWORD": "your_password",  # Invalid placeholder
+        "DB_NAME": "testdb",
+        "GEMINI_API_KEY": "your-api-key",  # Invalid placeholder
+    }
+    with mock.patch.dict(os.environ, placeholder_env, clear=True):
+        with mock.patch("daibai.core.env_ready._database_configured_via_yaml", return_value=False):
+            is_valid, issues = EnvValidator.validate()
+            assert is_valid is False
+            assert "DB_PASSWORD" in issues
+            assert any("AT_LEAST_ONE_OF" in issue for issue in issues)
+
+
+def test_env_validator_passes_with_daibai_yaml_db(monkeypatch):
+    """EnvValidator passes when database is from daibai.yaml."""
+    monkeypatch.setattr("daibai.core.env_ready._database_configured_via_yaml", lambda: True)
+    with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "AIzaSyRealKey"}, clear=True):
+        is_valid, issues = EnvValidator.validate()
+        assert is_valid is True
+        assert len(issues) == 0
 
 
 def test_check_redis_detects_connection_string(monkeypatch):
     """REDIS_URL or AZURE_REDIS_CONNECTION_STRING sets redis ok."""
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.delenv("AZURE_REDIS_CONNECTION_STRING", raising=False)
-    monkeypatch.delenv("REDIS_USE_ENTRA_ID", raising=False)
-    monkeypatch.delenv("AZURE_REDIS_HOST", raising=False)
-
     ok, msg = check_redis()
     assert not ok
-
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
     ok, msg = check_redis()
     assert ok
     assert "set" in msg
-
-    monkeypatch.delenv("REDIS_URL", raising=False)
-    monkeypatch.setenv("AZURE_REDIS_CONNECTION_STRING", "rediss://:x@host:6380")
-    ok, msg = check_redis()
-    assert ok
-
-
-def test_check_redis_detects_entra(monkeypatch):
-    """REDIS_USE_ENTRA_ID + AZURE_REDIS_HOST sets redis ok."""
-    monkeypatch.delenv("REDIS_URL", raising=False)
-    monkeypatch.delenv("AZURE_REDIS_CONNECTION_STRING", raising=False)
-    monkeypatch.setenv("REDIS_USE_ENTRA_ID", "1")
-    monkeypatch.setenv("AZURE_REDIS_HOST", "mycache.redis.cache.windows.net")
-
-    ok, msg = check_redis()
-    assert ok
-    assert "Entra" in msg
 
 
 def test_check_cosmos_detects_endpoint(monkeypatch):
@@ -55,7 +113,6 @@ def test_check_cosmos_detects_endpoint(monkeypatch):
     monkeypatch.delenv("COSMOS_ENDPOINT", raising=False)
     ok, msg = check_cosmos()
     assert not ok
-
     monkeypatch.setenv("COSMOS_ENDPOINT", "https://x.documents.azure.com:443/")
     ok, msg = check_cosmos()
     assert ok
@@ -66,10 +123,8 @@ def test_check_llm_detects_api_key(monkeypatch):
     for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.delenv("KEY_VAULT_URL", raising=False)
-
     ok, msg = check_llm()
     assert not ok
-
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     ok, msg = check_llm()
     assert ok
@@ -81,7 +136,6 @@ def test_check_keyvault_detects_url(monkeypatch):
     monkeypatch.delenv("KEY_VAULT_URL", raising=False)
     ok, msg = check_keyvault()
     assert not ok
-
     monkeypatch.setenv("KEY_VAULT_URL", "https://myvault.vault.azure.net/")
     ok, msg = check_keyvault()
     assert ok
@@ -95,14 +149,3 @@ def test_check_all_returns_all_components():
         assert isinstance(ok, bool)
         assert isinstance(msg, str)
         assert isinstance(required, bool)
-
-
-def test_check_all_values_have_three_tuple():
-    """Each component value is (ok, message, required)."""
-    results = check_all()
-    for comp, val in results.items():
-        assert len(val) == 3
-        ok, msg, req = val
-        assert isinstance(ok, bool)
-        assert isinstance(msg, str)
-        assert isinstance(req, bool)

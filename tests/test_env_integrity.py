@@ -1,9 +1,11 @@
-"""Tests for .env integrity: no duplicate keys, no malformed entries."""
+"""Tests for .env integrity: no duplicate keys, no malformed entries, EnvValidator."""
 
 import re
 from pathlib import Path
 
 import pytest
+
+from daibai.core.env_ready import EnvValidator
 
 # Project root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -109,6 +111,40 @@ def test_clean_env_removes_malformed(tmp_path):
     assert "ANOTHER_VALID=yes" in content
     assert "no-equals-here" not in content
     assert "=no_key" not in content
+
+
+def test_env_validator_fails_when_db_host_missing(monkeypatch):
+    """EnvValidator returns (False, issues) when DB_HOST is missing (env-based DB)."""
+    for k in ("DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME", "MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("daibai.core.env_ready._database_configured_via_yaml", lambda: False)
+    monkeypatch.setenv("GEMINI_API_KEY", "valid-key-abc123")
+
+    is_valid, issues = EnvValidator.validate()
+    assert is_valid is False
+    assert "DB_HOST" in issues or "DB_USER" in issues
+
+
+def test_env_validator_fails_on_placeholder_llm_key(monkeypatch):
+    """EnvValidator returns (False, issues) when GEMINI_API_KEY is placeholder."""
+    monkeypatch.setattr("daibai.core.env_ready._database_configured_via_yaml", lambda: True)
+    monkeypatch.setenv("GEMINI_API_KEY", "your-api-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KEY_VAULT_URL", raising=False)
+
+    is_valid, issues = EnvValidator.validate()
+    assert is_valid is False
+    assert any("AT_LEAST_ONE_OF" in issue for issue in issues)
+
+
+def test_env_validator_passes_with_valid_mock_data(monkeypatch):
+    """EnvValidator returns (True, []) with valid mock env."""
+    monkeypatch.setattr("daibai.core.env_ready._database_configured_via_yaml", lambda: True)
+    monkeypatch.setenv("GEMINI_API_KEY", "sk-valid-key-abc123xyz")
+
+    is_valid, issues = EnvValidator.validate()
+    assert is_valid is True
+    assert len(issues) == 0
 
 
 def test_clean_env_idempotent_on_clean_file(tmp_path):
