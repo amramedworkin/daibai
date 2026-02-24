@@ -368,6 +368,8 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[gui,dev]"
 ```
 
+The `[dev]` extra includes `pytest-sugar` (live progress bar) and `rich` (styled heatmap/status panel) for the visual test dashboard.
+
 **For Phase 2 (Embedding Intelligence):** Add the `cache` extra to enable semantic embeddings:
 
 ```bash
@@ -420,6 +422,14 @@ If you want to pull LLM keys from Key Vault instead of `.env`:
 ```bash
 pytest tests/test_auth.py tests/test_azure_config.py -v
 ```
+
+**Full visual dashboard (heatmap, status gauge, progress bar):**
+
+```bash
+python3 -m pytest tests/ -v -s
+```
+
+Requires `pytest-sugar` and `rich` (`pip install -e ".[dev]"`). You get a live progress bar, Test Dashboard with category tags, Catalog Summary (pass/fail meaning per category), Status Heatmap (🟩🟥🟨 grid), and a bold success percentage.
 
 **Phase 2 (Embedding) tests:** Run cache logic tests including embedding generation and singleton behavior:
 
@@ -506,7 +516,7 @@ The test uses `TestClient(app)` to trigger lifespan events and requires `COSMOS_
 ./scripts/cli.sh test-cache-connection   # CacheManager ping (mocked + live when REDIS_URL set)
 ./scripts/cli.sh test-cosmos        # CosmosStore E2E (requires COSMOS_ENDPOINT)
 ./scripts/cli.sh test-redis         # Redis add/retrieve/delete (requires REDIS_URL)
-python3 -m pytest tests/ -v -s      # Full suite (all tests; cloud skip when env not set)
+python3 -m pytest tests/ -v -s      # Full suite with heatmap, status gauge, progress bar
 ```
 
 **Full test (all tests, including cloud when env is set):**
@@ -518,6 +528,20 @@ python3 -m pytest tests/ -v -s
 ```
 
 Cloud tests (Redis, Cosmos, lifespan) are skipped when their env vars are unset. With `REDIS_URL` and `COSMOS_ENDPOINT` configured, the full suite runs all integration tests.
+
+**Visual Test Dashboard (Heatmap, Status, Progress Bar)**
+
+When you run `python3 -m pytest tests/ -v -s`, you get:
+
+| Feature | Description |
+|---------|-------------|
+| **Progress Bar** | pytest-sugar shows a live green/red bar as tests run (e.g. `17% ██▊`). |
+| **Test Dashboard** | Per-test results with category tags (`[CLOUD-L1]`, `[CONFIG]`, etc.). |
+| **Catalog Summary** | For each category: what it tests, Pass-Technical, Pass-Big Picture (or Fail-Technical, Fail-Big Picture when tests fail). |
+| **Status Heatmap** | A grid of blocks: 🟩 pass, 🟥 fail, 🟨 skip. One block per test in execution order. |
+| **Success Gauge** | A bold percentage (e.g. `100% SUCCESS` or `93% SUCCESSFUL`) and project phase. |
+
+**Dependencies:** `pytest-sugar` (progress bar) and `rich` (styled status panel) are in the `[dev]` extra. Install with `pip install -e ".[dev]"`.
 
 **Integrated Test Dashboard**
 
@@ -549,20 +573,30 @@ At the end of each run, `conftest.py` prints a dashboard summarizing key tests b
 ──────────────────────────────────────────────────────────────────────
   PASS [API] When a user sends a chat message, the server saves both...
   PASS [DB] When a conversation document exists in Cosmos, fetching...
-  PASS [DB] When a conversation does not exist yet, fetching it ret...
-  PASS [DB] When a document exists but has no messages key, we safe...
-  PASS [DB] Saving a conversation writes the session id and message...
-  PASS [DB] Appending new messages loads the existing conversation,...
-  PASS [DB] Listing conversations converts raw Cosmos documents int...
-  PASS [DB] Deleting a conversation that does not exist does not ra...
-  PASS [CLOUD-CACHE] Save a response for "What is Azure?" and retrieve...
-  PASS [CLOUD-CACHE] Store for "How do I deploy to Azure?", query with...
-  SKIP [CLOUD-COSMOS] test_cosmos_store_singleton_client
-  SKIP [CLOUD-LIFESPAN] test_server_lifespan_initializes_store_and_clos...
-  SKIP [CLOUD-REDIS] Add a key-value pair and retrieve it successfully.
   ...
 ──────────────────────────────────────────────────────────────────────
-================= 61 passed, 2 skipped, 10 deselected in 2.00s ==================
+
+──────────────────────────────────────────────────────────────────────
+  Catalog Summary
+──────────────────────────────────────────────────────────────────────
+  [CLOUD-L1] L1 cache (get/set, set_semantic, get_embedding, singleton).
+      Pass-Technical: Key-value and semantic storage work; embeddings load once.
+      Pass-Big Picture: Intent matching works: similar questions reuse answers.
+  ...
+──────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────
+  DAIBAI TEST HEATMAP
+──────────────────────────────────────────────────────────────────────
+  🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩
+  🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩 🟩
+  ...
+──────────────────────────────────────────────────────────────────────
+╭─────────────────────────────── SESSION STATUS ───────────────────────────────╮
+│ 100% SUCCESS                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  >> PROJECT PHASE: Phase 2 (COMPLETE)
+================= 80 passed, 6 skipped in 10.81s ==================
 ```
 
 ### 6. (Optional) Azure Cache for Redis Setup
@@ -712,6 +746,26 @@ The final daibai needs to be an **enterprise-grade SQL Agent**.
 | **Vector Logic** | Implement `get_embedding()` that converts any text prompt into a 384-dimension vector. | ✅ |
 | **Integration** | Link it to `set_semantic` so it automatically generates vectors if you don't provide them manually. | ✅ |
 | **Test Verification** | Tests ensure a prompt like "Query my sales table" results in a valid mathematical vector, and that the model is loaded only once (singleton). | ✅ |
+| **Graceful Degradation** | When the model fails to load, `get_embedding` returns `None` and `set_semantic` returns `False` (no crash). | ✅ |
+
+##### Vector Generation Components (Implementation)
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| **CacheManager** | `daibai/core/cache.py` | Manages Redis connection and embedding model. |
+| **`_embed_model`** | Class attribute | Singleton: `SentenceTransformer('all-MiniLM-L6-v2')` loaded lazily via `_get_embed_model()`. |
+| **`get_embedding(text)`** | `CacheManager` | Returns `list[float]` of 384 dimensions, or `None` on model load failure. |
+| **`set_semantic(text, response, vector=None, ttl=3600)`** | `CacheManager` | If `vector` is `None`, calls `get_embedding(text)`. Stores JSON `{text, vector, response}` under `semantic:<hash>`. Returns `False` if embedding fails. |
+| **Dependencies** | `pyproject.toml` `[cache]` | `sentence-transformers>=2.2.0`, `torch>=2.0.0`. |
+
+**Tests (L1 / `[CLOUD-L1]`):**
+
+| Test | Validates |
+|------|-----------|
+| `test_embedding_generation` | `get_embedding("...")` returns 384 floats |
+| `test_embedding_model_loaded_once` | Model instantiated only once (singleton) |
+| `test_set_semantic_auto_generates_vector` | `set_semantic` without vector stores record |
+| `test_embedding_graceful_degradation_when_model_fails` | Model load failure → `None` / `False` |
 
 ##### The Product at Phase Completion
 
