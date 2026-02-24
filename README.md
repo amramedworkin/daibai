@@ -16,6 +16,18 @@
   <img src="https://img.shields.io/badge/MySQL-Supported-4479A1?style=flat-square" alt="MySQL"/>
 </p>
 
+<p align="center">
+  <a href="https://daibaichat.com">
+    <img src="https://img.shields.io/badge/DaiBaiChat-daibaichat.com-0066cc?style=for-the-badge" alt="DaiBaiChat · daibaichat.com"/>
+  </a>
+</p>
+
+<p align="center">
+  <em>🌐 Live at <a href="https://daibaichat.com"><strong>daibaichat.com</strong></a></em>
+</p>
+
+---
+
 DaiBai is an AI-powered natural language database assistant that converts your questions into SQL queries. It supports multiple LLM providers (Gemini, OpenAI, Azure, Anthropic, Ollama) and multiple database connections.
 
 > **🛡️ Safe-by-Design:** DaiBai uses an "Untrusted Client" model with Defense-in-Depth guardrails. See [Security & SQL Guardrails](#security--sql-guardrails) for limitations, blocked operations, and deployment guidance.
@@ -543,6 +555,7 @@ chatb -v "verbose query"        # With verbose output
 | `@train [db]` | Train/index schema (auto-runs on first use) |
 | `@refresh [db]` | Force refresh schema from database |
 | `@status` | Show training status for all databases |
+| `@metrics` | Show schema pruning usage (avg depth, suggested SCHEMA_VECTOR_LIMIT) |
 
 ### Safety Features
 
@@ -863,6 +876,19 @@ daibai/
 ---
 
 ## Resources
+
+### Azure Deployment
+
+DaiBai can be deployed on Azure using the serverless architecture described in [docs/AZURE_GUIDE.md](docs/AZURE_GUIDE.md). Domain **daibaichat.com** is configured via Azure DNS:
+
+| Property | Value |
+|----------|-------|
+| **Domain** | daibaichat.com |
+| **Resource group** | daibai-network-rg |
+| **Name servers** | ns1-07.azure-dns.com., ns2-07.azure-dns.net., ns3-07.azure-dns.org., ns4-07.azure-dns.info. |
+| **Subscription ID** | 561dd34b-5a54-486f-abce-23ce53d2a1b4 |
+
+Delegate the domain at your registrar to the Azure name servers above. See [AZURE_GUIDE.md – Azure DNS Zone](docs/AZURE_GUIDE.md#azure-dns-zone-domain-configuration) for full details.
 
 ### LLM Providers
 

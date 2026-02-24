@@ -181,10 +181,10 @@ def test_get_semantic_similarity_threshold(monkeypatch):
 
 
 def test_get_schema_vector_limit_default(monkeypatch):
-    """get_schema_vector_limit defaults to 5 when unset."""
+    """get_schema_vector_limit defaults to 12 when unset (supports complex JOINs)."""
     monkeypatch.delenv("SCHEMA_VECTOR_LIMIT", raising=False)
     monkeypatch.setenv("SCHEMA_VECTOR_LIMIT", "")
-    assert get_schema_vector_limit() == 5
+    assert get_schema_vector_limit() == 12
 
 
 def test_get_schema_vector_limit_clamped(monkeypatch):

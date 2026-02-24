@@ -16,7 +16,10 @@ from pathlib import Path
 import pandas as pd
 
 from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_redis_connection_string
-from .guardrails import GuardrailPipeline, SQLValidator, SecurityViolation
+from .guardrails import GuardrailPipeline, SQLValidator, SecurityViolation, extract_tables_from_query
+from .cache import CacheManager
+from .metrics import SchemaPruningMetrics
+from .schema import SchemaManager
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
@@ -181,7 +184,17 @@ class DaiBaiAgent:
         
         # Persistent schema cache
         self._schema_cache = SchemaCache(self.config.memory_dir / "schemas")
-        
+
+        # SchemaManager for semantic pruning (lazy per-db)
+        self._schema_managers: Dict[str, SchemaManager] = {}
+        self._cache_manager: Optional[CacheManager] = None
+
+        # Last allowed_tables from pruned context (for run_sql scope enforcement)
+        self._last_allowed_tables: Optional[Set[str]] = None
+
+        # Usage metrics for schema pruning tuning
+        self._pruning_metrics = SchemaPruningMetrics(self.config.memory_dir / "metrics")
+
         # Auto-train on init if needed
         self._trained_dbs: set = set()
         if auto_train and self._current_db:
@@ -197,6 +210,32 @@ class DaiBaiAgent:
         """Get current LLM provider name."""
         return self._current_llm
     
+    def _get_cache_manager(self) -> Optional[CacheManager]:
+        """Lazy-init CacheManager for schema pruning (Redis + embeddings)."""
+        if self._cache_manager is not None:
+            return self._cache_manager
+        cache_disabled = os.environ.get("DAIBAI_DISABLE_SEMANTIC_CACHE", "").strip().lower() in ("1", "true", "yes")
+        redis_url = get_redis_connection_string()
+        if cache_disabled or not redis_url:
+            return None
+        self._cache_manager = CacheManager(connection_string=redis_url)
+        return self._cache_manager
+
+    def _get_schema_manager(self, db_name: Optional[str] = None) -> Optional[SchemaManager]:
+        """Get or create SchemaManager for a database (for semantic pruning)."""
+        name = db_name or self._current_db
+        if not name:
+            return None
+        if name not in self._schema_managers:
+            db_config = self.config.get_database(name)
+            cache = self._get_cache_manager()
+            self._schema_managers[name] = SchemaManager(
+                config=db_config,
+                cache_manager=cache,
+                redis_client=cache._get_client() if cache else None,
+            )
+        return self._schema_managers[name]
+
     def _get_runner(self, db_name: Optional[str] = None) -> DatabaseRunner:
         """Get or create database runner."""
         name = db_name or self._current_db
@@ -314,11 +353,21 @@ class DaiBaiAgent:
         
         # Save to persistent cache
         self._schema_cache.save(name, schema, table_count)
-        
+
+        # Index for semantic pruning (Redis + embeddings)
+        sm = self._get_schema_manager(name)
+        if sm:
+            try:
+                indexed = sm.index_schema(schema_name=name, force=True)
+                if show_progress and indexed:
+                    print(f"Indexed {indexed} tables for semantic search")
+            except Exception:
+                pass
+
         # Update in-memory cache
         self._schema_memory[name] = schema
         self._trained_dbs.add(name)
-        
+
         if show_progress:
             print(f"Trained: {table_count} tables, {len(schema)} chars")
         
@@ -343,6 +392,13 @@ class DaiBaiAgent:
             return False
         return name in self._trained_dbs or self._schema_cache.get(name) is not None
     
+    def get_schema_pruning_stats(self) -> Dict[str, Any]:
+        """
+        Get usage metrics for schema pruning (depth/scope over time).
+        Use suggested_limit to tune SCHEMA_VECTOR_LIMIT in .env.
+        """
+        return self._pruning_metrics.get_stats()
+
     def get_training_status(self) -> Dict[str, Any]:
         """Get training status for all databases."""
         status = {}
@@ -365,9 +421,22 @@ class DaiBaiAgent:
         db_name: Optional[str] = None,
         allowed_tables: Optional[Set[str]] = None,
     ) -> Optional[pd.DataFrame]:
-        """Execute SQL and return results. Validates through SQLValidator first."""
+        """Execute SQL and return results. Validates through SQLValidator first.
+        
+        When allowed_tables is not provided, uses _last_allowed_tables from the most
+        recent generate_sql/generate_sql_async (pruned context scope enforcement).
+        Records usage metrics for SCHEMA_VECTOR_LIMIT tuning.
+        """
+        scope = allowed_tables if allowed_tables is not None else self._last_allowed_tables
         runner = self._get_runner(db_name)
-        return runner.run_sql(sql, allowed_tables=allowed_tables)
+        try:
+            result = runner.run_sql(sql, allowed_tables=scope)
+            self._record_pruning_metrics(sql, scope)
+            return result
+        except SecurityViolation as e:
+            if e.layer == "scope":
+                self._pruning_metrics.record_scope_violation()
+            raise
 
     async def run_sql_async(
         self,
@@ -375,9 +444,30 @@ class DaiBaiAgent:
         db_name: Optional[str] = None,
         allowed_tables: Optional[Set[str]] = None,
     ) -> Optional[pd.DataFrame]:
-        """Execute SQL asynchronously. Validates through SQLValidator first."""
+        """Execute SQL asynchronously. Validates through SQLValidator first.
+        
+        Uses _last_allowed_tables from pruned context when allowed_tables not provided.
+        Records usage metrics for SCHEMA_VECTOR_LIMIT tuning.
+        """
+        scope = allowed_tables if allowed_tables is not None else self._last_allowed_tables
         runner = self._get_runner(db_name)
-        return await runner.run_sql_async(sql, allowed_tables=allowed_tables)
+        try:
+            result = await runner.run_sql_async(sql, allowed_tables=scope)
+            self._record_pruning_metrics(sql, scope)
+            return result
+        except SecurityViolation as e:
+            if e.layer == "scope":
+                self._pruning_metrics.record_scope_violation()
+            raise
+
+    def _record_pruning_metrics(self, sql: str, allowed_tables: Optional[Set[str]]) -> None:
+        """Record schema pruning metrics after successful execution."""
+        tables_in_context = len(allowed_tables) if allowed_tables else 0
+        tables_in_query = len(extract_tables_from_query(sql))
+        self._pruning_metrics.record_success(
+            tables_in_context=tables_in_context,
+            tables_in_query=tables_in_query,
+        )
     
     def _fetch_schema_from_db(self, db_name: str) -> str:
         """Fetch fresh schema from database."""
@@ -402,6 +492,39 @@ class DaiBaiAgent:
         
         return "\n".join(schema_parts)
     
+    def _extract_table_names_from_ddl(self, ddl_strings: List[str]) -> Set[str]:
+        """Extract table names from DDL strings (format: '-- Table: tablename')."""
+        tables: Set[str] = set()
+        for ddl in ddl_strings:
+            for m in re.finditer(r"-- Table:\s*(\w+)", ddl, re.IGNORECASE):
+                tables.add(m.group(1))
+        return tables
+
+    def _get_pruned_schema(self, prompt: str, db_name: Optional[str] = None) -> Tuple[str, Optional[Set[str]]]:
+        """
+        Get schema pruned by semantic relevance to the prompt.
+        Returns (schema_text, allowed_tables). If pruning unavailable, returns (full_schema, None).
+        """
+        name = db_name or self._current_db
+        if not name:
+            return "", None
+
+        self._ensure_trained(name)
+        sm = self._get_schema_manager(name)
+        if sm:
+            try:
+                ddl_list = sm.search_schema_v1(query=prompt, schema_name=name)
+                if ddl_list:
+                    pruned = "\n".join(ddl_list)
+                    allowed = self._extract_table_names_from_ddl(ddl_list)
+                    return pruned, allowed
+            except Exception:
+                pass
+
+        # Fallback: full schema, no scope restriction
+        full = self.get_schema(name)
+        return full, None
+
     def get_schema(self, db_name: Optional[str] = None, refresh: bool = False) -> str:
         """Get database schema as text (uses cache if available)."""
         name = db_name or self._current_db
@@ -450,6 +573,10 @@ class DaiBaiAgent:
     def generate_sql(self, prompt: str, mode: str = "sql") -> str:
         """Generate SQL from natural language.
         
+        Uses semantic schema pruning: only the most relevant tables (Top-K by
+        SCHEMA_VECTOR_LIMIT) are injected into the LLM context. When Redis +
+        embeddings are available, token usage drops significantly on large databases.
+        
         Args:
             prompt: Natural language description
             mode: 'sql' for SELECT, 'ddl' for CREATE/ALTER, 'crud' for INSERT/UPDATE/DELETE
@@ -463,49 +590,68 @@ class DaiBaiAgent:
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
             "crud": "Generate ONLY an INSERT, UPDATE, or DELETE statement for this request. CRITICAL: Always include appropriate WHERE clauses.",
         }
-        
+
         db_name = self._current_db or "unknown"
-        
+        pruned_schema, allowed_tables = self._get_pruned_schema(prompt)
+        self._last_allowed_tables = allowed_tables
+
         enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
 Database: {db_name}
 
 Request: {prompt}
 
 Return the SQL in a ```sql code block. Do not execute it."""
-        
+
+        system_prompt = "You are an expert SQL developer. Generate clean, efficient SQL."
+        if allowed_tables:
+            system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
+
         context = {
-            "system_prompt": "You are an expert SQL developer. Generate clean, efficient SQL."
+            "system_prompt": system_prompt,
+            "schema": pruned_schema,
+            "allowed_tables": allowed_tables,
         }
-        
+
         response = self.generate(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)
     
     async def generate_sql_async(
         self, prompt: str, mode: str = "sql", history: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """Generate SQL asynchronously. Optionally pass conversation history for context."""
+        """Generate SQL asynchronously. Optionally pass conversation history for context.
+        
+        Uses semantic schema pruning when Redis + embeddings are available.
+        """
         GuardrailPipeline.validate_prompt(prompt)
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request.",
             "crud": "Generate ONLY an INSERT, UPDATE, or DELETE statement for this request.",
         }
-        
+
         db_name = self._current_db or "unknown"
-        
+        pruned_schema, allowed_tables = self._get_pruned_schema(prompt)
+        self._last_allowed_tables = allowed_tables
+
         enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
 Database: {db_name}
 
 Request: {prompt}
 
 Return the SQL in a ```sql code block. Do not execute it."""
-        
+
+        system_prompt = "You are an expert SQL developer. Generate clean, efficient SQL."
+        if allowed_tables:
+            system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
+
         context: Dict[str, Any] = {
-            "system_prompt": "You are an expert SQL developer. Generate clean, efficient SQL."
+            "system_prompt": system_prompt,
+            "schema": pruned_schema,
+            "allowed_tables": allowed_tables,
         }
         if history:
             context["messages"] = [{"role": m.get("role"), "content": m.get("content", "")} for m in history]
-        
+
         response = await self.generate_async(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)
     

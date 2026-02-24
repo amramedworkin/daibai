@@ -42,8 +42,8 @@ class CacheConfig(BaseModel):
 def get_schema_vector_limit() -> int:
     """
     Get max number of tables to send to LLM (semantic schema pruning).
-    Reads SCHEMA_VECTOR_LIMIT from .env. Default 5. Clamped 1–20.
-    Higher limit increases accuracy but also increases token cost.
+    Reads SCHEMA_VECTOR_LIMIT from .env. Default 12 (supports complex multi-table JOINs).
+    Clamped 1–20. Higher limit increases accuracy but also increases token cost.
     """
     import os
     from pathlib import Path
@@ -58,12 +58,12 @@ def get_schema_vector_limit() -> int:
         if loc.exists():
             load_dotenv(loc)
             break
-    raw = os.environ.get("SCHEMA_VECTOR_LIMIT", "5").strip()
+    raw = os.environ.get("SCHEMA_VECTOR_LIMIT", "12").strip()
     try:
         val = int(raw)
         return max(1, min(20, val))
     except ValueError:
-        return 5
+        return 12
 
 
 def get_schema_refresh_interval() -> int:

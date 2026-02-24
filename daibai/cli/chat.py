@@ -352,6 +352,7 @@ class ChatAgent:
   {Colors.GREEN}@train [db]{Colors.END}   - Train/index schema (auto-runs on first use)
   {Colors.GREEN}@refresh [db]{Colors.END} - Force refresh schema from database
   {Colors.GREEN}@status{Colors.END}       - Show training status for all databases
+  {Colors.GREEN}@metrics{Colors.END}     - Show schema pruning usage (for SCHEMA_VECTOR_LIMIT tuning)
 
 {Colors.YELLOW}Exploration:{Colors.END}
   {Colors.GREEN}@schema{Colors.END}       - Show current database schema
@@ -587,6 +588,23 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
                     print(f"  {Colors.GREEN}✓{Colors.END} {db_name}{marker}: {info['tables']} tables ({mem})")
                 else:
                     print(f"  {Colors.RED}✗{Colors.END} {db_name}{marker}: Not trained")
+            print()
+            return True
+
+        elif base_cmd == "@metrics":
+            stats = self.agent.get_schema_pruning_stats()
+            print(f"\n{Colors.YELLOW}Schema Pruning Usage:{Colors.END}")
+            if stats.get("sample_count", 0) == 0:
+                print("  No data yet. Run some queries with execution to build metrics.")
+            else:
+                print(f"  Samples: {stats['sample_count']}")
+                print(f"  Avg tables/query: {stats['avg_tables_in_query']}")
+                print(f"  P95 tables/query: {stats['p95_tables_in_query']}")
+                print(f"  Max tables/query: {stats['max_tables_in_query']}")
+                print(f"  Scope violations: {stats['scope_violations']}")
+                if stats.get("suggested_limit"):
+                    print(f"  {Colors.GREEN}Suggested SCHEMA_VECTOR_LIMIT: {stats['suggested_limit']}{Colors.END}")
+                    print("  (Add to .env and restart to apply)")
             print()
             return True
         

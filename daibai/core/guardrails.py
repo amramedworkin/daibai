@@ -148,6 +148,16 @@ def _extract_tables_from_parsed(parsed) -> Set[str]:
     return tables
 
 
+def extract_tables_from_query(sql: str) -> Set[str]:
+    """Extract table names from a SQL query string (for metrics/analytics)."""
+    if not sql or not sql.strip():
+        return set()
+    parsed_list = sqlparse.parse(sqlparse.format(sql, strip_comments=True))
+    if not parsed_list:
+        return set()
+    return _extract_tables_from_parsed(parsed_list[0])
+
+
 def _extract_qualified_refs_from_from_join(parsed) -> Set[str]:
     """Extract schema.table refs from FROM/JOIN for system schema check."""
     refs: Set[str] = set()
