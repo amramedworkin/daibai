@@ -42,6 +42,7 @@ daibai.yaml
 # Daiby data
 exports/
 .daibai/
+chats/
 
 # Testing
 .pytest_cache/

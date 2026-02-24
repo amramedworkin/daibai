@@ -693,6 +693,7 @@ run_pytest() {
         print_error "pytest not installed. Run: pip install -e \".[dev]\""
         return 1
     fi
+    # pytest-sugar (progress bar) and rich (heatmap/success gauge) activate when installed
     "$py" -m pytest "$@"
 }
 

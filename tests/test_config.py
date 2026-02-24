@@ -60,13 +60,16 @@ def test_llm_provider_config():
 
 def test_load_config_empty():
     """Test loading config when no file exists."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        os.chdir(tmpdir)
-        config = load_config()
-        
-        assert isinstance(config, Config)
-        assert len(config.databases) == 0
-        assert len(config.llm_providers) == 0
+    orig_cwd = os.getcwd()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            config = load_config()
+            assert isinstance(config, Config)
+            assert len(config.databases) == 0
+            assert len(config.llm_providers) == 0
+    finally:
+        os.chdir(orig_cwd)
 
 
 def test_load_config_from_yaml():

@@ -88,6 +88,8 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.0.0",
+    "pytest-sugar>=0.9.0",
+    "rich>=13.0.0",
     "fakeredis>=2.0.0",
     "httpx>=0.25.0",
     "black>=23.0.0",
@@ -96,6 +98,7 @@ dev = [
 # Semantic cache: embeddings for similarity search
 cache = [
     "sentence-transformers>=2.2.0",
+    "torch>=2.0.0",
 ]
 
 [project.scripts]

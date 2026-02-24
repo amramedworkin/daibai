@@ -11,6 +11,7 @@ from typing import List, Optional
 from .config import get_redis_connection_string
 
 SEMANTIC_KEY_PREFIX = "semantic:"
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
 class CacheManager:
@@ -18,6 +19,8 @@ class CacheManager:
     Manages Redis connection for caching.
     Initializes a redis.Redis client from the connection string in .env.
     """
+
+    _embed_model = None  # Class-level singleton for embedding model
 
     def __init__(self, connection_string: Optional[str] = None):
         """
@@ -80,11 +83,49 @@ class CacheManager:
         except Exception:
             return False
 
-    def set_semantic(self, text: str, vector: List[float], response: str, ttl: int = 3600) -> bool:
+    def _get_embed_model(self):
+        """Lazy-init embedding model (singleton per process). Returns None on load failure."""
+        if CacheManager._embed_model is not None and CacheManager._embed_model is not False:
+            return CacheManager._embed_model
+        if CacheManager._embed_model is False:
+            return None  # Previous load failed; avoid retrying
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            CacheManager._embed_model = SentenceTransformer(EMBEDDING_MODEL)
+            return CacheManager._embed_model
+        except Exception:
+            CacheManager._embed_model = False  # Sentinel: failed to load
+            return None
+
+    def get_embedding(self, text: str) -> Optional[List[float]]:
+        """
+        Convert text to an embedding vector.
+        Uses all-MiniLM-L6-v2 (384 dimensions).
+        Returns None if the model fails to load (graceful degradation).
+        """
+        model = self._get_embed_model()
+        if model is None:
+            return None
+        return model.encode(text, convert_to_numpy=True).tolist()
+
+    def set_semantic(
+        self,
+        text: str,
+        response: str,
+        vector: Optional[List[float]] = None,
+        ttl: int = 3600,
+    ) -> bool:
         """
         Store a semantic cache entry: text, embedding vector, and response.
+        If vector is None, generates it via get_embedding(text).
+        Returns False if embedding generation fails (graceful degradation).
         Key format: semantic:<hash_of_text>. Value: JSON with vector and response.
         """
+        if vector is None:
+            vector = self.get_embedding(text)
+            if vector is None:
+                return False
         try:
             client = self._get_client()
             if client is None:

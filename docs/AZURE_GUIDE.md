@@ -82,6 +82,22 @@ Estimates are based on typical consumption patterns for a serverless environment
 | **Phase 3: CI/CD Pipeline** | Establish GitHub Actions to automate deployments directly to Azure Static Web Apps and Azure Functions. |
 | **Phase 4: Billing & Metering** | Implement usage tracking within the Python logic to report "tokens used" or "tasks completed" to the Stripe Gateway. |
 
+### Progress Overview (Daibai Journey)
+
+This section captures the actual process we are undertaking as we go along.
+
+**Approximate Percent Complete**
+
+| Component | % | Status |
+|-----------|---|--------|
+| Infrastructure (Azure setup) | 10% | ✅ |
+| Basic Caching logic | 15% | ✅ |
+| Embedding Intelligence (Phase 2) | 10% | ✅ ⬅️ Just completed |
+| SQL Agent & DDL Reasoning (The "Thinking") | 30% | Pending |
+| Tool Use & Execution (The "Action") | 20% | Pending |
+| UI & Deployment | 15% | Pending |
+| **Total** | **~35%** | |
+
 ### Pre-Phase 1: Identity-First Hybrid Strategy
 
 A recommended "Hybrid" approach: secure your application with enterprise-grade identity management immediately while keeping compute costs at zero by continuing to run the backend on your local machine or existing server.
@@ -352,6 +368,15 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[gui,dev]"
 ```
 
+**For Phase 2 (Embedding Intelligence):** Add the `cache` extra to enable semantic embeddings:
+
+```bash
+pip install -e ".[gui,dev,cache]"
+# Or: pip install -e ".[cache]"  # if you only need embeddings
+```
+
+This installs `sentence-transformers` and `torch`. The first run will download the `all-MiniLM-L6-v2` model (~80MB) from Hugging Face.
+
 ### 2. Run the Application (Local)
 
 ```bash
@@ -396,6 +421,15 @@ If you want to pull LLM keys from Key Vault instead of `.env`:
 pytest tests/test_auth.py tests/test_azure_config.py -v
 ```
 
+**Phase 2 (Embedding) tests:** Run cache logic tests including embedding generation and singleton behavior:
+
+```bash
+python3 -m pytest tests/test_cache_logic.py -v
+# Or: ./scripts/cli.sh test  # runs unit tests (includes cache_logic when [cache] installed)
+```
+
+Requires `sentence-transformers` and `torch` (`pip install -e ".[cache]"`). Tests 25–29 validate semantic storage, embedding generation, singleton loading, auto-vector, and graceful degradation.
+
 ### 5.1 DaiBai Test Suite Catalog
 
 The following table summarizes the key tests in the DaiBai test suite. Use it as a quick reference when validating the plumbing (Cosmos DB, auth, config) and during the "Brain Transplant" migration.
@@ -405,6 +439,7 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | Command | Description |
 |---------|-------------|
 | `./scripts/cli.sh test` | Unit tests (excludes cloud; ~1s) |
+| `./scripts/cli.sh test file test_cache_logic.py` | L1 cache + embedding tests (requires `[cache]` for embedding tests) |
 | `./scripts/cli.sh test-cosmos` | Cosmos DB E2E (CosmosStore lifecycle; requires `COSMOS_ENDPOINT`) |
 | `./scripts/cli.sh test-redis` | Redis add/retrieve/delete (requires `REDIS_URL`) |
 | `./scripts/cli.sh test-cache-connection` | CacheManager ping (mocked + live when `REDIS_URL` set) |
@@ -439,8 +474,13 @@ The following table summarizes the key tests in the DaiBai test suite. Use it as
 | **22** | L1 | `test_set_and_get_returns_value` | Set value and get it back (exact match) | `tests/test_cache_logic.py` | Key-value get/set | `✓ [CLOUD-L1]` | `AssertionError` |
 | **23** | L1 | `test_get_nonexistent_key_returns_none` | Non-existent key returns None | `tests/test_cache_logic.py` | Graceful miss | `✓ [CLOUD-L1]` | `AssertionError` |
 | **24** | L1 | `test_set_ttl_passed_to_redis` | TTL correctly passed to set (ex param) | `tests/test_cache_logic.py` | TTL handling | `✓ [CLOUD-L1]` | `AssertionError` |
+| **25** | L1 | `test_set_semantic_stores_json_structure` | set_semantic stores JSON with vector and response | `tests/test_cache_logic.py` | Semantic storage | `✓ [CLOUD-L1]` | `AssertionError` |
+| **26** | L1 | `test_embedding_generation` | get_embedding returns 384-dim vector for text | `tests/test_cache_logic.py` | Embedding model | `✓ [CLOUD-L1]` | `AssertionError` |
+| **27** | L1 | `test_embedding_model_loaded_once` | Embedding model loaded as singleton (no reload lag) | `tests/test_cache_logic.py` | Singleton | `✓ [CLOUD-L1]` | `AssertionError` |
+| **28** | L1 | `test_set_semantic_auto_generates_vector` | set_semantic with no vector auto-generates embedding | `tests/test_cache_logic.py` | Auto-vector | `✓ [CLOUD-L1]` | `AssertionError` |
+| **29** | L1 | `test_embedding_graceful_degradation_when_model_fails` | Model load failure → get_embedding returns None, set_semantic returns False | `tests/test_cache_logic.py` | Graceful degradation | `✓ [CLOUD-L1]` | `AssertionError` |
 
-**Dashboard tags:** Cloud tests use component-specific tags (`[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`) so admins can see which service each test targets.
+**Dashboard tags:** Tests use component-specific tags (`[DB]`, `[API]`, `[AUTH]`, `[CONFIG]`, `[LLM-PROVIDERS]`, `[LLM-REGISTRY]`, `[LLM-MODELS]`, `[LLM-GEMINI]`, `[CLOUD-COSMOS]`, `[CLOUD-CONN]`, `[CLOUD-REDIS]`, `[CLOUD-LIFESPAN]`, `[CLOUD-L1]`, `[CLOUD-CACHE]`, `[CLOUD-AZURE]`) so admins can see which service each test targets.
 
 **Cache connection tests (mocked vs live)**
 
@@ -487,6 +527,13 @@ At the end of each run, `conftest.py` prints a dashboard summarizing key tests b
 |-----|-------|-----------|
 | `[DB]` | Cyan | Database logic (mocked) |
 | `[API]` | Green | API flow |
+| `[AUTH]` | Green | Authentication (JWT, settings) |
+| `[CONFIG]` | Cyan | Config loading, env vars |
+| `[LLM-PROVIDERS]` | Magenta | LLM provider classes, registration |
+| `[LLM-REGISTRY]` | Magenta | New provider registry, inheritance |
+| `[LLM-MODELS]` | Magenta | Model discovery, fetch, sanitization |
+| `[LLM-GEMINI]` | Magenta | Gemini get-models (mocked + live) |
+| `[CLOUD-AZURE]` | Yellow | Azure Key Vault, config |
 | `[CLOUD-COSMOS]` | Yellow | Cosmos DB |
 | `[CLOUD-CONN]` | Yellow | Redis connection/ping (mock + live) |
 | `[CLOUD-REDIS]` | Yellow | Azure Cache for Redis (add/retrieve/delete) |
@@ -628,6 +675,83 @@ Redis Insight Cheat Sheet
 - **Feature rich:** Profiler and Workbench are built in, useful for debugging cache hits and misses.
 
 For CLI-only monitoring (no GUI), use `./scripts/cli.sh cache-stats` or `./scripts/cli.sh cache-monitor`. See `docs/MONITORING.md` for more detail.
+
+#### Semantic Cache & Agent Roadmap (Phases 2–4)
+
+The following phases build on the Redis cache and semantic storage skeleton (Phase 1) to deliver the full Text-to-SQL experience.
+
+**Phase 2: The Embedding Engine (Math Meet Meaning)** ✅ *Completed*
+
+##### What We Did & The Value
+
+We integrated a **Local Embedding Model** (`all-MiniLM-L6-v2`).
+
+| Concept | Description |
+|---------|-------------|
+| **The Action** | Added a library that turns human sentences into a "vector" (a list of 384 numbers). |
+| **The Value** | Moves us from **Exact Matching** (which fails if you change one comma) to **Intent Matching**. |
+| **Without this** | "Show me sales" and "Get me sales" are two different things. |
+| **With this** | The engine sees they are ~98% mathematically similar and reuses the answer. |
+| **Cost Savings** | Research shows semantic caching can reduce LLM API bills by **70% to 85%** because you stop asking the "Brain" (GPT/Gemini) questions you already answered. |
+
+##### Path to the Final Azure-ified Product
+
+The final daibai needs to be an **enterprise-grade SQL Agent**.
+
+| Concern | How Embeddings Help |
+|---------|---------------------|
+| **Scalability** | By running the embedding model locally in your Python environment instead of calling an external API for every cache check, you eliminate a massive source of latency and cost. |
+| **Intelligence** | This is the prerequisite for **RAG (Retrieval-Augmented Generation)**. To tell the AI about your database schema (DDL) later, it needs this engine to "find" the right table descriptions to show the LLM. |
+
+##### Steps Performed (Phase 2)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| **Dependency Update** | Add `sentence-transformers` and `torch` to requirements. | ✅ |
+| **Model Loading** | Update `CacheManager` to load the model once (as a singleton) when the app starts so it doesn't slow down. | ✅ |
+| **Vector Logic** | Implement `get_embedding()` that converts any text prompt into a 384-dimension vector. | ✅ |
+| **Integration** | Link it to `set_semantic` so it automatically generates vectors if you don't provide them manually. | ✅ |
+| **Test Verification** | Tests ensure a prompt like "Query my sales table" results in a valid mathematical vector, and that the model is loaded only once (singleton). | ✅ |
+
+##### The Product at Phase Completion
+
+When this phase is finished, you have a **"Sentient Cache."** You can feed it a user question, and it will generate a permanent, mathematical "fingerprint" of that question. You are now 100% ready to build the SQL Agent because you have a high-speed memory system waiting to store every successful query the Agent writes.
+
+**Phase 3: The SQL "Expert" Agent**
+
+This is the "Brain Surgery" that connects natural language to your database.
+
+| Task | Description |
+|------|-------------|
+| **Schema Context** | Teach the LLM your table structures (DDL) so it knows where the data lives. |
+| **Query Generation** | The LLM writes the SQL. |
+| **Self-Correction** | If the SQL fails (e.g., syntax error), the agent reads the error, fixes the code, and tries again. |
+| **Cache Loop** | Before the Agent does any of this work, it checks the Semantic Cache to see if it already knows the answer. |
+
+**Phase 4: Tool-Use & Execution (The "Hands")**
+
+This phase gives the AI the ability to run the SQL it wrote.
+
+| Task | Description |
+|------|-------------|
+| **Safe Execution** | Create a "Sandbox" where the AI can execute SELECT statements without risking your data. |
+| **Data Formatting** | Turn raw SQL rows into charts, tables, or natural language summaries (e.g., "Sales are up by 12%"). |
+| **Memory Persistence** | Save the final, successful query back to the Azure Redis cache so it's "remembered" forever. |
+
+**The "Bird's Eye" Roadmap**
+
+| Phase | Title | Value Delivered | Status |
+|-------|-------|-----------------|--------|
+| **PHASE 1** | Infra & Cache | Cost savings, high speed, and Azure scalability. | ✅ |
+| **PHASE 2** | Embeddings | Ability for the machine to "understand" user intent. | ✅ |
+| **PHASE 3** | SQL Agent | Automating the bridge between English and SQL code. | Next |
+| **PHASE 4** | Execution | Real answers from real data delivered to the user. | Pending |
+
+**Your Next Step in Cursor**
+
+Phase 2 (Embedding Engine) is complete. The cache now generates 384-dimension vectors from text via `get_embedding()` and stores them via `set_semantic()`. The model is loaded once as a singleton. Proceed to **Phase 3: The SQL "Expert" Agent** to connect natural language to your database schema and generate SQL.
+
+---
 
 ### 7. (Optional) Validate Cosmos DB Access
 
