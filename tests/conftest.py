@@ -34,6 +34,8 @@ _SKIP = "\033[93m⊘\033[0m"
 _test_docs = {}
 # Ordered list of test outcomes for heatmap (populated during run)
 _test_results_ordered = []
+# Session stats: only count 'call' phase to avoid triple-counting (setup/call/teardown)
+_session_stats = {"passed": 0, "failed": 0, "skipped": 0}
 
 
 def _get_category(nodeid):
@@ -74,20 +76,28 @@ def _get_category(nodeid):
 
 
 def pytest_sessionstart(session):
-    """Clear ordered results at session start."""
-    global _test_results_ordered
+    """Clear ordered results and session stats at session start."""
+    global _test_results_ordered, _session_stats
     _test_results_ordered = []
+    _session_stats = {"passed": 0, "failed": 0, "skipped": 0}
 
 
 def pytest_runtest_logreport(report):
-    """Collect test outcomes in execution order for the heatmap."""
+    """Collect test outcomes. ONLY count 'call' phase to avoid triple-counting setup/teardown.
+    Exception: count skipped in 'setup' too (tests skipped before call never reach call)."""
     if report.when == "call":
         if report.passed:
+            _session_stats["passed"] += 1
             _test_results_ordered.append("passed")
         elif report.failed:
+            _session_stats["failed"] += 1
             _test_results_ordered.append("failed")
-        else:
+        elif report.skipped:
+            _session_stats["skipped"] += 1
             _test_results_ordered.append("skipped")
+    elif report.when == "setup" and report.skipped:
+        _session_stats["skipped"] += 1
+        _test_results_ordered.append("skipped")
 
 
 def pytest_runtest_setup(item):
@@ -117,14 +127,12 @@ def pytest_runtest_setup(item):
             print(f"\n  {prefix} {doc}{_RESET}", flush=True)
 
 
-def _print_status_gauge(terminalreporter, use_color, passed, failed, skipped):
-    """Print temperature-gauge style success indicator with legend."""
-    total = len(passed) + len(failed) + len(skipped)
+def _print_status_gauge(terminalreporter, use_color, n_passed, n_failed, n_skipped):
+    """Print temperature-gauge style success indicator with legend.
+    Uses session_stats counts (call-phase only) to avoid triple-counting from plugins."""
+    total = n_passed + n_failed + n_skipped
     if total == 0:
         return
-    n_passed = len(passed)
-    n_failed = len(failed)
-    n_skipped = len(skipped)
     pct = round(100 * n_passed / total) if total else 0
 
     terminalreporter.write_line("")
@@ -456,5 +464,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"      {msg}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
-    # Status Gauge (temperature-style bar + legend)
-    _print_status_gauge(terminalreporter, use_color, passed, failed, skipped)
+    # Status Gauge (temperature-style bar + legend) — use session_stats to avoid triple-counting
+    _print_status_gauge(
+        terminalreporter,
+        use_color,
+        _session_stats["passed"],
+        _session_stats["failed"],
+        _session_stats["skipped"],
+    )

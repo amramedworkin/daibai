@@ -353,7 +353,8 @@ def get_redis_connection_string() -> Optional[str]:
 def get_semantic_similarity_threshold() -> float:
     """
     Get similarity threshold for semantic cache retrieval (0.0–1.0).
-    Reads SEMANTIC_SIMILARITY_THRESHOLD from .env. Default 0.90.
+    Precision for semantic cache matching. High values = stricter.
+    Reads CACHE_THRESHOLD or SEMANTIC_SIMILARITY_THRESHOLD from .env. Default 0.90.
     """
     # Ensure .env is loaded
     env_locations = []
@@ -367,10 +368,13 @@ def get_semantic_similarity_threshold() -> float:
             load_dotenv(loc)
             break
 
-    raw = os.environ.get("SEMANTIC_SIMILARITY_THRESHOLD", "0.90").strip()
+    raw = (
+        os.environ.get("CACHE_THRESHOLD", "").strip()
+        or os.environ.get("SEMANTIC_SIMILARITY_THRESHOLD", "0.90").strip()
+    )
     try:
         val = float(raw)
-        return max(0.0, min(1.0, val))
+        return max(0.0, min(1.0, val))  # Clamp to 0.0–1.0
     except ValueError:
         return 0.90
 

@@ -21,6 +21,7 @@ Creates .env from .env.example if env_file does not exist.
 """
 
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -89,7 +90,16 @@ def main() -> None:
             lines.append("\n# Updated by setup script\n")
             lines.append(f"{key}={value}\n")
 
-    env_path.write_text("".join(lines))
+    # Atomic write: write to temp file, then rename (idempotent, no partial writes)
+    content = "".join(lines)
+    fd, tmp_path = tempfile.mkstemp(dir=env_path.parent, prefix=".env.", suffix=".tmp")
+    try:
+        with open(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        Path(tmp_path).replace(env_path)
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":
