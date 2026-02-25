@@ -8,12 +8,12 @@ if [ -z "${ENTRATEST_FAKE:-}" ] && [ -f "$ENV_FILE" ]; then
 fi
 ENTRA_TENANT="${AUTH_TENANT_ID:-e12adb01-a6b3-47bb-86c0-d662dacb3675}"
 
-# Prefer app-only client credentials: AUTH_CLIENT_ID / AUTH_CLIENT_SECRET or GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
-CLIENT_ID="${AUTH_CLIENT_ID:-${GRAPH_CLIENT_ID:-}}"
-CLIENT_SECRET="${AUTH_CLIENT_SECRET:-${GRAPH_CLIENT_SECRET:-}}"
+# Prefer app-only client credentials: use AUTH_CLIENT_ID / AUTH_CLIENT_SECRET
+CLIENT_ID="${AUTH_CLIENT_ID:-}"
+CLIENT_SECRET="${AUTH_CLIENT_SECRET:-}"
 
 if [[ -z "$CLIENT_ID" || -z "$CLIENT_SECRET" ]]; then
-    echo "❌ Missing app-only credentials in .env. Set AUTH_CLIENT_ID and AUTH_CLIENT_SECRET (or GRAPH_CLIENT_*) to use non-interactive mode."
+    echo "❌ Missing app-only credentials in .env. Set AUTH_CLIENT_ID and AUTH_CLIENT_SECRET to use non-interactive mode."
     echo "    This script will not perform an interactive browser login to the B2C tenant."
     exit 1
 fi

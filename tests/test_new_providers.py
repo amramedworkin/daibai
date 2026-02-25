@@ -38,7 +38,7 @@ def test_new_provider_required_interface():
         assert provider.model_name == "llama-3.1-70b-versatile"
         assert provider.provider_name == "groq"
     except ImportError:
-        pytest.skip("OpenAI SDK not installed")
+        pytest.skip("OpenAI SDK not installed (pip install daibai[openai])")
 
 
 @pytest.mark.parametrize("provider_type,model", [
@@ -59,4 +59,4 @@ def test_provider_instantiation(provider_type, model):
         assert provider is not None
         assert provider.model_name == model
     except ImportError:
-        pytest.skip("OpenAI SDK not installed")
+        pytest.skip("OpenAI SDK not installed (pip install daibai[openai])")

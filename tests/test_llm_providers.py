@@ -46,7 +46,7 @@ def test_gemini_provider_class():
         assert issubclass(provider_class, BaseLLMProvider)
         assert provider_class.__name__ == "GeminiProvider"
     except ImportError:
-        pytest.skip("Gemini dependencies not installed")
+        pytest.skip("Gemini dependencies not installed (pip install daibai[gemini])")
 
 
 def test_openai_provider_class():
@@ -56,7 +56,7 @@ def test_openai_provider_class():
         assert issubclass(provider_class, BaseLLMProvider)
         assert provider_class.__name__ == "OpenAIProvider"
     except ImportError:
-        pytest.skip("OpenAI dependencies not installed")
+        pytest.skip("OpenAI dependencies not installed (pip install daibai[openai])")
 
 
 def test_anthropic_provider_class():
@@ -66,7 +66,7 @@ def test_anthropic_provider_class():
         assert issubclass(provider_class, BaseLLMProvider)
         assert provider_class.__name__ == "AnthropicProvider"
     except ImportError:
-        pytest.skip("Anthropic dependencies not installed")
+        pytest.skip("Anthropic dependencies not installed (pip install daibai[anthropic])")
 
 
 # --- New provider tests (OpenAI-compatible; require openai SDK) ---
@@ -102,7 +102,7 @@ def test_new_provider_instantiation():
         assert provider.provider_name == "groq"
         assert provider.model_name == "llama-3.1-70b-versatile"
     except ImportError:
-        pytest.skip("OpenAI dependencies not installed")
+        pytest.skip("OpenAI dependencies not installed (pip install daibai[openai])")
 
 
 def test_get_provider_classes():

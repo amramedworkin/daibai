@@ -9,15 +9,31 @@ Mock vs physical: [CAT] = mock (fakeredis, mocked embeddings, etc.); [CAT☁] = 
 import sys
 from pathlib import Path
 
-# Load .env before any tests run so skipif/conditions see REDIS_URL, COSMOS_ENDPOINT, etc.
-# Matches config.py: project .env and ~/.daibai/.env. Does not override existing env vars.
-from dotenv import load_dotenv
-
-_project_root = Path(__file__).resolve().parent.parent
-for loc in [_project_root / ".env", Path.home() / ".daibai" / ".env"]:
-    if loc.exists():
-        load_dotenv(loc)
-        break
+# Environment variables are provided to pytest via pytest-dotenv (configured in pyproject.toml).
+# pytest-dotenv will load `.env` (and `.env.test` if present) before test collection, so tests can
+# rely on AUTH_*, AZURE_*, and other environment variables at import/collection time.
+#
+# NOTE: We intentionally removed the common "jury-rigged" anti-patterns where tests/modules
+# manually load .env at the top of files or via autouse fixtures in conftest. Examples that were
+# removed (if present) are shown below — DO NOT reintroduce them:
+#
+# 1) Top-of-file load (DELETE THIS):
+#    from dotenv import load_dotenv
+#    load_dotenv()
+#
+# 2) Manual session fixture (DELETE THIS):
+#    @pytest.fixture(scope="session", autouse=True)
+#    def env_setup():
+#        load_dotenv(".env")
+#
+# Rationale:
+# - pytest-dotenv centralizes env loading and runs before collection, ensuring skip/skipif guards
+#   and module-level env checks behave consistently.
+# - env_override_existing_values = 1 (pyproject.toml) makes .env/.env.test take precedence
+#   for deterministic test runs.
+#
+# If you need test-specific overrides, prefer creating a `.env.test` file (committed to CI secrets
+# or kept locally) instead of in-code loading.
 
 # ANSI colors (work in most terminals)
 _CYAN = "\033[96m"    # Database, config
@@ -98,7 +114,33 @@ def _get_category(nodeid):
         return "LLM-MODELS", _MAGENTA
     if "test_gemini_get_models" in nodeid:
         return "LLM-GEMINI", _MAGENTA
+    if "test_auth_connectivity" in nodeid or "test_gui_login" in nodeid or "test_entra_user" in nodeid:
+        return "AUTH", _GREEN
     return None, None
+
+
+def _get_skip_reason(report):
+    """Extract skip reason from a skipped TestReport for display."""
+    def _clean(s):
+        if not s:
+            return "No reason given"
+        s = str(s).replace("Skipped: ", "").replace("Skipped", "").strip()
+        return s or "No reason given"
+
+    try:
+        if hasattr(report, "longrepr") and report.longrepr is not None:
+            lr = report.longrepr
+            if isinstance(lr, tuple) and len(lr) >= 3:
+                return _clean(lr[2])
+            if hasattr(lr, "reprcrash") and lr.reprcrash is not None:
+                return _clean(getattr(lr.reprcrash, "message", ""))
+            if isinstance(lr, str):
+                return _clean(lr)
+        if hasattr(report, "longreprtext") and report.longreprtext:
+            return _clean(report.longreprtext.strip())
+    except Exception:
+        pass
+    return "No reason given"
 
 
 def _is_physical_test(nodeid):
@@ -309,12 +351,13 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     b, r = (_BOLD, _RESET) if use_color else ("", "")
     key_mods = (
-        "test_database_logic", "test_api", "test_auth", "test_config",         "test_schema_discovery", "test_schema_mapping", "test_schema_indexing", "test_sql_guardrails",
+        "test_database_logic", "test_api", "test_auth", "test_config", "test_schema_discovery", "test_schema_mapping", "test_schema_indexing", "test_sql_guardrails",
         "test_env_integrity",
         "test_cosmos_cloud", "test_cosmos_integration", "test_cosmos_store",
         "test_server_lifespan", "test_redis", "test_cache_connection", "test_cache_logic",
         "test_semantic_cache", "test_semantic_precision", "test_azure_config", "test_llm_providers", "test_new_providers",
         "test_model_discovery", "test_gemini_get_models",
+        "live/",  # tests/live/* (auth, gui login, entra user flow)
     )
 
     # Warning Dashboard (before Test Dashboard): group by message, show one test per unique warning
@@ -643,6 +686,29 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             terminalreporter.write_line(f"  {err_sym} {c}{tag_str}{r} {doc}")
             if msg:
                 terminalreporter.write_line(f"      {msg}")
+        terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+
+    # Skipped Tests (with reasons): every skipped test must have a logged reason
+    skipped_reports = terminalreporter.stats.get("skipped", [])
+    if skipped_reports:
+        terminalreporter.write_line("")
+        terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+        terminalreporter.write_line(f"{b}  Skipped Tests (reasons){r}")
+        terminalreporter.write_line(f"{b}{'─' * 70}{r}")
+        for report in skipped_reports:
+            if not report.nodeid:
+                continue
+            reason = _get_skip_reason(report)
+            cat, color = _get_category(report.nodeid)
+            tag = _format_category(cat, report.nodeid) if cat else ""
+            doc = _test_docs.get(report.nodeid, report.nodeid.split("::")[-1])
+            if len(doc) > 50:
+                doc = doc[:47] + "..."
+            skip_sym = _SKIP if use_color else "SKIP"
+            cc = color if use_color and cat else ""
+            tag_str = f"{cc}[{tag}]{r} " if tag else ""
+            terminalreporter.write_line(f"  {skip_sym} {tag_str}{doc}")
+            terminalreporter.write_line(f"      {_DIM if use_color else ''}Reason: {reason}{r}")
         terminalreporter.write_line(f"{b}{'─' * 70}{r}")
 
     # Mock vs Physical: counts and bar chart

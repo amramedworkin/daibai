@@ -11,8 +11,8 @@ if [ -z "${ENTRATEST_FAKE:-}" ] && [ -f "$ENV_FILE" ]; then
 fi
 
 ENTRA_TENANT="${AUTH_TENANT_ID:-${ENTRA_TENANT:-e12adb01-a6b3-47bb-86c0-d662dacb3675}}"
-CLIENT_ID="${AUTH_CLIENT_ID:-${GRAPH_CLIENT_ID:-}}"
-CLIENT_SECRET="${AUTH_CLIENT_SECRET:-${GRAPH_CLIENT_SECRET:-}}"
+CLIENT_ID="${AUTH_CLIENT_ID:-}"
+CLIENT_SECRET="${AUTH_CLIENT_SECRET:-}"
 
 DRY_RUN=false
 DISPLAY_NAME=""
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$CLIENT_ID" || -z "$CLIENT_SECRET" ]]; then
-  echo "❌ Missing app credentials in .env (AUTH_CLIENT_ID/AUTH_CLIENT_SECRET or GRAPH_CLIENT_*)"
+  echo "❌ Missing app credentials in .env (AUTH_CLIENT_ID/AUTH_CLIENT_SECRET)"
   exit 1
 fi
 

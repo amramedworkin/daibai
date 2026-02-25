@@ -61,6 +61,53 @@ graph TD
 | **Azure Cosmos DB (Serverless)** | Stores chat history and agent metadata with pay-per-request pricing. |
 | **Azure Relay/Hybrid Connections** | Enables the serverless cloud backend to securely query "local" data servers behind firewalls without VPNs. |
 
+### AUTH vs INFRA Plane Architecture with Airgap
+
+DaiBai uses a **Dual-Plane Identity** model that strictly separates user identity from infrastructure access. This prevents infrastructure admins from using their Azure credentials to access the Chat API as end users.
+
+```mermaid
+graph TB
+    subgraph Identity_Plane["Identity Plane (AUTH)"]
+        AUTH_TENANT[AUTH_TENANT_ID]
+        B2C_Users[User Identities / B2C]
+        User_Token[User JWT Token]
+    end
+
+    subgraph Infra_Plane["Infrastructure Plane (INFRA)"]
+        AZURE_TENANT[AZURE_TENANT_ID]
+        KeyVault[Key Vault]
+        Cosmos[Cosmos DB]
+        Redis[Redis]
+    end
+
+    subgraph Airgap["Computational Airgap"]
+        direction LR
+        Block["❌ User tokens NEVER used for infra"]
+        Allow["✓ Managed Identity / DefaultAzureCredential for infra"]
+    end
+
+    User_Token -->|"Valid for Chat API only"| Chat_API[Chat API]
+    AUTH_TENANT -.->|"tid must match"| Chat_API
+    AZURE_TENANT -.->|"tid rejected (403)"| Chat_API
+
+    Allow --> KeyVault
+    Allow --> Cosmos
+    Allow --> Redis
+```
+
+| Plane | Purpose | Tenant | Env Vars | Who Uses It |
+|-------|---------|--------|----------|-------------|
+| **Identity (AUTH)** | User sign-in, Chat API access | DaiBai Customers (B2C) | `AUTH_TENANT_ID`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET` | End users via MSAL; robot for Graph API (list/create users) |
+| **Infrastructure (INFRA)** | Key Vault, Cosmos, Redis, subscriptions | IT Protects (or your org tenant) | `AZURE_TENANT_ID` | Backend services via `DefaultAzureCredential` |
+
+**The Airgap Rule**
+
+- **User tokens** (from Identity Plane) are valid only for the Chat API. The backend validates `token.tid == AUTH_TENANT_ID` and rejects tokens from `AZURE_TENANT_ID` with 403 Forbidden.
+- **Infrastructure operations** (Key Vault, Cosmos, Redis) use `DefaultAzureCredential` bound to `AZURE_TENANT_ID`. User tokens are never passed to these clients.
+- **Result:** Infrastructure admins (who hold credentials in the INFRA tenant) cannot naturally chat as "users." They must sign in through the Identity Plane (B2C) like any other end user.
+
+See `daibai/core/identity.py` for `IdentityManager.enforce_airgap()` and `docs/architecture.md` for the full Dual-Plane specification.
+
 ## 2. Costing Analysis (Monthly Estimates)
 
 Estimates are based on typical consumption patterns for a serverless environment.

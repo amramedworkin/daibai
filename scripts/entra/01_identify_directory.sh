@@ -14,9 +14,9 @@ ORIGINAL_SUB=$(az account show --query id -o tsv 2>/dev/null)
 if [ -n "$ORIGINAL_SUB" ]; then
     trap 'echo -e "\n🔄 Restoring original Azure context..."; az account set --subscription "$ORIGINAL_SUB" > /dev/null 2>&1' EXIT
 fi
-# Try app-only client credentials first (no browser). If GRAPH creds present in .env, use them.
-CLIENT_ID="${AUTH_CLIENT_ID:-${GRAPH_CLIENT_ID:-}}"
-CLIENT_SECRET="${AUTH_CLIENT_SECRET:-${GRAPH_CLIENT_SECRET:-}}"
+# Try app-only client credentials first (no browser).
+CLIENT_ID="${AUTH_CLIENT_ID:-}"
+CLIENT_SECRET="${AUTH_CLIENT_SECRET:-}"
 TOKEN=""
 if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" ]]; then
     TOKEN=$(curl -s -X POST "https://login.microsoftonline.com/${ENTRA_TENANT}/oauth2/v2.0/token" \

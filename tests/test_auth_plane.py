@@ -160,8 +160,6 @@ def test_list_users_app_only(tmp_path):
             "AUTH_TENANT_ID": "e12adb01-a6b3-47bb-86c0-d662dacb3675",
             "AUTH_CLIENT_ID": "fake-client-id",
             "AUTH_CLIENT_SECRET": "fake-secret",
-            "GRAPH_CLIENT_ID": "fake-client-id",
-            "GRAPH_CLIENT_SECRET": "fake-secret",
             "PATH": f"{tmp_path}:{env.get('PATH','')}",
         }
     )
@@ -201,8 +199,6 @@ def test_entra_tenant_e2e_identity_list_create_list_delete(tmp_path):
             "AUTH_TENANT_ID": "e12adb01-a6b3-47bb-86c0-d662dacb3675",
             "AUTH_CLIENT_ID": "fake-client-id",
             "AUTH_CLIENT_SECRET": "fake-secret",
-            "GRAPH_CLIENT_ID": "fake-client-id",
-            "GRAPH_CLIENT_SECRET": "fake-secret",
             "PATH": f"{curl_dir}:{env.get('PATH','')}",
             "ENTRATEST_FAKE": "1",  # Skip loading project .env so fake curl is used
         }

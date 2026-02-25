@@ -92,9 +92,12 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.0.0",
     "pytest-sugar>=0.9.0",
+    "pytest-timeout>=2.2.0",
+    "pytest-dotenv>=0.5.0",
     "rich>=13.0.0",
     "fakeredis>=2.0.0",
     "httpx>=0.25.0",
+    "fastapi>=0.100.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
@@ -121,7 +124,7 @@ packages = ["daibai"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q --quiet-mode"
+addopts = "-q --quiet-mode -rs"
 filterwarnings = [
     "ignore::DeprecationWarning:fakeredis.*",
     "ignore::DeprecationWarning:redis.*",
@@ -130,6 +133,8 @@ filterwarnings = [
 markers = [
     "cloud: marks tests as cloud integration (require COSMOS_ENDPOINT, skip when offline)",
 ]
+env_files = [".env", ".env.test"]
+env_override_existing_values = 1
 
 [tool.black]
 line-length = 100

@@ -190,7 +190,7 @@ def test_schema_mapping_live():
 
     conn = get_redis_connection_string()
     if not conn:
-        pytest.skip("No Redis connection string")
+        pytest.skip("REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live schema mapping test requires Redis")
 
     cache = CacheManager(connection_string=conn)
     manager = SchemaManager(

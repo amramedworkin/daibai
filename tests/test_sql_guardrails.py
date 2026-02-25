@@ -624,7 +624,7 @@ def live_test_table():
     Yields table name; drops table on teardown. Skips if CREATE not allowed.
     """
     if not _has_mysql():
-        pytest.skip("MYSQL_* not set")
+        pytest.skip("MYSQL_HOST/MYSQL_PASSWORD not set - live guardrail fixture requires MySQL")
     table = "_daibai_guardrail_test"
     try:
         conn = _live_conn()

@@ -10,8 +10,8 @@ if [ -f "$ENV_FILE" ]; then
     set -a && source "$ENV_FILE" >/dev/null 2>&1 || true
     set +a
 fi
-CLIENT_ID="${AUTH_CLIENT_ID:-${GRAPH_CLIENT_ID:-}}"
-CLIENT_SECRET="${AUTH_CLIENT_SECRET:-${GRAPH_CLIENT_SECRET:-}}"
+CLIENT_ID="${AUTH_CLIENT_ID:-}"
+CLIENT_SECRET="${AUTH_CLIENT_SECRET:-}"
 
 if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" ]]; then
     RESP=$(curl -s -X POST "https://login.microsoftonline.com/${DAIBAI_TENANT_ID}/oauth2/v2.0/token" \

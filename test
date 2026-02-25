@@ -1,0 +1,15 @@
+#!/bin/bash
+# Run pytest using the project's virtual environment.
+# Usage: ./test [pytest args...]
+# Example: ./test tests/ -v
+#          ./test tests/test_config.py -v -x
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PY="$SCRIPT_DIR/.venv/bin/python"
+
+if [[ ! -x "$VENV_PY" ]]; then
+    echo "Virtual environment not found. Run: ./scripts/setup.sh"
+    exit 1
+fi
+
+exec "$VENV_PY" -m pytest "${@:-tests/}"

@@ -4,26 +4,49 @@
 
 console.log('MSAL Loaded:', typeof msal !== 'undefined');
 
-// Microsoft Entra External ID (MSAL) configuration
-const MSAL_TENANT_NAME = 'daibaiauth';
-const MSAL_TENANT_ID = 'e12adb01-a6b3-47bb-86c0-d662dacb3675';
-
-const msalConfig = {
-    auth: {
-        clientId: '5f5462c3-47b1-4af0-9ee0-6271d9893780',
-        authority: `https://${MSAL_TENANT_NAME}.ciamlogin.com/${MSAL_TENANT_ID}/`,
-        knownAuthorities: [`https://${MSAL_TENANT_NAME}.ciamlogin.com`],
-        redirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
-        postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
-    },
-    cache: {
-        cacheLocation: 'sessionStorage',
-        storeAuthStateInCookie: false,
-    },
+// MSAL config is built from /api/auth-config (AUTH_TENANT_ID) at init time
+let msalInstance = null;
+const MSAL_DEFAULTS = {
+    tenantId: 'e12adb01-a6b3-47bb-86c0-d662dacb3675',
+    tenantName: 'daibaiauth',
+    clientId: '5f5462c3-47b1-4af0-9ee0-6271d9893780',
 };
 
-const msalInstance = new msal.PublicClientApplication(msalConfig);
-console.log('MSAL Instance Initialized:', msalInstance !== undefined);
+function buildMsalConfig(authConfig) {
+    const authority = authConfig?.authority || `https://${MSAL_DEFAULTS.tenantName}.ciamlogin.com/${MSAL_DEFAULTS.tenantId}/`;
+    const clientId = authConfig?.auth_client_id || MSAL_DEFAULTS.clientId;
+    const knownAuthorities = authConfig?.known_authorities?.length
+        ? authConfig.known_authorities
+        : [`https://${MSAL_DEFAULTS.tenantName}.ciamlogin.com`];
+    return {
+        auth: {
+            clientId,
+            authority,
+            knownAuthorities,
+            redirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
+            postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
+        },
+        cache: {
+            cacheLocation: 'sessionStorage',
+            storeAuthStateInCookie: false,
+        },
+    };
+}
+
+async function ensureMsalInstance() {
+    if (msalInstance) return msalInstance;
+    let authConfig = {};
+    try {
+        const res = await fetch('/api/auth-config');
+        if (res.ok) authConfig = await res.json();
+    } catch (e) {
+        console.warn('Could not fetch auth-config, using defaults:', e.message);
+    }
+    const msalConfig = buildMsalConfig(authConfig);
+    msalInstance = new msal.PublicClientApplication(msalConfig);
+    console.log('MSAL Instance Initialized (authority:', msalConfig.auth.authority, ')');
+    return msalInstance;
+}
 
 // Redirect flow avoids COOP blocking popup window.closed; set false to try popup
 const USE_REDIRECT_INSTEAD_OF_POPUP = true;
@@ -31,7 +54,7 @@ const USE_REDIRECT_INSTEAD_OF_POPUP = true;
 let _authInteractionInProgress = false;
 
 function isAuthenticated() {
-    return msalInstance.getAllAccounts().length > 0;
+    return msalInstance && msalInstance.getAllAccounts().length > 0;
 }
 
 function showAuthGate() {
@@ -61,6 +84,7 @@ function updateAuthButtons() {
 
 async function signIn() {
     if (_authInteractionInProgress) return;
+    await ensureMsalInstance();
     await msalInstance.initialize();
     const loginRequest = { scopes: ['openid', 'profile'] };
     try {
@@ -83,6 +107,7 @@ async function signIn() {
 
 async function signOut() {
     if (_authInteractionInProgress) return;
+    await ensureMsalInstance();
     await msalInstance.initialize();
     try {
         if (USE_REDIRECT_INSTEAD_OF_POPUP) {
@@ -100,6 +125,7 @@ async function signOut() {
 
 async function signUp() {
     if (_authInteractionInProgress) return;
+    await ensureMsalInstance();
     await msalInstance.initialize();
     const scopes = ['openid', 'profile', 'User.Read'];
     try {
@@ -130,6 +156,7 @@ async function signUp() {
 }
 
 async function getTokenPopup(request) {
+    await ensureMsalInstance();
     await msalInstance.initialize();
     const account = msalInstance.getAllAccounts()[0];
     if (!account) {
@@ -1626,6 +1653,7 @@ class DaiBaiApp {
 
 // Initialize app: MUST await handleRedirectPromise before any other MSAL call (fixes interaction_in_progress)
 document.addEventListener('DOMContentLoaded', async () => {
+    await ensureMsalInstance();
     await msalInstance.initialize();
     try {
         const response = await msalInstance.handleRedirectPromise();

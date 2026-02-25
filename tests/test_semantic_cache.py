@@ -208,7 +208,7 @@ def test_semantic_cache_live():
 
     conn = get_redis_connection_string()
     if not conn:
-        pytest.skip("No Redis connection string")
+        pytest.skip("REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live semantic cache test requires Redis")
 
     cache = SemanticCache(connection_string=conn, similarity_threshold=0.85)
     try:

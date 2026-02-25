@@ -476,7 +476,7 @@ def test_agent_pruning_live_full_pipeline():
     # Ensure we have Redis
     redis_url = _get_redis_url()
     if not redis_url:
-        pytest.skip("REDIS_URL required")
+        pytest.skip("REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live pruning test requires Redis")
 
     # Train (will index to Redis)
     try:

@@ -459,7 +459,7 @@ def test_index_and_search_schema_live():
 
     conn = get_redis_connection_string()
     if not conn:
-        pytest.skip("No Redis connection string")
+        pytest.skip("REDIS_URL or AZURE_REDIS_CONNECTION_STRING not set - live schema indexing test requires Redis")
 
     cache = CacheManager(connection_string=conn)
     manager = SchemaManager(

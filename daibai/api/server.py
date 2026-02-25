@@ -217,6 +217,31 @@ class ConversationSummary(BaseModel):
 # Static files path
 STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 
+@app.get("/api/auth-config", include_in_schema=False)
+async def get_auth_config():
+    """
+    Public endpoint returning MSAL configuration for the frontend.
+    Used before login to point the Chat UI at the correct Identity Plane directory.
+    """
+    import os
+    tenant_id = os.environ.get("AUTH_TENANT_ID", "").strip()
+    client_id = os.environ.get("AUTH_CLIENT_ID", "").strip()
+    tenant_name = os.environ.get("AUTH_TENANT_NAME", "daibaiauth").strip()
+    authority_type = os.environ.get("AUTH_AUTHORITY_TYPE", "ciam").strip().lower()
+    if authority_type == "azure":
+        authority = f"https://login.microsoftonline.com/{tenant_id}" if tenant_id else ""
+        known_authorities = ["https://login.microsoftonline.com"]
+    else:
+        authority = f"https://{tenant_name}.ciamlogin.com/{tenant_id}/" if tenant_id else ""
+        known_authorities = [f"https://{tenant_name}.ciamlogin.com"]
+    return {
+        "auth_tenant_id": tenant_id,
+        "auth_client_id": client_id,
+        "authority": authority,
+        "known_authorities": known_authorities,
+    }
+
+
 @app.get("/health")
 async def health(request: Request):
     """
