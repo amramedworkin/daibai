@@ -1,0 +1,6 @@
+Requirement already satisfied: pytest-timeout in ./.venv/lib/python3.12/site-packages (2.4.0)
+Requirement already satisfied: pytest>=7.0.0 in ./.venv/lib/python3.12/site-packages (from pytest-timeout) (9.0.2)
+Requirement already satisfied: iniconfig>=1.0.1 in ./.venv/lib/python3.12/site-packages (from pytest>=7.0.0->pytest-timeout) (2.3.0)
+Requirement already satisfied: packaging>=22 in ./.venv/lib/python3.12/site-packages (from pytest>=7.0.0->pytest-timeout) (26.0)
+Requirement already satisfied: pluggy<2,>=1.5 in ./.venv/lib/python3.12/site-packages (from pytest>=7.0.0->pytest-timeout) (1.6.0)
+Requirement already satisfied: pygments>=2.7.2 in ./.venv/lib/python3.12/site-packages (from pytest>=7.0.0->pytest-timeout) (2.19.2)

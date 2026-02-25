@@ -229,6 +229,11 @@ class Config:
     def azure_tenant_id(self) -> str:
         """The tenant ID where infrastructure resources live (Infrastructure Plane)."""
         return os.environ.get("AZURE_TENANT_ID", "")
+
+    @property
+    def hf_token(self) -> str:
+        """Hugging Face token used for authenticated model downloads (HF_TOKEN)."""
+        return os.environ.get("HF_TOKEN", "")
     def validate_auth_config(self, fail_on_error: bool = True) -> bool:
         """
         Validate Robot (app-only) credentials against the Identity Plane by requesting
@@ -263,6 +268,20 @@ class Config:
             err = result.get("error_description") if isinstance(result, dict) else str(result)
             raise RuntimeError(f"Failed to acquire Graph token for tenant {tenant}: {err}")
         return ok
+
+    def trusted_identity_plane(self) -> Dict[str, str]:
+        """
+        Return a small dict describing the trusted Identity Plane.
+
+        Keys:
+        - tenant_id: AUTH_TENANT_ID
+        - client_id: AUTH_CLIENT_ID
+        """
+        return {"tenant_id": self.auth_tenant_id, "client_id": self.auth_client_id}
+
+    def is_auth_tenant(self, tenant_id: str) -> bool:
+        """Return True if the given tenant_id matches the configured AUTH_TENANT_ID."""
+        return str(tenant_id or "").strip() == str(self.auth_tenant_id or "").strip()
 
 
 def _resolve_env_vars(value: Any) -> Any:

@@ -8,6 +8,7 @@ Mock vs physical: [CAT] = mock (fakeredis, mocked embeddings, etc.); [CAT☁] = 
 
 import sys
 from pathlib import Path
+import os
 
 # Environment variables are provided to pytest via pytest-dotenv (configured in pyproject.toml).
 # pytest-dotenv will load `.env` (and `.env.test` if present) before test collection, so tests can
@@ -34,6 +35,21 @@ from pathlib import Path
 #
 # If you need test-specific overrides, prefer creating a `.env.test` file (committed to CI secrets
 # or kept locally) instead of in-code loading.
+# Prevent accidental live Key Vault calls during test collection by clearing KEY_VAULT_URL
+# unless a test explicitly re-enables it. This avoids Azure SDK attempts during import/collection.
+os.environ.pop("KEY_VAULT_URL", None)
+# Also stub out the keyvault fetcher in the config module to avoid any network calls during tests.
+# Tests that require Key Vault can opt into it by setting ALLOW_KEYVAULT=1 in their env.
+try:
+    if os.environ.get("ALLOW_KEYVAULT", "0") != "1":
+        import daibai.core.config as _cfg
+
+        def _no_kv(vault_url: str):
+            return {}
+
+        _cfg._fetch_secrets_from_keyvault = _no_kv
+except Exception:
+    pass
 
 # ANSI colors (work in most terminals)
 _CYAN = "\033[96m"    # Database, config
@@ -172,9 +188,36 @@ def pytest_sessionstart(session):
     """Clear ordered results and session stats at session start."""
     global _test_results_ordered, _session_stats, _physical_test_nodeids, _mock_physical_stats
     _test_results_ordered = []
-    _session_stats = {"passed": 0, "failed": 0, "skipped": 0}
+    _session_stats = {"passed": 0, "failed": 0, "skipped": 0, "timed_out": 0}
     _physical_test_nodeids = set()
-    _mock_physical_stats = {"mock": {"passed": 0, "failed": 0, "skipped": 0}, "physical": {"passed": 0, "failed": 0, "skipped": 0}}
+    _mock_physical_stats = {
+        "mock": {"passed": 0, "failed": 0, "skipped": 0, "timed_out": 0},
+        "physical": {"passed": 0, "failed": 0, "skipped": 0, "timed_out": 0},
+    }
+    # If running in verbose mode, enable pytest's live log capture so guardrail messages appear inline.
+    try:
+        if session.config.getoption("verbose", 0) > 0:
+            session.config.option.log_cli = True
+            session.config.option.log_cli_level = "INFO"
+    except Exception:
+        pass
+    # Enforce default per-test timeout (seconds) to avoid hangs
+    try:
+        # set plugin timeout option for pytest-timeout
+        session.config.option.timeout = getattr(session.config.option, "timeout", 5) or 5
+        # also ensure plugin sees it
+        session.config._timeout = session.config.option.timeout
+    except Exception:
+        try:
+            session.config.option.timeout = 5
+        except Exception:
+            pass
+    # Prevent accidental live Key Vault calls during mock test runs by unsetting KEY_VAULT_URL
+    # Tests that need Key Vault should set it explicitly (e.g., in CI) or use live markers.
+    try:
+        session.config._orig_key_vault = os.environ.pop("KEY_VAULT_URL", None)
+    except Exception:
+        session.config._orig_key_vault = None
 
 
 def pytest_runtest_logreport(report):
@@ -212,6 +255,45 @@ def pytest_runtest_logreport(report):
     if outcome:
         bucket = "physical" if _is_physical_test(report.nodeid) else "mock"
         _mock_physical_stats[bucket][outcome] += 1
+    # Detect timeouts and treat them as a separate outcome category
+    timeout_detected = False
+    try:
+        longrepr = getattr(report, "longreprtext", None) or repr(getattr(report, "longrepr", ""))
+        if longrepr and "timeout" in longrepr.lower():
+            timeout_detected = True
+    except Exception:
+        timeout_detected = False
+    if timeout_detected:
+        # If we already counted this as failed, undo and mark as timed_out
+        bucket = "physical" if _is_physical_test(report.nodeid) else "mock"
+        if outcome == "failed":
+            _session_stats["failed"] = max(0, _session_stats.get("failed", 0) - 1)
+            _mock_physical_stats[bucket]["failed"] = max(0, _mock_physical_stats[bucket].get("failed", 0) - 1)
+            # replace last failed in ordered list if present
+            try:
+                idx = len(_test_results_ordered) - 1 - _test_results_ordered[::-1].index("failed")
+                _test_results_ordered[idx] = "timed_out"
+            except Exception:
+                _test_results_ordered.append("timed_out")
+        else:
+            _test_results_ordered.append("timed_out")
+        _session_stats["timed_out"] = _session_stats.get("timed_out", 0) + 1
+        _mock_physical_stats[bucket]["timed_out"] = _mock_physical_stats[bucket].get("timed_out", 0) + 1
+    # Guardrails-specific detailed logging: print AFTER messages for each phase when verbose
+    try:
+        cfg = report.config
+        verbose_level = cfg.getoption("verbose")
+    except Exception:
+        verbose_level = 0
+    if verbose_level and "test_sql_guardrails.py" in report.nodeid:
+        short = report.nodeid.split("::")[0].split("/")[-1] + "::" + report.nodeid.split("::")[-1]
+        import logging
+        logger = logging.getLogger("pytest-guardrails")
+        if report.when == "call":
+            status = "PASSED" if report.passed else ("FAILED" if report.failed else ("SKIPPED" if report.skipped else "UNKNOWN"))
+            logger.info(f"+++ AFTER: {short} -> {status}")
+        elif report.when == "teardown":
+            logger.info(f"~~~ TEARDOWN COMPLETE: {short}")
 
 
 def pytest_runtest_setup(item):
@@ -250,6 +332,17 @@ def pytest_runtest_setup(item):
             tag = _format_category(cat, item.nodeid)
             prefix = f"{color}{_BOLD}[{tag}]{_RESET}"
             print(f"\n  {prefix} {doc}{_RESET}", flush=True)
+            # If running in verbose mode, add explicit BEFORE/RUNNING markers for guardrails tests
+            try:
+                verbose_level = item.config.getoption("verbose")
+            except Exception:
+                verbose_level = 0
+            if verbose_level and "test_sql_guardrails.py" in item.nodeid:
+                import logging
+                logger = logging.getLogger("pytest-guardrails")
+                short = item.nodeid.split("::")[0].split("/")[-1] + "::" + item.name
+                logger.info(f"--- BEFORE: {short}")
+                logger.info(f"*** RUNNING: {short}")
 
 
 def _print_status_gauge(terminalreporter, use_color, n_passed, n_failed, n_skipped):
@@ -722,3 +815,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         _session_stats["failed"],
         _session_stats["skipped"],
     )
+    # Report timed-out tests separately
+    timed_out = _session_stats.get("timed_out", 0)
+    if timed_out:
+        terminalreporter.write_line(f"  Timed out: {timed_out}")

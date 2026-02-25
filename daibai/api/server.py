@@ -6,13 +6,13 @@ FastAPI backend providing REST and WebSocket endpoints for the GUI.
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 
-import jwt
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends, Request
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from fastapi.staticfiles import StaticFiles
@@ -23,69 +23,24 @@ from pydantic import BaseModel
 from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
 from .database import CosmosConversationStore
+from . import auth
 
-# Entra ID (daibaiauth tenant) - matches frontend MSAL config
-ENTRA_TENANT_ID = "e12adb01-a6b3-47bb-86c0-d662dacb3675"
-ENTRA_CLIENT_ID = "5f5462c3-47b1-4af0-9ee0-6271d9893780"
-ENTRA_ISSUER = f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/v2.0"
-ENTRA_JWKS_URL = f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/discovery/v2.0/keys"
-
+# OAuth2 scheme for Bearer token extraction (authority URLs are informational)
+_tenant = os.environ.get("AUTH_TENANT_ID", "e12adb01-a6b3-47bb-86c0-d662dacb3675")
+_tenant_name = os.environ.get("AUTH_TENANT_NAME", "daibaiauth")
 oauth2_scheme = OAuth2AuthorizationCodeBearer(
-    authorizationUrl=f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/oauth2/v2.0/authorize",
-    tokenUrl=f"https://daibaiauth.ciamlogin.com/{ENTRA_TENANT_ID}/oauth2/v2.0/token",
+    authorizationUrl=f"https://{_tenant_name}.ciamlogin.com/{_tenant}/oauth2/v2.0/authorize",
+    tokenUrl=f"https://{_tenant_name}.ciamlogin.com/{_tenant}/oauth2/v2.0/token",
 )
 
 
-def _get_jwks():
-    """Fetch JWKS from Entra ID (cached)."""
-    import urllib.request
-    with urllib.request.urlopen(ENTRA_JWKS_URL, timeout=10) as resp:
-        return json.loads(resp.read())
-
-
-def _decode_and_validate_token(token: str) -> Dict[str, Any]:
-    """Decode and validate JWT from Entra ID. Raises HTTPException on failure."""
-    try:
-        header = jwt.get_unverified_header(token)
-        kid = header.get("kid")
-        jwks = _get_jwks()
-        if not kid:
-            # Fallback: try decoding with first key
-            keys = jwks.get("keys", [])
-            if not keys:
-                raise HTTPException(status_code=401, detail="Invalid token")
-            key = jwt.algorithms.RSAAlgorithm.from_jwk(keys[0])
-            payload = jwt.decode(
-                token,
-                key,
-                algorithms=["RS256"],
-                audience=ENTRA_CLIENT_ID,
-                issuer=ENTRA_ISSUER,
-            )
-            return payload
-        for key_data in jwks.get("keys", []):
-            if key_data.get("kid") == kid:
-                key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-                payload = jwt.decode(
-                    token,
-                    key,
-                    algorithms=["RS256"],
-                    audience=ENTRA_CLIENT_ID,
-                    issuer=ENTRA_ISSUER,
-                )
-                return payload
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
-    """Validate JWT and return decoded payload. Raises 401 if invalid."""
-    return _decode_and_validate_token(token)
+    """Validate JWT via Robot-mediated validation (auth module). Raises 401/403 if invalid."""
+    try:
+        return auth.validate_token(token)
+    except Exception:
+        # Normalize any auth failure to a clear 401 for the API surface
+        raise HTTPException(status_code=401, detail="Invalid Tenant Plane")
 
 
 def get_store(request: Request) -> CosmosConversationStore:
@@ -544,7 +499,7 @@ async def websocket_chat(websocket: WebSocket):
         await websocket.close(code=4001)
         return
     try:
-        _decode_and_validate_token(token)
+        auth.validate_token(token)
     except HTTPException:
         await websocket.close(code=4001)
         return

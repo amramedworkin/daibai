@@ -32,7 +32,7 @@ def test_airgap_enforcement(monkeypatch):
         def get_signing_key_from_jwt(self, token):
             return DummyKey(secret)
 
-    monkeypatch.setattr(authmod, "_get_jwk_client", lambda t: FakeJWKClient("fake"))
+    monkeypatch.setattr(authmod, "_get_jwk_client", lambda: FakeJWKClient("fake"))
 
     app = FastAPI()
 

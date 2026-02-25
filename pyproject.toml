@@ -135,6 +135,7 @@ markers = [
 ]
 env_files = [".env", ".env.test"]
 env_override_existing_values = 1
+timeout = 5
 
 [tool.black]
 line-length = 100
