@@ -211,6 +211,18 @@ To access Azure services (like Key Vault) from your local machine:
 | **Redirect URIs** | Add as needed |
 | **State** | Activated |
 
+**Service Principal / Robot: daibai-cli-robot**
+
+| Property | Value |
+|----------|-------|
+| **Display Name** | daibai-cli-robot |
+| **Application (client) ID** | `9b723588-0f75-4ef7-afa2-c34a3f6873e5` |
+| **Object ID** | `335c4ceb-603f-4a73-9e44-32b025b9dceb` |
+| **Directory (tenant) ID** | `e12adb01-a6b3-47bb-86c0-d662dacb3675` |
+| **Supported account types** | My organization only |
+| **Client credentials** | (Add certificate or secret) |
+| **Purpose** | App-only automation for Entra Graph operations (preferred non-interactive robot user) |
+
 *Note: Add a certificate or secret for client credentials, and configure the Application ID URI as needed for your API.*
 
 *Use Microsoft Authentication Library (MSAL) and Microsoft Graph. ADAL and Azure AD Graph are deprecated. See [Microsoft Entra External ID](https://learn.microsoft.com/en-us/entra/external-id/) documentation.*

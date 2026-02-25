@@ -149,8 +149,8 @@ Commands (mirrors menu.sh):
     entra verify             CI-friendly: check tenant only, no login (exit 0/1)
     entra identify [--ci]    Identify DaiBai directory; --ci = no interactive login
     entra list               List active users
-    entra delete [--soft]    Delete single user (hard=permanent, soft=30-day recycle bin)
-    entra bulk-delete [--soft]  Bulk delete test users (prefix: daibai, override: USER_PREFIX=)
+    entra delete [--soft] [--execute]  Delete single user (dry run by default; --execute to perform)
+    entra bulk-delete [--soft] [--execute]  Bulk delete test users (dry run by default; --execute to perform)
 
   SETUP (idempotent)
     setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
@@ -971,21 +971,20 @@ main() {
                     ;;
                 list) bash "$SCRIPT_DIR/entra/02_list_users.sh" ;;
                 delete)
-                    if [[ "$2" == "--soft" ]]; then
-                        bash "$SCRIPT_DIR/entra/03_delete_single.sh" --soft
-                    else
-                        bash "$SCRIPT_DIR/entra/03_delete_single.sh"
-                    fi
+                    shift || true
+                    bash "$SCRIPT_DIR/entra/03_delete_single.sh" "$@"
+                    ;;
+                create)
+                    # forward args to create script
+                    shift || true
+                    bash "$SCRIPT_DIR/entra/05_create_user.sh" "$@"
                     ;;
                 bulk-delete)
-                    if [[ "$2" == "--soft" ]]; then
-                        bash "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft
-                    else
-                        bash "$SCRIPT_DIR/entra/04_delete_bulk.sh"
-                    fi
+                    shift || true
+                    bash "$SCRIPT_DIR/entra/04_delete_bulk.sh" "$@"
                     ;;
                 *)
-                    echo "Usage: ./scripts/cli.sh entra {verify|identify|list|delete|bulk-delete} [--soft]"
+                    echo "Usage: ./scripts/cli.sh entra {verify|identify|list|delete|bulk-delete} [--soft] [--execute]"
                     ;;
             esac
             ;;

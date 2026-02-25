@@ -2,7 +2,7 @@
 # --- AZURE CONTEXT ISOLATION ---
 # Load .env to get AUTH_TENANT_ID dynamically (Identity Plane)
 ENV_FILE="$(dirname "$0")/../../.env"
-if [ -f "$ENV_FILE" ]; then
+if [ -z "${ENTRATEST_FAKE:-}" ] && [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
     set -a && source "$ENV_FILE" >/dev/null 2>&1 || true
     set +a
@@ -14,30 +14,58 @@ ORIGINAL_SUB=$(az account show --query id -o tsv 2>/dev/null)
 if [ -n "$ORIGINAL_SUB" ]; then
     trap 'echo -e "\n🔄 Restoring original Azure context..."; az account set --subscription "$ORIGINAL_SUB" > /dev/null 2>&1' EXIT
 fi
-# Switch to the Identity Plane tenant silently
-echo "🔀 Temporarily switching context to Identity Plane (Tenant: $ENTRA_TENANT)..."
-az login --tenant "$ENTRA_TENANT" --allow-no-subscriptions > /dev/null 2>&1
-# CI=1 or --ci: skip and report only (for test harnesses)
-CI_MODE=false
-[[ "$1" == "--ci" || "$1" == "-n" || -n "${CI:-}" || -n "${NON_INTERACTIVE:-}" ]] && CI_MODE=true
-if $CI_MODE; then
-    CURRENT_TENANT=$(az account show --query tenantId -o tsv 2>/dev/null)
-    if [[ "$CURRENT_TENANT" != "$ENTRA_TENANT" ]]; then
-        echo "⚠️  CI mode: Current tenant ($CURRENT_TENANT) ≠ DaiBai tenant ($ENTRA_TENANT)"
-        echo "    Run interactively: ./scripts/entra/01_identify_directory.sh"
-        exit 1
-    fi
+# Try app-only client credentials first (no browser). If GRAPH creds present in .env, use them.
+CLIENT_ID="${AUTH_CLIENT_ID:-${GRAPH_CLIENT_ID:-}}"
+CLIENT_SECRET="${AUTH_CLIENT_SECRET:-${GRAPH_CLIENT_SECRET:-}}"
+TOKEN=""
+if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" ]]; then
+    TOKEN=$(curl -s -X POST "https://login.microsoftonline.com/${ENTRA_TENANT}/oauth2/v2.0/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "client_id=${CLIENT_ID}&scope=https://graph.microsoft.com/.default&client_secret=${CLIENT_SECRET}&grant_type=client_credentials" \
+        | python3 -c "import sys,json; j=json.load(sys.stdin); print(j.get('access_token',''))")
 fi
 
-echo "🔍 Identifying DaiBai Microsoft Entra ID Directory..."
-TENANT_ID=$(az account show --query tenantId -o tsv)
-TENANT_NAME=$(az rest --method get --url "https://graph.microsoft.com/v1.0/organization" --query "value[0].displayName" -o tsv)
-PRIMARY_DOMAIN=$(az rest --method get --url "https://graph.microsoft.com/v1.0/domains" --query "value[?isDefault].id" -o tsv)
+# CI=1 or --ci: skip interactive login attempts (testing harness)
+CI_MODE=false
+[[ "$1" == "--ci" || "$1" == "-n" || -n "${CI:-}" || -n "${NON_INTERACTIVE:-}" ]] && CI_MODE=true
+
+if [[ -n "$TOKEN" ]]; then
+    # Use app-only token to fetch org info
+    TENANT_NAME=$(curl -s -H "Authorization: Bearer ${TOKEN}" "https://graph.microsoft.com/v1.0/organization" \
+        | python3 -c "import sys,json; j=json.load(sys.stdin); print((j.get('value') or [{}])[0].get('displayName',''))")
+    PRIMARY_DOMAIN=$(curl -s -H "Authorization: Bearer ${TOKEN}" "https://graph.microsoft.com/v1.0/domains" \
+        | python3 -c "import sys,json; j=json.load(sys.stdin); print(next((d.get('id') for d in j.get('value',[]) if d.get('isDefault')), ''))")
+    TENANT_ID="${ENTRA_TENANT}"
+else
+    # No app-only token available. If CI mode, do not attempt interactive login.
+    if $CI_MODE; then
+        CURRENT_TENANT=$(az account show --query tenantId -o tsv 2>/dev/null)
+        if [[ "$CURRENT_TENANT" != "$ENTRA_TENANT" ]]; then
+            echo "⚠️  CI mode: Current tenant ($CURRENT_TENANT) ≠ DaiBai tenant ($ENTRA_TENANT)"
+            echo "    Provide app credentials (AUTH_CLIENT_ID/AUTH_CLIENT_SECRET) in .env for non-interactive runs."
+            exit 1
+        fi
+        TENANT_ID=$(az account show --query tenantId -o tsv)
+        TENANT_NAME=$(az rest --method get --url "https://graph.microsoft.com/v1.0/organization" --query "value[0].displayName" -o tsv)
+        PRIMARY_DOMAIN=$(az rest --method get --url "https://graph.microsoft.com/v1.0/domains" --query "value[?isDefault].id" -o tsv)
+    else
+        # Interactive fallback: try az login (browser or device code) then use az rest
+        echo "🔀 No app credentials found; falling back to interactive az login (may open a browser)..."
+        if [[ -t 0 ]]; then
+            az login --tenant "$ENTRA_TENANT" --allow-no-subscriptions || true
+        else
+            az login --tenant "$ENTRA_TENANT" --use-device-code || true
+        fi
+        TENANT_ID=$(az account show --query tenantId -o tsv)
+        TENANT_NAME=$(az rest --method get --url "https://graph.microsoft.com/v1.0/organization" --query "value[0].displayName" -o tsv)
+        PRIMARY_DOMAIN=$(az rest --method get --url "https://graph.microsoft.com/v1.0/domains" --query "value[?isDefault].id" -o tsv)
+    fi
+fi
 # Verify the directory looks like DaiBai (name or domain contains 'daibai') — fail if not
-NAME_CHECK="$(echo \"${TENANT_NAME} ${PRIMARY_DOMAIN}\" | tr '[:upper:]' '[:lower:]')"
-if [[ \"$NAME_CHECK\" != *\"daibai\"* ]]; then
-    echo \"❌ Tenant does not appear to be DaiBai. Detected: ${TENANT_NAME} / ${PRIMARY_DOMAIN}\"
-    echo \"    Aborting to avoid operating on the wrong directory.\"
+NAME_CHECK="$(echo "${TENANT_NAME} ${PRIMARY_DOMAIN}" | tr '[:upper:]' '[:lower:]')"
+if [[ "$NAME_CHECK" != *"daibai"* ]]; then
+    echo "❌ Tenant does not appear to be DaiBai. Detected: ${TENANT_NAME} / ${PRIMARY_DOMAIN}"
+    echo "    Aborting to avoid operating on the wrong directory."
     exit 1
 fi
 echo "----------------------------------------"

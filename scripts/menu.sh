@@ -761,15 +761,20 @@ handle_monitoring_menu() {
 
 show_entra_menu() {
     show_header "Microsoft Entra ID Management"
-    echo -e "  ${DIM}Identify directory, list users, delete (hard=permanent, soft=30-day recycle bin)${NC}"
+    echo -e "  ${DIM}Identify, list users, delete (dry run = preview only; execute = perform deletion)${NC}"
     echo ""
     print_action_option "1" "Identify Directory & Domain"
     print_action_option "2" "List Active Users"
-    print_action_option "3" "Delete Single User (Hard)"
-    print_action_option "4" "Delete Single User (Soft)"
-    print_action_option "5" "Bulk Delete Test Users (Hard)"
-    print_action_option "6" "Bulk Delete Test Users (Soft)"
-    print_action_option "7" "Verify Tenant ${YELLOW}${DIM}(CI-friendly, no login)${NC}"
+    print_action_option "3" "Delete Single User (Hard) - Dry Run"
+    print_action_option "4" "Delete Single User (Hard) - Execute"
+    print_action_option "5" "Delete Single User (Soft) - Dry Run"
+    print_action_option "6" "Delete Single User (Soft) - Execute"
+    print_action_option "7" "Bulk Delete Test Users (Hard) - Dry Run"
+    print_action_option "8" "Bulk Delete Test Users (Hard) - Execute"
+    print_action_option "9" "Bulk Delete Test Users (Soft) - Dry Run"
+    print_action_option "10" "Bulk Delete Test Users (Soft) - Execute"
+    print_action_option "11" "Verify Tenant ${YELLOW}${DIM}(CI-friendly, no login)${NC}"
+    print_action_option "12" "Create User"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -804,28 +809,63 @@ handle_entra_menu() {
                 ;;
             4)
                 clear
-                "$SCRIPT_DIR/entra/03_delete_single.sh" --soft
+                "$SCRIPT_DIR/entra/03_delete_single.sh" --execute
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
                 ;;
             5)
                 clear
-                "$SCRIPT_DIR/entra/04_delete_bulk.sh"
+                "$SCRIPT_DIR/entra/03_delete_single.sh" --soft
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
                 ;;
             6)
                 clear
-                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft
+                "$SCRIPT_DIR/entra/03_delete_single.sh" --soft --execute
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
                 ;;
             7)
                 clear
+                "$SCRIPT_DIR/entra/04_delete_bulk.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            8)
+                clear
+                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --execute
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            9)
+                clear
+                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            10)
+                clear
+                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft --execute
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            11)
+                clear
                 "$SCRIPT_DIR/entra/00_verify_tenant.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            12)
+                clear
+                "$SCRIPT_DIR/entra/05_create_user.sh"
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
