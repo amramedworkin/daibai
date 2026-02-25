@@ -1,11 +1,17 @@
 #!/bin/bash
 # --- AZURE CONTEXT ISOLATION ---
-ENTRA_TENANT="e12adb01-a6b3-47bb-86c0-d662dacb3675"
+# Load .env to get AUTH_TENANT_ID dynamically (Identity Plane)
+ENV_FILE="$(dirname "$0")/../../.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a && source "$ENV_FILE" >/dev/null 2>&1 || true
+    set +a
+fi
+ENTRA_TENANT="${AUTH_TENANT_ID:-e12adb01-a6b3-47bb-86c0-d662dacb3675}"
 ORIGINAL_SUB=$(az account show --query id -o tsv 2>/dev/null)
 if [ -n "$ORIGINAL_SUB" ]; then
     trap 'echo -e "\n🔄 Restoring original Azure context..."; az account set --subscription "$ORIGINAL_SUB" > /dev/null 2>&1' EXIT
 fi
-echo "🔀 Temporarily switching context to Entra Directory..."
+echo "🔀 Temporarily switching context to Identity Plane (Tenant: $ENTRA_TENANT)..."
 az login --tenant "$ENTRA_TENANT" --allow-no-subscriptions > /dev/null 2>&1
 
 CI_MODE=false

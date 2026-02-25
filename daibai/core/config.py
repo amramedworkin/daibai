@@ -212,6 +212,24 @@ class Config:
             }
         return result
 
+    # ---------------------------------------------------------------------
+    # Dual-Plane identity config accessors (Identity Plane vs Infrastructure)
+    # ---------------------------------------------------------------------
+    @property
+    def auth_tenant_id(self) -> str:
+        """The tenant ID where user identities are stored (Identity Plane)."""
+        return os.environ.get("AUTH_TENANT_ID", "")
+
+    @property
+    def auth_client_id(self) -> str:
+        """Client ID (App Registration) used for user authentication flows."""
+        return os.environ.get("AUTH_CLIENT_ID", "")
+
+    @property
+    def azure_tenant_id(self) -> str:
+        """The tenant ID where infrastructure resources live (Infrastructure Plane)."""
+        return os.environ.get("AZURE_TENANT_ID", "")
+
 
 def _resolve_env_vars(value: Any) -> Any:
     """Resolve ${VAR} placeholders from environment."""

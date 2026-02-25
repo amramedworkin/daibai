@@ -59,7 +59,10 @@ INVALID_PLACEHOLDERS = frozenset({
 
 def _get_env_val(key: str, alias: str) -> str:
     """Get value for key or its alias."""
-    return (os.environ.get(key) or os.environ.get(alias) or "").strip()
+    val = os.environ.get(key)
+    if not val and alias:
+        val = os.environ.get(alias)
+    return (val or "").strip()
 
 
 def _is_invalid(val: str) -> bool:
@@ -93,7 +96,8 @@ class EnvValidator:
     Returns (True, []) if valid, (False, list of issues) if invalid.
     """
 
-    REQUIRED_KEYS = REQUIRED_DB_KEYS
+    # Include dual-plane required keys (Identity + Infrastructure) in addition to DB keys
+    REQUIRED_KEYS = REQUIRED_DB_KEYS + ["AUTH_TENANT_ID", "AUTH_CLIENT_ID", "AZURE_TENANT_ID"]
     LLM_KEYS = LLM_KEYS
     INVALID_PLACEHOLDERS = INVALID_PLACEHOLDERS
 
