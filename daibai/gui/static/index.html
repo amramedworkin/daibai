@@ -10,20 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body class="unauthenticated">
-    <!-- Auth gate: shown when not logged in, blocks all app usage -->
-    <div id="authGate" class="auth-gate">
-        <div class="auth-gate-content">
-            <img src="/static/logo.png" alt="DaiBai" width="80" height="80">
-            <h1>Sign in to use DaiBai</h1>
-            <p>You must be signed in to access the AI Database Assistant.</p>
-            <div class="auth-gate-buttons">
-                <button class="btn-primary" id="authGateLogin">Login</button>
-                <button class="btn-secondary" id="authGateRegister">Register</button>
-            </div>
-        </div>
-    </div>
-
+<body>
     <div class="app" id="mainApp">
         <!-- Top Navigation Bar -->
         <header class="top-nav">
@@ -79,8 +66,7 @@
             </div>
             
             <div class="nav-right">
-                <button class="icon-btn" id="loginBtn" title="Sign in">Login</button>
-                <button class="icon-btn" id="registerBtn" title="Create account">Register</button>
+                <button class="icon-btn" id="loginBtn" title="Sign in">Sign In</button>
                 <button class="icon-btn" id="logoutBtn" title="Sign out" style="display:none">Sign Out</button>
                 <button class="icon-btn" id="schemaBtn" title="View Schema">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

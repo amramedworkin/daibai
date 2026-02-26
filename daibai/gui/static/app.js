@@ -74,29 +74,15 @@ function isAuthenticated() {
     return msalInstance && msalInstance.getAllAccounts().length > 0;
 }
 
-function showAuthGate() {
-    document.body.classList.add('unauthenticated');
-    document.body.classList.remove('authenticated');
-}
-
-function hideAuthGate() {
-    document.body.classList.remove('unauthenticated');
-    document.body.classList.add('authenticated');
-}
+function showAuthGate() { /* no-op: auth gate overlay removed */ }
+function hideAuthGate() { /* no-op: auth gate overlay removed */ }
 
 function updateAuthButtons() {
     const hasAccount = isAuthenticated();
     const loginBtn = document.getElementById('loginBtn');
-    const registerBtn = document.getElementById('registerBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     if (loginBtn) loginBtn.style.display = hasAccount ? 'none' : '';
-    if (registerBtn) registerBtn.style.display = hasAccount ? 'none' : '';
     if (logoutBtn) logoutBtn.style.display = hasAccount ? '' : 'none';
-    if (hasAccount) {
-        hideAuthGate();
-    } else {
-        showAuthGate();
-    }
 }
 
 async function signIn() {
@@ -208,13 +194,16 @@ async function apiFetch(url, options = {}) {
         const token = await getApiToken();
         opts.headers['Authorization'] = 'Bearer ' + token;
     } catch (e) {
-        showAuthGate();
-        throw e;
+        // No token available (guest mode). Callers handle this gracefully.
+        throw Object.assign(new Error('Not signed in'), { guestMode: true });
     }
     const res = await fetch(url, opts);
     if (res.status === 401) {
-        showAuthGate();
-        throw new Error('Session expired. Please sign in again.');
+        // Token was rejected — session likely expired. Signal via typed error.
+        throw Object.assign(
+            new Error('Session expired. Please sign in again.'),
+            { sessionExpired: true }
+        );
     }
     return res;
 }
@@ -286,7 +275,8 @@ class DaiBaiApp {
         this.resultsCache = {};  // resultsId -> results for Export CSV
         this.sessionMessages = [];  // messages in current conversation for prompts list
         this.attachedFiles = [];   // [{ id, name, size }] for file upload
-        
+        this.guestMode = !isAuthenticated();
+
         this.init();
     }
     
@@ -294,12 +284,43 @@ class DaiBaiApp {
         this.bindElements();
         this.loadPreferences();
         this.bindEvents();
+        updateAuthButtons();
+
+        if (this.guestMode) {
+            // Restricted mode: show the UI immediately, defer all backend calls.
+            this.enterGuestMode();
+            return;
+        }
+
+        // Authenticated: load full feature set.
         await this.loadSettings();
         await this.loadConversations();
         this.connectWebSocket();
-        updateAuthButtons();
     }
     
+    enterGuestMode() {
+        // Disable the chat input and send button until the user authenticates.
+        this.promptInput.disabled = true;
+        this.promptInput.placeholder = 'Sign in to start chatting…';
+        this.sendBtn.disabled = true;
+
+        // Show an empty but clearly labelled sidebar state.
+        this.databaseSelect.innerHTML = '<option value="">— sign in to connect —</option>';
+        this.llmSelect.innerHTML = '<option value="">— sign in to connect —</option>';
+
+        // Inject a guest banner above the conversation list.
+        const banner = document.createElement('div');
+        banner.id = 'guestBanner';
+        banner.className = 'guest-banner';
+        banner.innerHTML = `
+            <p><strong>Guest Mode</strong></p>
+            <p>Sign in to save conversations, access history, and connect your databases.</p>
+            <button class="btn-primary guest-signin-btn">Sign In</button>
+        `;
+        banner.querySelector('.guest-signin-btn').addEventListener('click', () => signIn());
+        this.conversationList.before(banner);
+    }
+
     loadPreferences() {
         const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
         
@@ -433,7 +454,6 @@ class DaiBaiApp {
         this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
         this.autoCsvCheckbox = document.getElementById('autoCsvCheckbox');
         this.loginBtn = document.getElementById('loginBtn');
-        this.registerBtn = document.getElementById('registerBtn');
         this.logoutBtn = document.getElementById('logoutBtn');
         this.schemaBtn = document.getElementById('schemaBtn');
         this.schemaModal = document.getElementById('schemaModal');
@@ -484,7 +504,6 @@ class DaiBaiApp {
         
         // Auth
         this.loginBtn.addEventListener('click', () => signIn());
-        if (this.registerBtn) this.registerBtn.addEventListener('click', () => signUp());
         this.logoutBtn.addEventListener('click', () => signOut());
 
         // Schema modal
@@ -783,7 +802,7 @@ class DaiBaiApp {
     
     async sendMessage() {
         if (!isAuthenticated()) {
-            showAuthGate();
+            signIn();
             return;
         }
         const query = this.promptInput.value.trim();
@@ -1670,6 +1689,20 @@ class DaiBaiApp {
     }
 }
 
+/**
+ * Purge any stale MSAL interaction state left in sessionStorage.
+ * This happens when a redirect was initiated (e.g. a previous signUp/signIn call)
+ * but the user navigated back before CIAM completed. Without this, MSAL replays
+ * the original request params (including prompt=create) on the next loginRedirect.
+ */
+function clearStaleMsalState() {
+    const staleKeys = Object.keys(sessionStorage).filter(k => k.startsWith('msal.'));
+    if (staleKeys.length > 0) {
+        console.log(`[MSAL] Clearing ${staleKeys.length} stale interaction key(s) from sessionStorage.`);
+        staleKeys.forEach(k => sessionStorage.removeItem(k));
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     await ensureMsalInstance();
     await msalInstance.initialize();
@@ -1682,6 +1715,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         // unexpected/malformed responses from custom CIAM providers. Log raw
         // payload and guard access to nested properties.
         console.log("[STEP 7] Raw redirect response:", response);
+
+        if (!response) {
+            // No active redirect in flight — purge any leftover MSAL state so the
+            // next signIn() call starts with a clean slate (no stale prompt=create, etc.)
+            clearStaleMsalState();
+        }
 
         if (response && typeof response === 'object') {
             console.log("%c[STEP 7] BRIDGE: Redirect callback received from Identity Plane.", "color: #f39c12; font-weight: bold;");
@@ -1722,6 +1761,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.log("%c[STEP 10] RESOLVE: Backend confirmed Ghost User is now finalized in CosmosDB.", "color: #27ae60; font-weight: bold;");
                 console.log("[STEP 10] Final User Record:", syncData);
 
+                // STEP 10.5: Wipe the registration token locally and redirect straight
+                // to login — no round-trip through Microsoft's "You have been signed out"
+                // page. onRedirectNavigate returning false tells MSAL to clear its cache
+                // without navigating to the CIAM end_session endpoint, so the next
+                // loginRedirect gets a clean slate with fully resolved claims.
+                console.log("%c[STEP 10.5] Registration complete. Clearing local session and redirecting to login.", "color: #34495e; font-weight: bold;");
+                await msalInstance.logoutRedirect({
+                    onRedirectNavigate: () => false   // local cache clear only, no CIAM logout page
+                });
+                clearStaleMsalState();
+                await signIn();
+                return;
+
             } catch (syncError) {
                 console.error('%c[CRITICAL] Data Plane Sync Failed. The user remains an orphaned Ghost.', "color: #c0392b; font-weight: bold;");
                 alert("Account setup incomplete. Please try logging in again.");
@@ -1734,17 +1786,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         _authInteractionInProgress = false;
     }
 
-    // 2. AUTH GATE CHECK
-    if (!isAuthenticated()) {
-        console.log("[AUTH] No valid session found. Displaying Auth Gate.");
-        showAuthGate();
-        document.getElementById('authGateLogin')?.addEventListener('click', () => signIn());
-        document.getElementById('authGateRegister')?.addEventListener('click', () => signUp());
-        return;
-    }
-
-    // STEP 11: UI Rendering (The Reveal)
-    hideAuthGate();
-    console.log("%c[STEP 11] RENDERING: Identity & Data Planes aligned. Initializing DaiBai GUI.", "color: #2ecc71; font-weight: bold;");
+    // Guest Mode: the app always loads immediately. Unauthenticated users get a
+    // restricted view; they can sign in whenever they're ready via the nav button.
+    const authenticated = isAuthenticated();
+    console.log(`[AUTH] Session state: ${authenticated ? 'Authenticated — loading full app' : 'Guest — loading restricted app'}`);
     window.app = new DaiBaiApp();
 });

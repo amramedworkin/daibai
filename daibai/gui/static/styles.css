@@ -57,57 +57,33 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* Auth Gate - blocks app when not logged in */
-body.unauthenticated #mainApp {
-    display: none !important;
-    pointer-events: none !important;
-    visibility: hidden !important;
-}
 
-body.authenticated #authGate {
-    display: none !important;
-}
-
-.auth-gate {
-    position: fixed;
-    inset: 0;
-    z-index: 10000;
-    background: var(--bg-primary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.auth-gate-content {
-    text-align: center;
-    max-width: 360px;
-    padding: 32px;
-}
-
-.auth-gate-content img {
-    margin-bottom: 24px;
-}
-
-.auth-gate-content h1 {
-    font-size: 24px;
-    font-weight: 600;
-    margin-bottom: 8px;
-}
-
-.auth-gate-content p {
+/* Guest Mode Banner */
+.guest-banner {
+    margin: 12px;
+    padding: 14px 16px;
+    background: var(--bg-tertiary, #1e2130);
+    border: 1px solid var(--border-color, #2d3250);
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
     color: var(--text-secondary);
-    margin-bottom: 24px;
 }
 
-.auth-gate-buttons {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
+.guest-banner p {
+    margin: 0 0 6px;
 }
 
-.auth-gate-buttons .btn-primary,
-.auth-gate-buttons .btn-secondary {
-    padding: 10px 24px;
+.guest-banner p:last-of-type {
+    margin-bottom: 10px;
+}
+
+.guest-signin-btn {
+    width: 100%;
+    padding: 8px 0;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
 }
 
 /* App Container */
