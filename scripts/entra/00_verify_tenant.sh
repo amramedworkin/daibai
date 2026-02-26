@@ -16,7 +16,10 @@ CLIENT_SECRET="${AUTH_CLIENT_SECRET:-}"
 if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" ]]; then
     RESP=$(curl -s -X POST "https://login.microsoftonline.com/${DAIBAI_TENANT_ID}/oauth2/v2.0/token" \
       -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "client_id=${CLIENT_ID}&scope=https://graph.microsoft.com/.default&client_secret=${CLIENT_SECRET}&grant_type=client_credentials")
+      --data-urlencode "client_id=${CLIENT_ID}" \
+      --data-urlencode "scope=https://graph.microsoft.com/.default" \
+      --data-urlencode "client_secret=${CLIENT_SECRET}" \
+      --data-urlencode "grant_type=client_credentials")
     TOKEN=$(echo "$RESP" | python3 -c "import sys,json; j=json.load(sys.stdin); print(j.get('access_token',''))" 2>/dev/null || true)
     if [[ -z "$TOKEN" ]]; then
         echo "❌ Failed to obtain token with app credentials. Response snippet:"

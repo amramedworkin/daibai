@@ -775,6 +775,7 @@ show_entra_menu() {
     print_action_option "10" "Bulk Delete Test Users (Soft) - Execute"
     print_action_option "11" "Verify Tenant ${YELLOW}${DIM}(CI-friendly, no login)${NC}"
     print_action_option "12" "Create User"
+    print_action_option "13" "Ghost Cleanup (dry-run)"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -788,7 +789,8 @@ handle_entra_menu() {
         case $choice in
             1)
                 clear
-                "$SCRIPT_DIR/entra/01_identify_directory.sh"
+                # Use CI/non-interactive mode by default from interactive menu to avoid launching browser logins.
+                CI=1 "$SCRIPT_DIR/entra/01_identify_directory.sh" --ci
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
@@ -866,6 +868,14 @@ handle_entra_menu() {
             12)
                 clear
                 "$SCRIPT_DIR/entra/05_create_user.sh"
+                echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            13)
+                clear
+                # Run ghost-cleanup in dry-run mode from menu
+                "$SCRIPT_DIR/cli.sh" ghost-cleanup
                 echo ""
                 echo "Press Enter to continue..."
                 read -r

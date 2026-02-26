@@ -19,7 +19,10 @@ fi
 
 TOKEN=$(curl -s -X POST "https://login.microsoftonline.com/${ENTRA_TENANT}/oauth2/v2.0/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=${CLIENT_ID}&scope=https://graph.microsoft.com/.default&client_secret=${CLIENT_SECRET}&grant_type=client_credentials" \
+  --data-urlencode "client_id=${CLIENT_ID}" \
+  --data-urlencode "scope=https://graph.microsoft.com/.default" \
+  --data-urlencode "client_secret=${CLIENT_SECRET}" \
+  --data-urlencode "grant_type=client_credentials" \
   | python3 -c "import sys,json; j=json.load(sys.stdin); print(j.get('access_token',''))")
 if [[ -z "$TOKEN" ]]; then
     echo "❌ Failed to obtain app-only token. Verify AUTH_CLIENT_ID/AUTH_CLIENT_SECRET and permissions."

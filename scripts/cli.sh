@@ -514,6 +514,106 @@ cmd_keyvault_create() {
     bash "$SCRIPT_DIR/setup_keyvault.sh"
 }
 
+# -----------------------------------------------------------------------------
+# Cosmos DB Environment Sync
+# -----------------------------------------------------------------------------
+sync_cosmos_env() {
+    echo "Pulling Cosmos DB configuration from Azure..."
+    local COSMOS_ACCOUNT
+    COSMOS_ACCOUNT=$(az cosmosdb list --query "[0].name" -o tsv 2>/dev/null || true)
+    COSMOS_RG=$(az cosmosdb list --query "[0].resourceGroup" -o tsv 2>/dev/null || true)
+    COSMOS_ENDPOINT=$(az cosmosdb list --query "[0].documentEndpoint" -o tsv 2>/dev/null || true)
+    if [ -z "$COSMOS_ACCOUNT" ]; then
+        echo "Error: No Cosmos DB account found."
+        return 1
+    fi
+
+    local COSMOS_DATABASE="daibai-metadata"
+    local COSMOS_CONTAINER="conversations"
+    local COSMOS_DB="$COSMOS_DATABASE"
+
+    local ENV_FILE=".env"
+    if [ ! -f "$ENV_FILE" ]; then touch "$ENV_FILE"; fi
+
+    update_env_var() {
+        local key=$1
+        local value=$2
+        if grep -q "^${key}=" "$ENV_FILE"; then
+            sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+            echo "Updated $key in $ENV_FILE"
+        else
+            echo "${key}=${value}" >> "$ENV_FILE"
+            echo "Added $key to $ENV_FILE"
+        fi
+    }
+
+    echo -e "\nWriting to $ENV_FILE..."
+    update_env_var "COSMOS_ENDPOINT" "$COSMOS_ENDPOINT"
+    update_env_var "COSMOS_DATABASE" "$COSMOS_DATABASE"
+    update_env_var "COSMOS_CONTAINER" "$COSMOS_CONTAINER"
+    update_env_var "COSMOS_ACCOUNT" "$COSMOS_ACCOUNT"
+    update_env_var "COSMOS_DB" "$COSMOS_DB"
+
+    echo -e "\n--- Current Config Block ---"
+    echo "COSMOS_ENDPOINT=$COSMOS_ENDPOINT"
+    echo "COSMOS_DATABASE=$COSMOS_DATABASE"
+    echo "COSMOS_CONTAINER=$COSMOS_CONTAINER"
+    echo "COSMOS_ACCOUNT=$COSMOS_ACCOUNT"
+    echo "COSMOS_DB=$COSMOS_DB"
+}
+
+# -----------------------------------------------------------------------------
+# Ghost user cleanup: cross-reference Entra users against Cosmos "Users" container
+# -----------------------------------------------------------------------------
+cleanup_ghosts() {
+    DRY_RUN=${1:-"true"}
+    load_env
+    echo -e "\033[1;33m[GHOST HUNTER] System Quiesced. Starting direct cross-reference cleanup...\033[0m"
+    echo -e "Dry Run: $DRY_RUN\n"
+
+    local COSMOS_ACCOUNT="${COSMOS_ACCOUNT_NAME:-${COSMOS_ACCOUNT:-}}"
+    local COSMOS_DB="${COSMOS_DATABASE:-${COSMOS_DB:-daibai-metadata}}"
+    if [[ -z "$COSMOS_ACCOUNT" ]]; then
+        echo -e "\033[1;31m[CRITICAL] COSMOS account not configured (COSMOS_ACCOUNT or COSMOS_ACCOUNT_NAME). Aborting.\033[0m"
+        return 1
+    fi
+
+    echo "Syncing Allow List from CosmosDB (Users container)..."
+    AUTHORIZED_OIDS=$(az cosmosdb sql query --account-name "$COSMOS_ACCOUNT" --database-name "$COSMOS_DB" --container-name Users --query "[].id" -o tsv 2>/dev/null || true)
+
+    if [ -z "$AUTHORIZED_OIDS" ]; then
+        echo -e "\033[1;31m[CRITICAL] No users found in CosmosDB. Aborting to prevent accidental total wipeout!\033[0m"
+        return 1
+    fi
+
+    echo "Fetching all users from Entra ID..."
+    ENTRA_USERS=$(az ad user list --query "[].{id:id, name:displayName, upn:userPrincipalName}" -o json 2>/dev/null || echo "[]")
+
+    echo -e "\n--- IDENTIFYING ORPHANED ACCOUNTS ---"
+    GHOST_COUNT=0
+
+    echo "$ENTRA_USERS" | jq -c '.[]' 2>/dev/null | while read -r user; do
+        OID=$(echo "$user" | jq -r '.id')
+        NAME=$(echo "$user" | jq -r '.name')
+        UPN=$(echo "$user" | jq -r '.upn')
+
+        if [[ ! "$AUTHORIZED_OIDS" =~ "$OID" ]]; then
+            GHOST_COUNT=$((GHOST_COUNT + 1))
+            echo -e "\033[1;31m[GHOST]\033[0m $NAME | OID: $OID | UPN: $UPN"
+            if [ "$DRY_RUN" == "false" ]; then
+                echo "   -> EXECUTING DELETE..."
+                az ad user delete --id "$OID" || echo "   -> delete failed for $OID"
+            else
+                echo "   -> [DRY RUN] Would be deleted."
+            fi
+        fi
+    done
+
+    if [ "$GHOST_COUNT" -eq 0 ]; then
+        echo -e "\033[1;32mNo ghost users found. Identity and Data planes are perfectly aligned.\033[0m"
+    fi
+}
+
 cmd_test_redis() {
     load_env_for_redis
     if [[ -z "${REDIS_URL:-}${AZURE_REDIS_CONNECTION_STRING:-}" ]]; then
@@ -899,6 +999,17 @@ main() {
             ;;
         keyvault-create)
             cmd_keyvault_create
+            ;;
+        ghost-cleanup)
+            if [[ "$2" == "confirm" || "$1" == "confirm" ]]; then
+                cleanup_ghosts "false"
+            else
+                cleanup_ghosts "true"
+                echo -e "\n\033[1;36mHINT:\033[0m Verified the list above? Run: ./scripts/cli.sh ghost-cleanup confirm"
+            fi
+            ;;
+        sync-env)
+            sync_cosmos_env
             ;;
         test-redis)
             cmd_test_redis

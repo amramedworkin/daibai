@@ -26,6 +26,23 @@ function buildMsalConfig(authConfig) {
             redirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
             postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
         },
+        system: {
+            // Add MSAL logging to help diagnose CDN/runtime errors in the wild.
+            loggerOptions: {
+                loggerCallback: (level, message, containsPii) => {
+                    if (containsPii) return;
+                    // Map numeric levels to console methods where possible
+                    if (level && level.toString && level.toString().toLowerCase().includes('error')) {
+                        console.error('[MSAL]', message);
+                    } else if (level && level.toString && level.toString().toLowerCase().includes('warning')) {
+                        console.warn('[MSAL]', message);
+                    } else {
+                        console.info('[MSAL]', message);
+                    }
+                },
+                piiLoggingEnabled: false,
+            }
+        },
         cache: {
             cacheLocation: 'sessionStorage',
             storeAuthStateInCookie: false,
@@ -124,36 +141,38 @@ async function signOut() {
 }
 
 async function signUp() {
-    if (_authInteractionInProgress) return;
-    await ensureMsalInstance();
-    await msalInstance.initialize();
-    const scopes = ['openid', 'profile', 'User.Read'];
-    try {
-        if (USE_REDIRECT_INSTEAD_OF_POPUP) {
-            _authInteractionInProgress = true;
-            await msalInstance.loginRedirect({ scopes });
-        } else {
-            let response;
-            try {
-                response = await msalInstance.loginPopup({ scopes });
-            } catch (e) {
-                if (e.errorCode === 'invalid_prompt' || e.message?.includes('prompt')) {
-                    response = await msalInstance.loginPopup({ scopes });
-                } else {
-                    throw e;
-                }
-            }
-            if (response) {
-                console.log('Registration successful:', response);
-                alert('Account created and logged in as: ' + response.account.username);
-                updateAuthButtons();
-            }
-        }
-    } catch (error) {
-        _authInteractionInProgress = false;
-        console.error('Registration error:', error);
+    if (_authInteractionInProgress) {
+        console.warn("[AUTH] Interaction already in progress, ignoring signup click.");
+        return;
     }
-}
+    
+    // STEP 1: User Interface Trigger
+    console.log("%c[STEP 1] UI: User clicked 'Register' button on Auth Gate.", "color: #3498db; font-weight: bold;");
+    
+    _authInteractionInProgress = true;
+    
+    // STEP 2: Frontend Logic Preparation
+    console.log("%c[STEP 2] LOGIC: Preparing 'signupRequest' with prompt: 'create'.", "color: #3498db; font-weight: bold;");
+    const signupRequest = {
+        scopes: ["openid", "profile", "User.Read"],
+        prompt: "create",
+    };
+    console.log("[STEP 2] Request Object:", JSON.stringify(signupRequest));
+
+    try {
+        // Ensure MSAL instance is ready before use
+        await ensureMsalInstance();
+        // STEP 3: MSAL Hand-off to Identity Plane
+        const authority = msalInstance.getConfiguration()?.auth?.authority;
+        console.log(`%c[STEP 3] MSAL: Redirecting browser to Identity Plane (Azure Entra).`, "color: #3498db; font-weight: bold;");
+        console.log(`[STEP 3] Target Authority: ${authority}`);
+        console.log("[STEP 3] NOTE: Browser session is now leaving the application. Next log will appear after redirect back.");
+        await msalInstance.loginRedirect(signupRequest);
+    } catch (e) {
+        console.error('%c[ERROR] Identity Plane Redirect Failed:', "color: red; font-weight: bold;", e);
+        _authInteractionInProgress = false;
+    }
+}                            
 
 async function getTokenPopup(request) {
     await ensureMsalInstance();
@@ -1651,28 +1670,81 @@ class DaiBaiApp {
     }
 }
 
-// Initialize app: MUST await handleRedirectPromise before any other MSAL call (fixes interaction_in_progress)
 document.addEventListener('DOMContentLoaded', async () => {
     await ensureMsalInstance();
     await msalInstance.initialize();
+    
     try {
+        // STEP 7: Auth Callback (Return from Identity Plane)
         const response = await msalInstance.handleRedirectPromise();
-        if (response) {
-            console.log('Redirect login successful:', response.account?.username);
+
+        // Defensive logging and validation: MSAL runtime can sometimes produce
+        // unexpected/malformed responses from custom CIAM providers. Log raw
+        // payload and guard access to nested properties.
+        console.log("[STEP 7] Raw redirect response:", response);
+
+        if (response && typeof response === 'object') {
+            console.log("%c[STEP 7] BRIDGE: Redirect callback received from Identity Plane.", "color: #f39c12; font-weight: bold;");
+            console.log("[STEP 7] Identity Plane Data:", {
+                oid: response.uniqueId,
+                username: response.account?.username,
+                idTokenClaims: response.idTokenClaims ?? null
+            });
+            
+            // NOTE: Check console here for Step 6 outcome. 
+            // If idTokenClaims.given_name is missing, the "Ghost" was born in the Identity Plane.
+
+            try {
+                // STEP 8: Data Handover (Onboarding Trigger)
+                console.log("%c[STEP 8] HANDOVER: Sending Identity to Backend for Data Plane Onboarding...", "color: #9b59b6; font-weight: bold;");
+                
+                const onboardResponse = await fetch('/api/auth/onboard', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${response.accessToken || ''}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        tenantId: response.tenantId || null,
+                        username: response.account?.username || null
+                    })
+                });
+
+                if (!onboardResponse.ok) {
+                    const errorData = await onboardResponse.json();
+                    console.error("[STEP 9-10 ERROR] Backend failed to resolve Ghost User.");
+                    console.error("[REASON]:", errorData.detail || "Unknown Backend Error");
+                    throw new Error('Data Plane synchronization failed');
+                }
+
+                const syncData = await onboardResponse.json();
+                // STEP 10: Data Resolve (Confirmation from Backend)
+                console.log("%c[STEP 10] RESOLVE: Backend confirmed Ghost User is now finalized in CosmosDB.", "color: #27ae60; font-weight: bold;");
+                console.log("[STEP 10] Final User Record:", syncData);
+
+            } catch (syncError) {
+                console.error('%c[CRITICAL] Data Plane Sync Failed. The user remains an orphaned Ghost.', "color: #c0392b; font-weight: bold;");
+                alert("Account setup incomplete. Please try logging in again.");
+                return;
+            }
         }
     } catch (e) {
-        console.error('Redirect callback error:', e);
+        console.error('%c[ERROR] Redirect Processing Error:', "color: red;", e);
     } finally {
         _authInteractionInProgress = false;
     }
 
+    // 2. AUTH GATE CHECK
     if (!isAuthenticated()) {
+        console.log("[AUTH] No valid session found. Displaying Auth Gate.");
         showAuthGate();
         document.getElementById('authGateLogin')?.addEventListener('click', () => signIn());
         document.getElementById('authGateRegister')?.addEventListener('click', () => signUp());
         return;
     }
 
+    // STEP 11: UI Rendering (The Reveal)
     hideAuthGate();
+    console.log("%c[STEP 11] RENDERING: Identity & Data Planes aligned. Initializing DaiBai GUI.", "color: #2ecc71; font-weight: bold;");
     window.app = new DaiBaiApp();
 });
