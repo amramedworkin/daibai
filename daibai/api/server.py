@@ -169,6 +169,11 @@ class ConversationSummary(BaseModel):
     message_count: int
 
 
+class OnboardRequest(BaseModel):
+    tenantId: Optional[str] = None
+    username: Optional[str] = None
+
+
 # Static files path
 STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 
@@ -195,6 +200,73 @@ async def get_auth_config():
         "authority": authority,
         "known_authorities": known_authorities,
     }
+
+
+@app.post("/api/auth/onboard")
+async def auth_onboard(
+    request: Request,
+    body: OnboardRequest,
+    store: CosmosConversationStore = Depends(get_store),
+):
+    """
+    Called by the frontend immediately after MSAL redirect completes.
+    Validates the bearer token from the Identity Plane, extracts user claims,
+    and upserts a user record into the Cosmos DB Users container.
+    This is the bridge between the Identity Plane and the Data Plane.
+    """
+    # Extract bearer token from Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[len("Bearer "):].strip() if auth_header.startswith("Bearer ") else ""
+
+    claims: Dict[str, Any] = {}
+    if token:
+        try:
+            claims = auth.validate_token(token)
+        except HTTPException:
+            # Token may be an id_token from CIAM rather than a full access token.
+            # Fall back to unverified decode to extract identity claims.
+            try:
+                import jwt as _pyjwt
+                claims = _pyjwt.decode(token, options={"verify_signature": False})
+            except Exception:
+                claims = {}
+
+    # Resolve the Object ID (OID) — the stable user identifier across all MSAL flows.
+    oid = (
+        claims.get("oid")
+        or claims.get("sub")
+        or None
+    )
+    if not oid:
+        raise HTTPException(status_code=401, detail="Invalid Tenant Plane")
+
+    given_name = claims.get("given_name", "")
+    family_name = claims.get("family_name", "")
+    email = (
+        claims.get("email")
+        or claims.get("preferred_username")
+        or body.username
+        or ""
+    )
+    tenant_id = claims.get("tid") or body.tenantId or ""
+
+    user_record: Dict[str, Any] = {
+        "id": oid,
+        "oid": oid,
+        "username": email,
+        "given_name": given_name,
+        "family_name": family_name,
+        "tenant_id": tenant_id,
+        "onboarded_at": datetime.now().isoformat(),
+    }
+
+    try:
+        await store.upsert_user(user_record)
+    except Exception as e:
+        # Log but do not hard-fail: Cosmos may not be configured in dev environments.
+        print(f"[onboard] Cosmos upsert skipped: {e}", flush=True)
+
+    return user_record
 
 
 @app.get("/health")

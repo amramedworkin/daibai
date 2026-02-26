@@ -155,6 +155,28 @@ class CosmosStore:
         except CosmosResourceNotFoundError:
             pass  # Idempotent: already deleted
 
+    async def upsert_user(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create or update a user record in the Users container.
+        Document structure: {"id": oid, "oid": oid, "username": ..., ...}
+        Partition key: /id
+        """
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client("Users")
+        await container.upsert_item(user)
+        return user
+
+    async def get_user(self, oid: str) -> Optional[Dict[str, Any]]:
+        """Fetch a user record by OID. Returns None if not found."""
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client("Users")
+        try:
+            return await container.read_item(item=oid, partition_key=oid)
+        except CosmosResourceNotFoundError:
+            return None
+
 
 # Backward compatibility alias (server imports CosmosConversationStore)
 CosmosConversationStore = CosmosStore
