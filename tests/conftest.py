@@ -11,8 +11,7 @@ from pathlib import Path
 import os
 
 # Environment variables are provided to pytest via pytest-dotenv (configured in pyproject.toml).
-# pytest-dotenv will load `.env` (and `.env.test` if present) before test collection, so tests can
-# rely on AUTH_*, AZURE_*, and other environment variables at import/collection time.
+# pytest-dotenv will load `.env` (and `.env.test` if present) before test collection.
 #
 # NOTE: We intentionally removed the common "jury-rigged" anti-patterns where tests/modules
 # manually load .env at the top of files or via autouse fixtures in conftest. Examples that were
@@ -130,8 +129,6 @@ def _get_category(nodeid):
         return "LLM-MODELS", _MAGENTA
     if "test_gemini_get_models" in nodeid:
         return "LLM-GEMINI", _MAGENTA
-    if "test_auth_connectivity" in nodeid or "test_gui_login" in nodeid or "test_entra_user" in nodeid:
-        return "AUTH", _GREEN
     return None, None
 
 

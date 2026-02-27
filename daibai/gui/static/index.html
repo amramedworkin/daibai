@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link type="text/css" rel="stylesheet" href="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth.css"/>
 </head>
 <body>
     <div class="app" id="mainApp">
@@ -213,9 +214,26 @@
                 </div>
             </div>
         </div>
+
+        <!-- Auth Modal — FirebaseUI renders inside #firebaseui-auth-container -->
+        <div class="modal" id="authModal">
+            <div class="modal-content" style="max-width:440px">
+                <div class="modal-header">
+                    <h2>Sign In</h2>
+                    <button class="modal-close" id="authModalClose">&times;</button>
+                </div>
+                <div class="modal-body" style="padding:0 0 16px">
+                    <div id="firebaseui-auth-container"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+    <!-- Firebase v10 compat (required by FirebaseUI 6.x) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-analytics-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

@@ -14,7 +14,6 @@ from datetime import datetime
 import uuid
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends, Request
-from fastapi.security import OAuth2AuthorizationCodeBearer
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -23,24 +22,6 @@ from pydantic import BaseModel
 from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
 from .database import CosmosConversationStore
-from . import auth
-
-# OAuth2 scheme for Bearer token extraction (authority URLs are informational)
-_tenant = os.environ.get("AUTH_TENANT_ID", "e12adb01-a6b3-47bb-86c0-d662dacb3675")
-_tenant_name = os.environ.get("AUTH_TENANT_NAME", "daibaiauth")
-oauth2_scheme = OAuth2AuthorizationCodeBearer(
-    authorizationUrl=f"https://{_tenant_name}.ciamlogin.com/{_tenant}/oauth2/v2.0/authorize",
-    tokenUrl=f"https://{_tenant_name}.ciamlogin.com/{_tenant}/oauth2/v2.0/token",
-)
-
-
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
-    """Validate JWT via Robot-mediated validation (auth module). Raises 401/403 if invalid."""
-    try:
-        return auth.validate_token(token)
-    except Exception:
-        # Normalize any auth failure to a clear 401 for the API surface
-        raise HTTPException(status_code=401, detail="Invalid Tenant Plane")
 
 
 def get_store(request: Request) -> CosmosConversationStore:
@@ -89,7 +70,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=lifespan)
 
 
-# COOP header: allows MSAL popup (Entra login) to communicate with opener (window.closed)
 class COOPMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -170,7 +150,7 @@ class ConversationSummary(BaseModel):
 
 
 class OnboardRequest(BaseModel):
-    tenantId: Optional[str] = None
+    uid: Optional[str] = None
     username: Optional[str] = None
 
 
@@ -180,25 +160,18 @@ STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 @app.get("/api/auth-config", include_in_schema=False)
 async def get_auth_config():
     """
-    Public endpoint returning MSAL configuration for the frontend.
-    Used before login to point the Chat UI at the correct Identity Plane directory.
+    Public endpoint returning auth configuration for the frontend.
+    Returns Firebase config vars sourced from environment variables.
     """
     import os
-    tenant_id = os.environ.get("AUTH_TENANT_ID", "").strip()
-    client_id = os.environ.get("AUTH_CLIENT_ID", "").strip()
-    tenant_name = os.environ.get("AUTH_TENANT_NAME", "daibaiauth").strip()
-    authority_type = os.environ.get("AUTH_AUTHORITY_TYPE", "ciam").strip().lower()
-    if authority_type == "azure":
-        authority = f"https://login.microsoftonline.com/{tenant_id}" if tenant_id else ""
-        known_authorities = ["https://login.microsoftonline.com"]
-    else:
-        authority = f"https://{tenant_name}.ciamlogin.com/{tenant_id}/" if tenant_id else ""
-        known_authorities = [f"https://{tenant_name}.ciamlogin.com"]
     return {
-        "auth_tenant_id": tenant_id,
-        "auth_client_id": client_id,
-        "authority": authority,
-        "known_authorities": known_authorities,
+        # Firebase Authentication (primary)
+        "firebase_api_key":            os.environ.get("FIREBASE_API_KEY", ""),
+        "firebase_auth_domain":        os.environ.get("FIREBASE_AUTH_DOMAIN", ""),
+        "firebase_project_id":         os.environ.get("FIREBASE_PROJECT_ID", ""),
+        "firebase_storage_bucket":     os.environ.get("FIREBASE_STORAGE_BUCKET", ""),
+        "firebase_messaging_sender_id": os.environ.get("FIREBASE_MESSAGING_SENDER_ID", ""),
+        "firebase_app_id":             os.environ.get("FIREBASE_APP_ID", ""),
     }
 
 
@@ -209,61 +182,42 @@ async def auth_onboard(
     store: CosmosConversationStore = Depends(get_store),
 ):
     """
-    Called by the frontend immediately after MSAL redirect completes.
-    Validates the bearer token from the Identity Plane, extracts user claims,
-    and upserts a user record into the Cosmos DB Users container.
-    This is the bridge between the Identity Plane and the Data Plane.
+    Called by the frontend after Firebase sign-in.
+    Decodes the Firebase ID token (unverified — verification via Firebase Admin SDK
+    is a future hardening step), extracts uid + email, and upserts a user record
+    into the Cosmos DB Users container.
     """
-    # Extract bearer token from Authorization header
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[len("Bearer "):].strip() if auth_header.startswith("Bearer ") else ""
 
+    # Decode without signature verification for now.
+    # TODO: verify with firebase-admin once server credentials are added.
     claims: Dict[str, Any] = {}
     if token:
         try:
-            claims = auth.validate_token(token)
-        except HTTPException:
-            # Token may be an id_token from CIAM rather than a full access token.
-            # Fall back to unverified decode to extract identity claims.
-            try:
-                import jwt as _pyjwt
-                claims = _pyjwt.decode(token, options={"verify_signature": False})
-            except Exception:
-                claims = {}
+            import jwt as _pyjwt
+            claims = _pyjwt.decode(token, options={"verify_signature": False})
+        except Exception:
+            claims = {}
 
-    # Resolve the Object ID (OID) — the stable user identifier across all MSAL flows.
-    oid = (
-        claims.get("oid")
-        or claims.get("sub")
-        or None
-    )
-    if not oid:
-        raise HTTPException(status_code=401, detail="Invalid Tenant Plane")
+    uid = claims.get("user_id") or claims.get("sub") or body.uid
+    if not uid:
+        raise HTTPException(status_code=401, detail="Missing user identity")
 
-    given_name = claims.get("given_name", "")
-    family_name = claims.get("family_name", "")
-    email = (
-        claims.get("email")
-        or claims.get("preferred_username")
-        or body.username
-        or ""
-    )
-    tenant_id = claims.get("tid") or body.tenantId or ""
+    email = claims.get("email") or body.username or ""
+    name = claims.get("name", "")
 
     user_record: Dict[str, Any] = {
-        "id": oid,
-        "oid": oid,
+        "id": uid,
+        "uid": uid,
         "username": email,
-        "given_name": given_name,
-        "family_name": family_name,
-        "tenant_id": tenant_id,
+        "display_name": name,
         "onboarded_at": datetime.now().isoformat(),
     }
 
     try:
         await store.upsert_user(user_record)
     except Exception as e:
-        # Log but do not hard-fail: Cosmos may not be configured in dev environments.
         print(f"[onboard] Cosmos upsert skipped: {e}", flush=True)
 
     return user_record

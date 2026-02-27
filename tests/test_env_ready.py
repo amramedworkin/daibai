@@ -29,9 +29,6 @@ def test_env_validator_success():
         "DB_PASSWORD": "realpassword123",
         "DB_NAME": "testdb",
         "GEMINI_API_KEY": "AIzaSyRealKey",
-        "AUTH_TENANT_ID": "e12adb01-a6b3-47bb-86c0-d662dacb3675",
-        "AUTH_CLIENT_ID": "5f5462c3-47b1-4af0-9ee0-6271d9893780",
-        "AZURE_TENANT_ID": "e12adb01-a6b3-47bb-86c0-d662dacb3675",
     }
     with mock.patch.dict(os.environ, valid_env, clear=True):
         with mock.patch("daibai.core.env_ready._database_configured_via_yaml", return_value=False):
@@ -48,12 +45,8 @@ def test_env_validator_success_with_mysql_keys():
         "MYSQL_PASSWORD": "realpassword123",
         "MYSQL_DATABASE": "testdb",
         "GEMINI_API_KEY": "AIzaSyRealKey",
-        "AUTH_TENANT_ID": "e12adb01-a6b3-47bb-86c0-d662dacb3675",
-        "AUTH_CLIENT_ID": "5f5462c3-47b1-4af0-9ee0-6271d9893780",
-        "AZURE_TENANT_ID": "e12adb01-a6b3-47bb-86c0-d662dacb3675",
     }
     with mock.patch.dict(os.environ, valid_env, clear=True):
-        # Mock daibai.yaml as not having DB config so we use env
         with mock.patch("daibai.core.env_ready._database_configured_via_yaml", return_value=False):
             is_valid, issues = EnvValidator.validate()
             assert is_valid is True

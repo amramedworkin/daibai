@@ -212,76 +212,10 @@ class Config:
             }
         return result
 
-    # ---------------------------------------------------------------------
-    # Dual-Plane identity config accessors (Identity Plane vs Infrastructure)
-    # ---------------------------------------------------------------------
-    @property
-    def auth_tenant_id(self) -> str:
-        """The tenant ID where user identities are stored (Identity Plane)."""
-        return os.environ.get("AUTH_TENANT_ID", "")
-
-    @property
-    def auth_client_id(self) -> str:
-        """Client ID (App Registration) used for user authentication flows."""
-        return os.environ.get("AUTH_CLIENT_ID", "")
-
-    @property
-    def azure_tenant_id(self) -> str:
-        """The tenant ID where infrastructure resources live (Infrastructure Plane)."""
-        return os.environ.get("AZURE_TENANT_ID", "")
-
     @property
     def hf_token(self) -> str:
         """Hugging Face token used for authenticated model downloads (HF_TOKEN)."""
         return os.environ.get("HF_TOKEN", "")
-    def validate_auth_config(self, fail_on_error: bool = True) -> bool:
-        """
-        Validate Robot (app-only) credentials against the Identity Plane by requesting
-        a client-credentials token for Microsoft Graph.
-
-        Behavior:
-        - If AUTH_CLIENT_ID and AUTH_CLIENT_SECRET are present,
-          attempt to acquire a token via msal. If acquisition fails and fail_on_error is True,
-          raise RuntimeError to fail-fast at startup.
-        - If credentials are not present, this is a no-op and returns False.
-        """
-        tenant = os.environ.get("AUTH_TENANT_ID", "").strip()
-        client_id = os.environ.get("AUTH_CLIENT_ID", "").strip()
-        client_secret = os.environ.get("AUTH_CLIENT_SECRET", "").strip()
-        if not (tenant and client_id and client_secret):
-            # No robot credentials configured; nothing to validate here.
-            return False
-
-        try:
-            import msal
-        except Exception as exc:
-            if fail_on_error:
-                raise RuntimeError("msal is required to validate Graph credentials") from exc
-            return False
-
-        authority = f"https://login.microsoftonline.com/{tenant}"
-        app = msal.ConfidentialClientApplication(client_id=client_id, client_credential=client_secret, authority=authority)
-        result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
-        # Successful response contains 'access_token' (cast to bool)
-        ok = bool(isinstance(result, dict) and "access_token" in result and result.get("access_token"))
-        if not ok and fail_on_error:
-            err = result.get("error_description") if isinstance(result, dict) else str(result)
-            raise RuntimeError(f"Failed to acquire Graph token for tenant {tenant}: {err}")
-        return ok
-
-    def trusted_identity_plane(self) -> Dict[str, str]:
-        """
-        Return a small dict describing the trusted Identity Plane.
-
-        Keys:
-        - tenant_id: AUTH_TENANT_ID
-        - client_id: AUTH_CLIENT_ID
-        """
-        return {"tenant_id": self.auth_tenant_id, "client_id": self.auth_client_id}
-
-    def is_auth_tenant(self, tenant_id: str) -> bool:
-        """Return True if the given tenant_id matches the configured AUTH_TENANT_ID."""
-        return str(tenant_id or "").strip() == str(self.auth_tenant_id or "").strip()
 
 
 def _resolve_env_vars(value: Any) -> Any:

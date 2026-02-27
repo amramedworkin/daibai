@@ -96,8 +96,7 @@ class EnvValidator:
     Returns (True, []) if valid, (False, list of issues) if invalid.
     """
 
-    # Include dual-plane required keys (Identity + Infrastructure) in addition to DB keys
-    REQUIRED_KEYS = REQUIRED_DB_KEYS + ["AUTH_TENANT_ID", "AUTH_CLIENT_ID", "AZURE_TENANT_ID"]
+    REQUIRED_KEYS = REQUIRED_DB_KEYS
     LLM_KEYS = LLM_KEYS
     INVALID_PLACEHOLDERS = INVALID_PLACEHOLDERS
 

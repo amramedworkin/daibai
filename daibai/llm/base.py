@@ -49,39 +49,17 @@ class SemanticCache:
         self._available = False
 
     def _ensure_redis(self) -> bool:
-        """Lazy init Redis connection. Supports Entra ID (secretless) or connection string."""
+        """Lazy init Redis client from connection string."""
         if self._redis is not None:
             return self._available
         try:
-            from daibai.core.config import get_redis_entra_config, get_redis_connection_string
-
+            from daibai.core.config import get_redis_connection_string
             conn_str = self._connection_string or get_redis_connection_string()
-            entra = get_redis_entra_config()
-
-            if entra:
-                host, port = entra
-                try:
-                    from redis import Redis
-                    from redis_entraid.cred_provider import create_from_default_azure_credential
-
-                    cred = create_from_default_azure_credential(("https://redis.azure.com/.default",))
-                    self._redis = Redis(
-                        host=host,
-                        port=port,
-                        ssl=True,
-                        ssl_cert_reqs=None,
-                        credential_provider=cred,
-                        decode_responses=True,
-                    )
-                except (ImportError, Exception):
-                    self._available = False
-                    return False
-            elif conn_str:
-                import redis
-                self._redis = redis.from_url(conn_str, decode_responses=True)
-            else:
+            if not conn_str:
                 self._available = False
                 return False
+            import redis
+            self._redis = redis.from_url(conn_str, decode_responses=True)
             self._redis.ping()
             self._available = True
         except Exception:

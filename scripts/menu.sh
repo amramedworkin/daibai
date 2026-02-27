@@ -95,8 +95,6 @@ show_main_menu() {
         "monitor, stats, Redis Insight setup"
     print_submenu_option "7" "Monitoring" \
         "Redis connection info for Redis Insight"
-    print_submenu_option "8" "Entra ID Management" \
-        "identify, list users, delete (hard/soft)"
     echo ""
     print_action_option "q" "Quick Commit & Push ${YELLOW}${DIM}(gitqik.sh)${NC}"
     print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle, opens browser on start)${NC}"
@@ -756,137 +754,6 @@ handle_monitoring_menu() {
 }
 
 # =============================================================================
-# ENTRA ID MANAGEMENT SUBMENU (8)
-# =============================================================================
-
-show_entra_menu() {
-    show_header "Microsoft Entra ID Management"
-    echo -e "  ${DIM}Identify, list users, delete (dry run = preview only; execute = perform deletion)${NC}"
-    echo ""
-    print_action_option "1" "Identify Directory & Domain"
-    print_action_option "2" "List Active Users"
-    print_action_option "3" "Delete Single User (Hard) - Dry Run"
-    print_action_option "4" "Delete Single User (Hard) - Execute"
-    print_action_option "5" "Delete Single User (Soft) - Dry Run"
-    print_action_option "6" "Delete Single User (Soft) - Execute"
-    print_action_option "7" "Bulk Delete Test Users (Hard) - Dry Run"
-    print_action_option "8" "Bulk Delete Test Users (Hard) - Execute"
-    print_action_option "9" "Bulk Delete Test Users (Soft) - Dry Run"
-    print_action_option "10" "Bulk Delete Test Users (Soft) - Execute"
-    print_action_option "11" "Verify Tenant ${YELLOW}${DIM}(CI-friendly, no login)${NC}"
-    print_action_option "12" "Create User"
-    print_action_option "13" "Ghost Cleanup (dry-run)"
-    echo ""
-    print_action_option "0" "Back to Main Menu"
-    echo ""
-    echo -n "  Select > "
-}
-
-handle_entra_menu() {
-    while true; do
-        show_entra_menu
-        read_menu_choice
-        case $choice in
-            1)
-                clear
-                # Use CI/non-interactive mode by default from interactive menu to avoid launching browser logins.
-                CI=1 "$SCRIPT_DIR/entra/01_identify_directory.sh" --ci
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            2)
-                clear
-                "$SCRIPT_DIR/entra/02_list_users.sh"
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            3)
-                clear
-                "$SCRIPT_DIR/entra/03_delete_single.sh"
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            4)
-                clear
-                "$SCRIPT_DIR/entra/03_delete_single.sh" --execute
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            5)
-                clear
-                "$SCRIPT_DIR/entra/03_delete_single.sh" --soft
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            6)
-                clear
-                "$SCRIPT_DIR/entra/03_delete_single.sh" --soft --execute
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            7)
-                clear
-                "$SCRIPT_DIR/entra/04_delete_bulk.sh"
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            8)
-                clear
-                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --execute
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            9)
-                clear
-                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            10)
-                clear
-                "$SCRIPT_DIR/entra/04_delete_bulk.sh" --soft --execute
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            11)
-                clear
-                "$SCRIPT_DIR/entra/00_verify_tenant.sh"
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            12)
-                clear
-                "$SCRIPT_DIR/entra/05_create_user.sh"
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            13)
-                clear
-                # Run ghost-cleanup in dry-run mode from menu
-                "$SCRIPT_DIR/cli.sh" ghost-cleanup
-                echo ""
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            0) return ;;
-            *) ;;
-        esac
-    done
-}
-
-# =============================================================================
 # MAIN LOOP
 # =============================================================================
 
@@ -901,7 +768,6 @@ while true; do
         5) handle_test_menu ;;
         6) handle_redis_menu ;;
         7) handle_monitoring_menu ;;
-        8) handle_entra_menu ;;
         q|Q) handle_quick_commit ;;
         s|S) handle_start_stop_chat_service ;;
         0)

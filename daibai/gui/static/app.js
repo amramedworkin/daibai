@@ -2,191 +2,90 @@
  * DaiBai GUI - Main Application JavaScript
  */
 
-console.log('MSAL Loaded:', typeof msal !== 'undefined');
+// ── Firebase initialisation (compat SDK, no build step required) ───────────
 
-// MSAL config is built from /api/auth-config (AUTH_TENANT_ID) at init time
-let msalInstance = null;
-const MSAL_DEFAULTS = {
-    tenantId: 'e12adb01-a6b3-47bb-86c0-d662dacb3675',
-    tenantName: 'daibaiauth',
-    clientId: '5f5462c3-47b1-4af0-9ee0-6271d9893780',
+const firebaseConfig = {
+    apiKey:            'AIzaSyBw9MKfYGp3_YpuTj2Uz0kO1ksFFzscZmU',
+    authDomain:        'daibai-affb0.firebaseapp.com',
+    projectId:         'daibai-affb0',
+    storageBucket:     'daibai-affb0.firebasestorage.app',
+    messagingSenderId: '483473257515',
+    appId:             '1:483473257515:web:2a9721d068ff5bb0aba66e',
+    measurementId:     'G-1THSZJTQM3',
 };
 
-function buildMsalConfig(authConfig) {
-    const authority = authConfig?.authority || `https://${MSAL_DEFAULTS.tenantName}.ciamlogin.com/${MSAL_DEFAULTS.tenantId}/`;
-    const clientId = authConfig?.auth_client_id || MSAL_DEFAULTS.clientId;
-    const knownAuthorities = authConfig?.known_authorities?.length
-        ? authConfig.known_authorities
-        : [`https://${MSAL_DEFAULTS.tenantName}.ciamlogin.com`];
-    return {
-        auth: {
-            clientId,
-            authority,
-            knownAuthorities,
-            redirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
-            postLogoutRedirectUri: typeof window !== 'undefined' ? window.location.origin + '/' : undefined,
+firebase.initializeApp(firebaseConfig);
+firebase.analytics();
+
+const _ui = new firebaseui.auth.AuthUI(firebase.auth());
+let _currentUser = null;   // firebase.User | null — updated by onAuthStateChanged
+
+// ── FirebaseUI configuration ───────────────────────────────────────────────
+
+const _uiConfig = {
+    signInFlow: 'popup',
+    signInOptions: [
+        firebase.auth.GoogleAuthProvider.PROVIDER_ID,
+        firebase.auth.GithubAuthProvider.PROVIDER_ID,   // enable in Firebase Console → Authentication → Sign-in method
+        firebase.auth.EmailAuthProvider.PROVIDER_ID,
+        firebaseui.auth.AnonymousAuthProvider.PROVIDER_ID,
+    ],
+    callbacks: {
+        signInSuccessWithAuthResult: (authResult) => {
+            console.log('[AUTH] Signed in as:', authResult.user.email || 'Anonymous');
+            // onAuthStateChanged handles app state; just close the modal here.
+            document.getElementById('authModal')?.classList.remove('active');
+            return false; // prevent FirebaseUI redirect
         },
-        system: {
-            // Add MSAL logging to help diagnose CDN/runtime errors in the wild.
-            loggerOptions: {
-                loggerCallback: (level, message, containsPii) => {
-                    if (containsPii) return;
-                    // Map numeric levels to console methods where possible
-                    if (level && level.toString && level.toString().toLowerCase().includes('error')) {
-                        console.error('[MSAL]', message);
-                    } else if (level && level.toString && level.toString().toLowerCase().includes('warning')) {
-                        console.warn('[MSAL]', message);
-                    } else {
-                        console.info('[MSAL]', message);
-                    }
-                },
-                piiLoggingEnabled: false,
-            }
-        },
-        cache: {
-            cacheLocation: 'sessionStorage',
-            storeAuthStateInCookie: false,
-        },
-    };
+        uiShown: () => console.log('[AUTH] FirebaseUI widget rendered'),
+    },
+    tosUrl: null,
+    privacyPolicyUrl: null,
+};
+
+// ── Auth API ───────────────────────────────────────────────────────────────
+
+/** Returns true when any Firebase session is active (including anonymous). */
+function isAuthenticated() { return !!_currentUser; }
+
+/** Open the sign-in modal and render the FirebaseUI widget. */
+function signIn() {
+    document.getElementById('authModal')?.classList.add('active');
+    _ui.start('#firebaseui-auth-container', _uiConfig);
 }
 
-async function ensureMsalInstance() {
-    if (msalInstance) return msalInstance;
-    let authConfig = {};
-    try {
-        const res = await fetch('/api/auth-config');
-        if (res.ok) authConfig = await res.json();
-    } catch (e) {
-        console.warn('Could not fetch auth-config, using defaults:', e.message);
+/** Sign the current user out of Firebase. */
+async function signOut() {
+    await firebase.auth().signOut();
+    // onAuthStateChanged fires next and resets _currentUser + UI
+}
+
+/** Returns a fresh Firebase ID token for the signed-in user. */
+async function getApiToken() {
+    if (!_currentUser) {
+        throw Object.assign(new Error('Not signed in'), { guestMode: true });
     }
-    const msalConfig = buildMsalConfig(authConfig);
-    msalInstance = new msal.PublicClientApplication(msalConfig);
-    console.log('MSAL Instance Initialized (authority:', msalConfig.auth.authority, ')');
-    return msalInstance;
+    return _currentUser.getIdToken();
 }
 
-// Redirect flow avoids COOP blocking popup window.closed; set false to try popup
-const USE_REDIRECT_INSTEAD_OF_POPUP = true;
+// ── Shared helpers ─────────────────────────────────────────────────────────
 
-let _authInteractionInProgress = false;
-
-function isAuthenticated() {
-    return msalInstance && msalInstance.getAllAccounts().length > 0;
-}
-
-function showAuthGate() { /* no-op: auth gate overlay removed */ }
-function hideAuthGate() { /* no-op: auth gate overlay removed */ }
+function showAuthGate() { /* no-op */ }
+function hideAuthGate()  { /* no-op */ }
 
 function updateAuthButtons() {
     const hasAccount = isAuthenticated();
-    const loginBtn = document.getElementById('loginBtn');
+    const loginBtn  = document.getElementById('loginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
-    if (loginBtn) loginBtn.style.display = hasAccount ? 'none' : '';
+    if (loginBtn)  loginBtn.style.display  = hasAccount ? 'none' : '';
     if (logoutBtn) logoutBtn.style.display = hasAccount ? '' : 'none';
 }
 
-async function signIn() {
-    if (_authInteractionInProgress) return;
-    await ensureMsalInstance();
-    await msalInstance.initialize();
-    const loginRequest = { scopes: ['openid', 'profile'] };
-    try {
-        if (USE_REDIRECT_INSTEAD_OF_POPUP) {
-            _authInteractionInProgress = true;
-            await msalInstance.loginRedirect(loginRequest);
-        } else {
-            const response = await msalInstance.loginPopup(loginRequest);
-            if (response) {
-                console.log('Account:', response.account);
-                alert('Logged in as: ' + response.account.username);
-                updateAuthButtons();
-            }
-        }
-    } catch (error) {
-        _authInteractionInProgress = false;
-        console.error('Login error:', error);
-    }
-}
-
-async function signOut() {
-    if (_authInteractionInProgress) return;
-    await ensureMsalInstance();
-    await msalInstance.initialize();
-    try {
-        if (USE_REDIRECT_INSTEAD_OF_POPUP) {
-            _authInteractionInProgress = true;
-            await msalInstance.logoutRedirect();
-        } else {
-            await msalInstance.logoutPopup();
-            updateAuthButtons();
-        }
-    } catch (error) {
-        _authInteractionInProgress = false;
-        console.error('Logout error:', error);
-    }
-}
-
-async function signUp() {
-    if (_authInteractionInProgress) {
-        console.warn("[AUTH] Interaction already in progress, ignoring signup click.");
-        return;
-    }
-    
-    // STEP 1: User Interface Trigger
-    console.log("%c[STEP 1] UI: User clicked 'Register' button on Auth Gate.", "color: #3498db; font-weight: bold;");
-    
-    _authInteractionInProgress = true;
-    
-    // STEP 2: Frontend Logic Preparation
-    console.log("%c[STEP 2] LOGIC: Preparing 'signupRequest' with prompt: 'create'.", "color: #3498db; font-weight: bold;");
-    const signupRequest = {
-        scopes: ["openid", "profile", "User.Read"],
-        prompt: "create",
-    };
-    console.log("[STEP 2] Request Object:", JSON.stringify(signupRequest));
-
-    try {
-        // Ensure MSAL instance is ready before use
-        await ensureMsalInstance();
-        // STEP 3: MSAL Hand-off to Identity Plane
-        const authority = msalInstance.getConfiguration()?.auth?.authority;
-        console.log(`%c[STEP 3] MSAL: Redirecting browser to Identity Plane (Azure Entra).`, "color: #3498db; font-weight: bold;");
-        console.log(`[STEP 3] Target Authority: ${authority}`);
-        console.log("[STEP 3] NOTE: Browser session is now leaving the application. Next log will appear after redirect back.");
-        await msalInstance.loginRedirect(signupRequest);
-    } catch (e) {
-        console.error('%c[ERROR] Identity Plane Redirect Failed:', "color: red; font-weight: bold;", e);
-        _authInteractionInProgress = false;
-    }
-}                            
-
-async function getTokenPopup(request) {
-    await ensureMsalInstance();
-    await msalInstance.initialize();
-    const account = msalInstance.getAllAccounts()[0];
-    if (!account) {
-        throw new Error('No account signed in');
-    }
-    const silentRequest = { ...request, account };
-    try {
-        return await msalInstance.acquireTokenSilent(silentRequest);
-    } catch (error) {
-        if (error.name === 'InteractionRequiredAuthError') {
-            return await msalInstance.acquireTokenPopup(request);
-        }
-        throw error;
-    }
-}
-
-/** Get token for DaiBai API. Backend validates JWT with aud=clientId; use idToken (not accessToken). */
-async function getApiToken() {
-    const request = { scopes: ['openid', 'profile'] };
-    const response = await getTokenPopup(request);
-    // Use idToken: has aud=clientId. accessToken may have aud=Graph (00000003-...) and fails backend validation.
-    return response.idToken || response.accessToken;
-}
-
-/** Fetch wrapper that adds Bearer token for authenticated API calls. */
+/**
+ * Fetch wrapper that attaches a Firebase ID token as a Bearer header.
+ * Unauthenticated callers receive a typed guestMode error; upstream
+ * code (loadSettings, loadConversations) already catches and skips silently.
+ */
 async function apiFetch(url, options = {}) {
     const opts = { ...options };
     opts.headers = opts.headers || {};
@@ -194,12 +93,11 @@ async function apiFetch(url, options = {}) {
         const token = await getApiToken();
         opts.headers['Authorization'] = 'Bearer ' + token;
     } catch (e) {
-        // No token available (guest mode). Callers handle this gracefully.
-        throw Object.assign(new Error('Not signed in'), { guestMode: true });
+        if (e.guestMode) throw e; // let caller decide
+        throw e;
     }
     const res = await fetch(url, opts);
     if (res.status === 401) {
-        // Token was rejected — session likely expired. Signal via typed error.
         throw Object.assign(
             new Error('Session expired. Please sign in again.'),
             { sessionExpired: true }
@@ -208,28 +106,32 @@ async function apiFetch(url, options = {}) {
     return res;
 }
 
-function callMSGraph(endpoint, token, callback) {
-    fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-    })
-        .then((res) => res.json())
-        .then((data) => callback(null, data))
-        .catch((err) => callback(err, null));
-}
-
-async function readMail() {
-    const request = { scopes: ['User.Read'] };
+/**
+ * After a successful sign-in, POST the Firebase ID token to the backend so it
+ * can upsert the user record in Cosmos DB (the Data Plane onboarding step).
+ */
+async function onboardUser(user) {
     try {
-        const response = await getTokenPopup(request);
-        callMSGraph('https://graph.microsoft.com/v1.0/me', response.accessToken, (err, data) => {
-            if (err) {
-                console.error('Graph API error:', err);
-                return;
-            }
-            console.log('Profile:', data);
+        const idToken = await user.getIdToken();
+        const res = await fetch('/api/auth/onboard', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${idToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                uid:      user.uid,
+                username: user.email,
+            }),
         });
-    } catch (error) {
-        console.error('Token error:', error);
+        if (res.ok) {
+            const data = await res.json();
+            console.log('[AUTH] Onboarding complete:', data);
+        } else {
+            console.warn('[AUTH] Onboarding non-OK:', res.status);
+        }
+    } catch (e) {
+        console.error('[AUTH] Onboarding error:', e);
     }
 }
 
@@ -319,6 +221,27 @@ class DaiBaiApp {
         `;
         banner.querySelector('.guest-signin-btn').addEventListener('click', () => signIn());
         this.conversationList.before(banner);
+    }
+
+    /**
+     * Called by onAuthStateChanged when a user signs in while the app is
+     * already running in guest mode. Reverses enterGuestMode() and loads
+     * the full authenticated feature set.
+     */
+    async exitGuestMode() {
+        // Remove the guest banner.
+        document.getElementById('guestBanner')?.remove();
+
+        // Re-enable the chat input.
+        this.promptInput.disabled = false;
+        this.promptInput.placeholder = 'Ask me about your database…';
+
+        // Load the full feature set.
+        await this.loadSettings();
+        await this.loadConversations();
+        this.connectWebSocket();
+
+        console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
 
     loadPreferences() {
@@ -1689,106 +1612,36 @@ class DaiBaiApp {
     }
 }
 
-/**
- * Purge any stale MSAL interaction state left in sessionStorage.
- * This happens when a redirect was initiated (e.g. a previous signUp/signIn call)
- * but the user navigated back before CIAM completed. Without this, MSAL replays
- * the original request params (including prompt=create) on the next loginRedirect.
- */
-function clearStaleMsalState() {
-    const staleKeys = Object.keys(sessionStorage).filter(k => k.startsWith('msal.'));
-    if (staleKeys.length > 0) {
-        console.log(`[MSAL] Clearing ${staleKeys.length} stale interaction key(s) from sessionStorage.`);
-        staleKeys.forEach(k => sessionStorage.removeItem(k));
-    }
-}
-
-document.addEventListener('DOMContentLoaded', async () => {
-    await ensureMsalInstance();
-    await msalInstance.initialize();
-    
-    try {
-        // STEP 7: Auth Callback (Return from Identity Plane)
-        const response = await msalInstance.handleRedirectPromise();
-
-        // Defensive logging and validation: MSAL runtime can sometimes produce
-        // unexpected/malformed responses from custom CIAM providers. Log raw
-        // payload and guard access to nested properties.
-        console.log("[STEP 7] Raw redirect response:", response);
-
-        if (!response) {
-            // No active redirect in flight — purge any leftover MSAL state so the
-            // next signIn() call starts with a clean slate (no stale prompt=create, etc.)
-            clearStaleMsalState();
+document.addEventListener('DOMContentLoaded', () => {
+    // Auth-modal close button and backdrop click.
+    document.getElementById('authModalClose')?.addEventListener('click', () => {
+        document.getElementById('authModal')?.classList.remove('active');
+    });
+    document.getElementById('authModal')?.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('authModal')) {
+            e.target.classList.remove('active');
         }
+    });
 
-        if (response && typeof response === 'object') {
-            console.log("%c[STEP 7] BRIDGE: Redirect callback received from Identity Plane.", "color: #f39c12; font-weight: bold;");
-            console.log("[STEP 7] Identity Plane Data:", {
-                oid: response.uniqueId,
-                username: response.account?.username,
-                idTokenClaims: response.idTokenClaims ?? null
-            });
-            
-            // NOTE: Check console here for Step 6 outcome. 
-            // If idTokenClaims.given_name is missing, the "Ghost" was born in the Identity Plane.
+    // onAuthStateChanged is the single source of truth for session state.
+    firebase.auth().onAuthStateChanged(async (user) => {
+        const wasGuest = !_currentUser;
+        _currentUser = user;
 
-            try {
-                // STEP 8: Data Handover (Onboarding Trigger)
-                console.log("%c[STEP 8] HANDOVER: Sending Identity to Backend for Data Plane Onboarding...", "color: #9b59b6; font-weight: bold;");
-                
-                const onboardResponse = await fetch('/api/auth/onboard', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${response.accessToken || ''}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        tenantId: response.tenantId || null,
-                        username: response.account?.username || null
-                    })
-                });
-
-                if (!onboardResponse.ok) {
-                    const errorData = await onboardResponse.json();
-                    console.error("[STEP 9-10 ERROR] Backend failed to resolve Ghost User.");
-                    console.error("[REASON]:", errorData.detail || "Unknown Backend Error");
-                    throw new Error('Data Plane synchronization failed');
-                }
-
-                const syncData = await onboardResponse.json();
-                // STEP 10: Data Resolve (Confirmation from Backend)
-                console.log("%c[STEP 10] RESOLVE: Backend confirmed Ghost User is now finalized in CosmosDB.", "color: #27ae60; font-weight: bold;");
-                console.log("[STEP 10] Final User Record:", syncData);
-
-                // STEP 10.5: Wipe the registration token locally and redirect straight
-                // to login — no round-trip through Microsoft's "You have been signed out"
-                // page. onRedirectNavigate returning false tells MSAL to clear its cache
-                // without navigating to the CIAM end_session endpoint, so the next
-                // loginRedirect gets a clean slate with fully resolved claims.
-                console.log("%c[STEP 10.5] Registration complete. Clearing local session and redirecting to login.", "color: #34495e; font-weight: bold;");
-                await msalInstance.logoutRedirect({
-                    onRedirectNavigate: () => false   // local cache clear only, no CIAM logout page
-                });
-                clearStaleMsalState();
-                await signIn();
-                return;
-
-            } catch (syncError) {
-                console.error('%c[CRITICAL] Data Plane Sync Failed. The user remains an orphaned Ghost.', "color: #c0392b; font-weight: bold;");
-                alert("Account setup incomplete. Please try logging in again.");
-                return;
+        if (user) {
+            console.log('[AUTH] Signed in:', user.email || `anonymous:${user.uid}`);
+            if (!user.isAnonymous) await onboardUser(user);
+            // Upgrade from guest mode to full mode if the app is already running.
+            if (wasGuest && window.app) {
+                window.app.guestMode = false;
+                await window.app.exitGuestMode();
             }
+        } else {
+            console.log('[AUTH] No session — guest mode');
         }
-    } catch (e) {
-        console.error('%c[ERROR] Redirect Processing Error:', "color: red;", e);
-    } finally {
-        _authInteractionInProgress = false;
-    }
 
-    // Guest Mode: the app always loads immediately. Unauthenticated users get a
-    // restricted view; they can sign in whenever they're ready via the nav button.
-    const authenticated = isAuthenticated();
-    console.log(`[AUTH] Session state: ${authenticated ? 'Authenticated — loading full app' : 'Guest — loading restricted app'}`);
+        updateAuthButtons();
+    });
+
     window.app = new DaiBaiApp();
 });

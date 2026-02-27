@@ -68,19 +68,9 @@ DaiBai is an AI-powered natural language database assistant that converts your q
 
 DaiBai operates on an **"Untrusted Client"** model. Because LLMs are inherently probabilistic and susceptible to [Prompt Injection (GenSQLi)](https://arxiv.org/abs/2310.12889) and hallucinations, we implement a strict, multi-layered **Defense-in-Depth** pipeline (Pre-LLM Sanitization + Post-LLM AST Validation) to protect your databases.
 
-### Dual-Plane Identity & Computational Airgap
+### Authentication
 
-DaiBai enforces a strict separation between the Identity Plane (where user identities and human authentication live) and the Infrastructure Plane (where backend resources and service identities live). Practically:
-
-- Identity Plane: user accounts, B2C/CIAM tenant — configured with `AUTH_TENANT_ID` and the robot app credentials (`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`). The application validates incoming user tokens against this tenant and issues no infra credentials to user-held tokens.
-- Infrastructure Plane: service and infra tenants — configured with `AZURE_TENANT_ID`. Backend services must use managed identities or service principals bound to the infrastructure tenant to access cloud resources.
-
-The "Computational Airgap" rule is enforced by the server-side auth guard: any incoming JWT whose `tid` (tenant id) equals the infrastructure tenant is rejected (403), and only tokens issued by the configured identity tenant are accepted for chat operations. This prevents infrastructure administrators or infra-scoped tokens from impersonating end users in the chat API.
-
-Key points:
-- Do not store or forward user ID tokens to infrastructure clients. Use dedicated infra credentials (managed identities / service principals) for backend operations.
-- Environment variables: `AUTH_TENANT_ID`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET` (Identity Plane); `AZURE_TENANT_ID` (Infrastructure Plane).
-- See `daibai/core/identity.py` and `daibai/api/auth.py` for the enforcement implementation and tests under `tests/mock/test_airgap_enforcement.py`.
+DaiBai uses **Firebase Authentication** for user sign-in. Users can sign in with Google, GitHub, Email/Password, or continue anonymously. Firebase ID tokens are passed as Bearer tokens to the backend for user onboarding into Cosmos DB.
 
 Below is the explicit classification of how the system handles different types of requests, based on the latest research on Text-to-SQL vulnerabilities.
 

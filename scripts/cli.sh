@@ -145,18 +145,6 @@ Commands (mirrors menu.sh):
     cache-info               Show parsed Redis connection info for Redis Insight
     cache-test               Test Redis connection (host, port, username, password from .env)
 
-  ENTRA ID
-    entra verify             CI-friendly: check tenant only, no login (exit 0/1)
-    entra identify [--ci]    Identify DaiBai directory; --ci = no interactive login
-    entra list               List active users
-    entra delete [--soft] [--execute]  Delete single user (dry run by default; --execute to perform)
-    entra bulk-delete [--soft] [--execute]  Bulk delete test users (dry run by default; --execute to perform)
-    entra verify-flow [--app-id <id>] [--flow-id <id>]
-                             Validate Identity Plane: app linkage, Ghost Resolution claims, acceptMappedClaims flag
-                             Defaults to AUTH_GUI_CLIENT_ID from .env. Override with --app-id.
-    entra inspect-flow [--app-id <id>] [--flow-id <id>]
-                             Dump raw Azure Entra config: flow definition, linked apps, page layout
-
   SETUP (idempotent)
     setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
 
@@ -509,120 +497,6 @@ cmd_verify_azure_auth() {
     "$py" "$PROJECT_DIR/scripts/verify_azure_auth.py"
 }
 
-cmd_verify_auth_flow() {
-    load_env
-    print_header "Identity Plane Validator — Ghost Resolution Claims"
-
-    local FLOW_ID="SignUpSignIn"
-
-    # Prefer the dedicated GUI app variable; fall back to AUTH_CLIENT_ID.
-    # Override via --app-id <id> flag.
-    local APP_CLIENT_ID="${AUTH_GUI_CLIENT_ID:-${AUTH_CLIENT_ID:-}}"
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --app-id) APP_CLIENT_ID="$2"; shift 2 ;;
-            --flow-id) FLOW_ID="$2"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
-
-    if [[ -z "$APP_CLIENT_ID" ]]; then
-        print_error "No app ID found. Set AUTH_GUI_CLIENT_ID in .env or pass --app-id <id>."
-        exit 1
-    fi
-
-    echo "  App ID : $APP_CLIENT_ID"
-    echo "  Flow ID: $FLOW_ID"
-    echo ""
-
-    echo -e "\033[1;34m[1/3] Checking Application Linkage...\033[0m"
-    local LINKED_APPS
-    LINKED_APPS=$(az rest --method get \
-        --url "https://graph.microsoft.com/beta/identity/authenticationEventListeners/userFlows/$FLOW_ID/applications" \
-        --query "value[?id=='$APP_CLIENT_ID'].id" -o tsv 2>/dev/null)
-
-    if [[ -z "$LINKED_APPS" ]]; then
-        echo -e "\033[1;31m[FAIL]\033[0m App $APP_CLIENT_ID is NOT linked to flow $FLOW_ID."
-        echo "       Go to 'Applications' tab in the flow and add it."
-    else
-        echo -e "\033[1;32m[PASS]\033[0m Application link confirmed."
-    fi
-
-    echo -e "\n\033[1;34m[2/3] Verifying Token Claims (The Ghost Fix)...\033[0m"
-    local CLAIMS_JSON
-    CLAIMS_JSON=$(az rest --method get \
-        --url "https://graph.microsoft.com/beta/identity/authenticationEventListeners/userFlows/$FLOW_ID" \
-        --query "attributeCollection.attributes" -o json 2>/dev/null)
-
-    local REQUIRED_ATTRS=("givenName" "surname" "displayName")
-    for attr in "${REQUIRED_ATTRS[@]}"; do
-        if echo "$CLAIMS_JSON" | grep -q "$attr"; then
-            echo -e "\033[1;32m[PASS]\033[0m Attribute '$attr' is active in the flow."
-        else
-            echo -e "\033[1;31m[FAIL]\033[0m Attribute '$attr' is MISSING."
-            echo "       Add it under 'Application claims' and 'User attributes' in the flow."
-        fi
-    done
-
-    echo -e "\n\033[1;34m[3/3] Checking App Manifest Flags...\033[0m"
-    local MAPPED_FLAG
-    MAPPED_FLAG=$(az ad app show --id "$APP_CLIENT_ID" --query "acceptMappedClaims" -o tsv 2>/dev/null)
-
-    if [[ "$MAPPED_FLAG" == "true" ]]; then
-        echo -e "\033[1;32m[PASS]\033[0m acceptMappedClaims is enabled."
-    else
-        echo -e "\033[1;31m[FAIL]\033[0m acceptMappedClaims is FALSE or unset."
-        echo "       Set this to true in the App Registration Manifest."
-    fi
-}
-
-cmd_inspect_auth_flow() {
-    load_env
-    print_header "Auth Configuration Inspector — Raw Azure Entra Dump"
-
-    local FLOW_ID="SignUpSignIn"
-    local APP_CLIENT_ID="${AUTH_GUI_CLIENT_ID:-${AUTH_CLIENT_ID:-}}"
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --app-id)  APP_CLIENT_ID="$2"; shift 2 ;;
-            --flow-id) FLOW_ID="$2";       shift 2 ;;
-            *) shift ;;
-        esac
-    done
-
-    if [[ -z "$APP_CLIENT_ID" ]]; then
-        print_error "No app ID found. Set AUTH_GUI_CLIENT_ID in .env or pass --app-id <id>."
-        exit 1
-    fi
-
-    echo "  App ID : $APP_CLIENT_ID"
-    echo "  Flow ID: $FLOW_ID"
-
-    local BASE="https://graph.microsoft.com/beta/identity/authenticationEventListeners/userFlows/$FLOW_ID"
-
-    echo -e "\n\033[1;34m[1/3] USER FLOW DEFINITION (Attributes & Identity Providers)\033[0m"
-    az rest --method get \
-        --url "$BASE" \
-        --query "{ID:id, Attributes:attributeCollection.attributes}" \
-        -o json 2>/dev/null \
-        || echo "(no data — robot may lack permission or flow ID is wrong)"
-
-    echo -e "\n\033[1;34m[2/3] LINKED APPLICATIONS\033[0m"
-    az rest --method get \
-        --url "$BASE/applications" \
-        --query "value[].{Name:displayName, ClientID:id}" \
-        -o table 2>/dev/null \
-        || echo "(no data)"
-
-    echo -e "\n\033[1;34m[3/3] PAGE LAYOUT — Local Account Sign-Up\033[0m"
-    az rest --method get \
-        --url "$BASE/pageLayouts/localAccountSignUp" \
-        --query "attributeLayouts[].{Attribute:attribute, Required:isRequired, Label:label}" \
-        -o table 2>/dev/null \
-        || echo "(no data)"
-}
 
 cmd_redis_create() {
     print_header "Azure Cache for Redis Setup"
@@ -1187,44 +1061,6 @@ main() {
             ;;
         status)
             cmd_chat_status "$@"
-            ;;
-        entra)
-            case "$1" in
-                verify)
-                    CI=1 bash "$SCRIPT_DIR/entra/00_verify_tenant.sh"
-                    ;;
-                identify)
-                    if [[ "$2" == "--ci" || "$2" == "-n" ]]; then
-                        CI=1 bash "$SCRIPT_DIR/entra/01_identify_directory.sh" --ci
-                    else
-                        bash "$SCRIPT_DIR/entra/01_identify_directory.sh"
-                    fi
-                    ;;
-                list) bash "$SCRIPT_DIR/entra/02_list_users.sh" ;;
-                delete)
-                    shift || true
-                    bash "$SCRIPT_DIR/entra/03_delete_single.sh" "$@"
-                    ;;
-                create)
-                    # forward args to create script
-                    shift || true
-                    bash "$SCRIPT_DIR/entra/05_create_user.sh" "$@"
-                    ;;
-                bulk-delete)
-                    shift || true
-                    bash "$SCRIPT_DIR/entra/04_delete_bulk.sh" "$@"
-                    ;;
-                verify-flow|check-flow)
-                    cmd_verify_auth_flow
-                    ;;
-                inspect-flow|dump-flow)
-                    shift || true
-                    cmd_inspect_auth_flow "$@"
-                    ;;
-                *)
-                    echo "Usage: ./scripts/cli.sh entra {verify|identify|list|delete|bulk-delete|verify-flow|inspect-flow} [--soft] [--execute]"
-                    ;;
-            esac
             ;;
         help|--help|-h|"")
             show_help

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from daibai.api.database import CosmosConversationStore
-from daibai.api.server import app, get_current_user, get_store
+from daibai.api.server import app, get_store
 
 
 class InMemoryStore(CosmosConversationStore):
@@ -34,25 +34,18 @@ class InMemoryStore(CosmosConversationStore):
 
 
 @pytest.fixture
-def mock_user():
-    """Fake user for bypassing auth."""
-    return {"sub": "test-user", "email": "test@example.com"}
-
-
-@pytest.fixture
 def in_memory_store():
     """Store we can inspect after the request."""
     return InMemoryStore()
 
 
 @pytest.fixture
-def client(mock_user, in_memory_store):
-    """TestClient with auth bypassed and in-memory store."""
+def client(in_memory_store):
+    """TestClient with in-memory store."""
 
     def _get_store_override(request: Request):
         return in_memory_store
 
-    app.dependency_overrides[get_current_user] = lambda: mock_user
     app.dependency_overrides[get_store] = _get_store_override
 
     with TestClient(app) as c:
