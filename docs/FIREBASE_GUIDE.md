@@ -101,3 +101,12 @@ sequenceDiagram
 | **3. User Registration** | **Azure Cosmos DB** (`daibai-metadata`) | A User Profile Document: `{"id": "firebase_uid", "type": "user", "email": "...", "preferences": {}}` | Automatically intercepted by FastAPI on the user's *very first* secure API request. | To establish a permanent anchor in your application database. You need a record with the partition key (`/id`) matching the Firebase UID to tie all future chats to this specific person. |
 | **4. Chat History Creation** | **Azure Cosmos DB** (`daibai-metadata`, `conversations` container) | A new Conversation Document: `{"id": "conv_123", "user_id": "firebase_uid", "messages": [{"role": "user", "content": "..."}]}` | When the user starts a brand new chat thread and sends their first prompt. | To persist the application state. When the user logs in from a different computer later, the backend fetches all documents where `user_id` matches their UID to populate the sidebar. |
 | **5. Chat History Updating** | **Azure Cosmos DB** (`daibai-metadata`, `conversations` container) | The *updated* Conversation Document (appending the AI's generated SQL and the user's follow-up questions to the `messages` array). | Every time a back-and-forth exchange completes in an active chat window. | Document databases handle complete overwrites well. You grab the existing array of messages, append the newest interactions, and UPSERT the entire document back to Cosmos DB to maintain the continuous chat log. |
+
+
+```python
+import firebase_admin
+from firebase_admin import credentials
+
+cred = credentials.Certificate("firebase-adminsdk.json")
+firebase_admin.initialize_app(cred)
+```

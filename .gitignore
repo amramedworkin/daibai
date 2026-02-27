@@ -39,6 +39,12 @@ env/
 .env.*.local
 daibai.yaml
 
+# Service account keys and certificates — never commit these
+config/secrets/
+*firebase-adminsdk*.json
+*service-account*.json
+*serviceAccount*.json
+
 # Daiby data
 exports/
 .daibai/

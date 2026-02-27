@@ -168,7 +168,7 @@ class CosmosStore:
         return user
 
     async def get_user(self, oid: str) -> Optional[Dict[str, Any]]:
-        """Fetch a user record by OID. Returns None if not found."""
+        """Fetch a user record by OID (or Firebase UID). Returns None if not found."""
         client = await self._ensure_client()
         database = client.get_database_client(self._database_name)
         container = database.get_container_client("Users")
@@ -176,6 +176,25 @@ class CosmosStore:
             return await container.read_item(item=oid, partition_key=oid)
         except CosmosResourceNotFoundError:
             return None
+
+    async def ensure_user_exists(self, user_id: str, email: str) -> None:
+        """
+        Just-in-Time user registration.
+        If no record exists for user_id, create a minimal profile in the Users container.
+        Safe to call on every authenticated request — the read is cheap and the write
+        is only triggered once per new user.
+        """
+        from datetime import datetime
+
+        existing = await self.get_user(oid=user_id)
+        if existing is None:
+            new_user = {
+                "id":         user_id,
+                "type":       "user",
+                "email":      email,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            await self.upsert_user(user=new_user)
 
 
 # Backward compatibility alias (server imports CosmosConversationStore)
