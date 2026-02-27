@@ -1,4 +1,6 @@
+# Registration Flow
 
+## Registration Flow Sequence
 ```mermaid
 sequenceDiagram
     autonumber
@@ -38,6 +40,7 @@ sequenceDiagram
     FE-->>User: Displays the data table in chat window
 ```
 
+## Registration Flow Table
 
 | Step | Component Interaction | Description of Action | Transfer Object / Payload |
 | :--- | :--- | :--- | :--- |
@@ -53,3 +56,48 @@ sequenceDiagram
 | **12** | **Backend ➔ Frontend** | FastAPI returns the result of the chat to the frontend, alongside the new `conversation_id` mapped to the newly registered user. | **JSON Response:**<br>`{"conversation_id": "conv_999", "answer": "Here are the top 5...", "data": [...]}` |
 
 
+# State Data Storage Matrix
+
+## State Data Storage Matrix Sequence
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Browser as Frontend (Vanilla JS)
+    participant FB as Firebase Identity
+    participant API as FastAPI Backend
+    participant DB as Cosmos DB (daibai-metadata)
+
+    Note over User, FB: 1. Identity State (Acquiring the Persistable ID)
+    User->>Browser: Logs in via FirebaseUI
+    Browser->>FB: Authenticates credentials (Google/GitHub/etc.)
+    FB-->>Browser: Returns AuthResult & JWT (Contains UID)
+    Browser->>Browser: Saves JWT to sessionStorage
+
+    Note over User, DB: 2. Application State (Chat & Storage)
+    User->>Browser: Sends Prompt ("Query advertisers")
+    Browser->>Browser: Retrieves JWT from sessionStorage
+    Browser->>API: POST /api/chat (Header: Bearer JWT)
+    
+    API->>API: Decodes JWT -> Extracts Firebase UID
+    API->>DB: GET User Profile by ID (UID)
+    
+    alt Profile Does Not Exist (First Request)
+        API->>DB: UPSERT User Doc {id: UID, type: 'user'}
+    end
+    
+    API->>API: Generates SQL / Executes LLM
+    API->>DB: UPSERT Conversation Doc {id: conv_id, user_id: UID, messages: [...]}
+    API-->>Browser: Returns Chat Response
+    Browser-->>User: Updates UI State
+```
+
+## State Storage Matrix Table
+
+| Step | Data Store | What is Stored | When it Happens | Why it is Stored Here |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Identity Creation** | **Firebase Servers** | Encrypted passwords, OAuth links (Google/GitHub), verified emails, and the master Firebase `UID`. | The moment the user successfully completes the FirebaseUI login popup on the frontend. | Firebase absorbs the security liability. Your infrastructure never touches raw passwords or manages OAuth handshakes. |
+| **2. Session Persistence** | **Browser Storage** (`sessionStorage` or `localStorage`) | The temporary **JSON Web Token (JWT)** issued by Firebase. | Immediately after Firebase returns a success callback to your Vanilla JS frontend. | The Vanilla JS frontend is stateless. It needs to hold onto this token so it can attach it to the `Authorization` header of every subsequent API call to your backend. |
+| **3. User Registration** | **Azure Cosmos DB** (`daibai-metadata`) | A User Profile Document: `{"id": "firebase_uid", "type": "user", "email": "...", "preferences": {}}` | Automatically intercepted by FastAPI on the user's *very first* secure API request. | To establish a permanent anchor in your application database. You need a record with the partition key (`/id`) matching the Firebase UID to tie all future chats to this specific person. |
+| **4. Chat History Creation** | **Azure Cosmos DB** (`daibai-metadata`, `conversations` container) | A new Conversation Document: `{"id": "conv_123", "user_id": "firebase_uid", "messages": [{"role": "user", "content": "..."}]}` | When the user starts a brand new chat thread and sends their first prompt. | To persist the application state. When the user logs in from a different computer later, the backend fetches all documents where `user_id` matches their UID to populate the sidebar. |
+| **5. Chat History Updating** | **Azure Cosmos DB** (`daibai-metadata`, `conversations` container) | The *updated* Conversation Document (appending the AI's generated SQL and the user's follow-up questions to the `messages` array). | Every time a back-and-forth exchange completes in an active chat window. | Document databases handle complete overwrites well. You grab the existing array of messages, append the newest interactions, and UPSERT the entire document back to Cosmos DB to maintain the continuous chat log. |
