@@ -430,35 +430,6 @@ def get_redis_connection_string() -> Optional[str]:
     )
 
 
-def get_redis_entra_config() -> Optional[tuple]:
-    """
-    Get (host, port) for Redis when using Entra ID (secretless).
-    Returns non-None when REDIS_USE_ENTRA_ID=1 and host is available from
-    AZURE_REDIS_HOST or parsed from REDIS_URL. Port defaults to 6380 (Azure SSL).
-    """
-    use_entra = os.environ.get("REDIS_USE_ENTRA_ID", "").strip().lower() in ("1", "true", "yes")
-    if not use_entra:
-        return None
-    host = os.environ.get("AZURE_REDIS_HOST", "").strip()
-    if not host:
-        url = get_redis_connection_string()
-        if url and "redis" in url:
-            try:
-                from urllib.parse import urlparse
-                parsed = urlparse(url)
-                if parsed.hostname:
-                    host = parsed.hostname
-            except Exception:
-                pass
-    if not host:
-        return None
-    port_str = os.environ.get("AZURE_REDIS_PORT", "6380").strip()
-    try:
-        port = int(port_str)
-    except ValueError:
-        port = 6380
-    return (host, port)
-
 
 def get_semantic_similarity_threshold() -> float:
     """

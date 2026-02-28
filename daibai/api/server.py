@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
 from .database import CosmosConversationStore
+from . import auth
+from .auth import get_current_user
 
 
 def get_store(request: Request) -> CosmosConversationStore:
@@ -71,6 +73,8 @@ app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=
 
 
 class COOPMiddleware(BaseHTTPMiddleware):
+    """Required for FirebaseUI popup sign-in flows (Google, GitHub) to communicate
+    with the opener window without being blocked by cross-origin isolation."""
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
@@ -154,6 +158,11 @@ class OnboardRequest(BaseModel):
     username: Optional[str] = None
 
 
+class ProfilePatchRequest(BaseModel):
+    display_name: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
 # Static files path
 STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
 
@@ -190,17 +199,14 @@ async def auth_onboard(
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[len("Bearer "):].strip() if auth_header.startswith("Bearer ") else ""
 
-    # Decode without signature verification for now.
-    # TODO: verify with firebase-admin once server credentials are added.
     claims: Dict[str, Any] = {}
     if token:
         try:
-            import jwt as _pyjwt
-            claims = _pyjwt.decode(token, options={"verify_signature": False})
-        except Exception:
+            claims = auth.verify_firebase_token(token)
+        except HTTPException:
             claims = {}
 
-    uid = claims.get("user_id") or claims.get("sub") or body.uid
+    uid = claims.get("uid") or claims.get("user_id") or claims.get("sub") or body.uid
     if not uid:
         raise HTTPException(status_code=401, detail="Missing user identity")
 
@@ -221,6 +227,29 @@ async def auth_onboard(
         print(f"[onboard] Cosmos upsert skipped: {e}", flush=True)
 
     return user_record
+
+
+@app.patch("/api/profile")
+async def patch_profile(
+    body: ProfilePatchRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
+    """
+    Update mutable profile fields (display_name, phone_number) in Cosmos DB.
+    Firebase Auth is updated client-side via the SDK; this endpoint keeps Cosmos
+    in sync so the fields are searchable server-side.
+    """
+    uid = current_user["uid"]
+    fields: Dict[str, Any] = {}
+    if body.display_name is not None:
+        fields["display_name"] = body.display_name.strip()
+    if body.phone_number is not None:
+        fields["phone_number"] = body.phone_number.strip()
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields provided to update")
+    updated = await store.patch_user(uid, fields)
+    return updated
 
 
 @app.get("/health")
@@ -277,7 +306,7 @@ async def update_settings(settings: SettingsUpdate, _user: Dict[str, Any] = Depe
 async def update_config(config: ConfigUpdate, _user: Dict[str, Any] = Depends(get_current_user)):
     """Update config (nested JSON matching daibai.yaml structure).
     Frontend sends complete object; backend persists when Stripe/user storage is ready."""
-    # TODO: Persist to user storage / Stripe when auth is implemented
+    # TODO: Persist full config to per-user storage in Cosmos DB
     return {"status": "ok"}
 
 
@@ -519,13 +548,13 @@ async def get_tables(_user: Dict[str, Any] = Depends(get_current_user)):
 # WebSocket for streaming responses
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat responses. Requires token in query param."""
+    """WebSocket endpoint for streaming chat responses. Requires Firebase token in query param."""
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001)
         return
     try:
-        auth.validate_token(token)
+        auth.verify_firebase_token(token)
     except HTTPException:
         await websocket.close(code=4001)
         return

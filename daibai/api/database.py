@@ -177,6 +177,29 @@ class CosmosStore:
         except CosmosResourceNotFoundError:
             return None
 
+    async def list_users(self) -> List[Dict[str, Any]]:
+        """Fetch all user documents from the Users container."""
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client("Users")
+        users = []
+        query = "SELECT * FROM c WHERE c.type = 'user'"
+        async for item in container.query_items(query=query, enable_cross_partition_query=True):
+            users.append(item)
+        return users
+
+    async def patch_user(self, user_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge `fields` into an existing user record and upsert.
+        Creates a minimal stub if the user does not yet exist.
+        """
+        existing = await self.get_user(oid=user_id) or {
+            "id":   user_id,
+            "type": "user",
+        }
+        existing.update(fields)
+        return await self.upsert_user(existing)
+
     async def ensure_user_exists(self, user_id: str, email: str) -> None:
         """
         Just-in-Time user registration.

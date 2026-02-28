@@ -75,10 +75,36 @@ function hideAuthGate()  { /* no-op */ }
 
 function updateAuthButtons() {
     const hasAccount = isAuthenticated();
-    const loginBtn  = document.getElementById('loginBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    if (loginBtn)  loginBtn.style.display  = hasAccount ? 'none' : '';
-    if (logoutBtn) logoutBtn.style.display = hasAccount ? '' : 'none';
+    const el         = (id) => document.getElementById(id);
+
+    // Avatar: Lucide icon (guest) vs green-gradient initials (authenticated)
+    if (el('avatarIcon'))     el('avatarIcon').style.display     = hasAccount ? 'none' : '';
+    if (el('avatarInitials')) el('avatarInitials').style.display = hasAccount ? '' : 'none';
+
+    // Display name next to avatar: only when signed in
+    if (el('userDisplayName')) el('userDisplayName').style.display = hasAccount ? '' : 'none';
+
+    // Dropdown: guest section vs auth section
+    if (el('dropdownSignIn'))       el('dropdownSignIn').style.display       = hasAccount ? 'none' : '';
+    if (el('profileAuthItems'))     el('profileAuthItems').style.display     = hasAccount ? '' : 'none';
+    if (el('profileDropdownHeader'))el('profileDropdownHeader').style.display= hasAccount ? '' : 'none';
+    if (el('profileHeaderDivider')) el('profileHeaderDivider').style.display = hasAccount ? '' : 'none';
+
+    if (hasAccount && _currentUser) {
+        const email       = _currentUser.email || '';
+        const displayName = _currentUser.displayName || email.split('@')[0] || 'User';
+
+        const parts    = displayName.trim().split(/\s+/);
+        const initials = parts.length >= 2
+            ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+            : displayName.slice(0, 2).toUpperCase();
+
+        if (el('userDisplayName')) el('userDisplayName').textContent = displayName;
+        if (el('avatarInitials'))  el('avatarInitials').textContent  = initials;
+        if (el('avatarLg'))        el('avatarLg').textContent        = initials;
+        if (el('profileName'))     el('profileName').textContent     = displayName;
+        if (el('profileEmail'))    el('profileEmail').textContent    = email;
+    }
 }
 
 /**
@@ -132,6 +158,171 @@ async function onboardUser(user) {
         }
     } catch (e) {
         console.error('[AUTH] Onboarding error:', e);
+    }
+}
+
+// ── Profile management ─────────────────────────────────────────────────────
+
+let _recaptchaVerifier       = null;   // firebase.auth.RecaptchaVerifier
+let _phoneConfirmationResult = null;   // ConfirmationResult from verifyPhoneNumber
+let _pendingVerificationId   = null;   // verificationId for PhoneAuthProvider.credential
+
+/** Show/hide the profile status banner inside the profile modal. */
+function _pfStatus(msg, type = 'loading') {
+    const el = document.getElementById('profileStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className   = `pf-status pf-status--${type}`;
+    el.style.display = msg ? '' : 'none';
+}
+
+/** Open the Edit Profile modal and pre-populate fields from the current user. */
+function openProfileModal() {
+    if (!_currentUser) return;
+    const modal     = document.getElementById('profileModal');
+    const nameInput = document.getElementById('profileNameInput');
+    const phoneInput = document.getElementById('profilePhoneInput');
+
+    if (nameInput)  nameInput.value  = _currentUser.displayName || '';
+    if (phoneInput) phoneInput.value = _currentUser.phoneNumber  || '';
+
+    // Reset SMS step
+    const smsGroup = document.getElementById('smsCodeGroup');
+    if (smsGroup) smsGroup.style.display = 'none';
+    _pfStatus('', '');
+
+    modal?.classList.add('active');
+}
+
+/**
+ * Update the Firebase Auth display name and sync to Cosmos DB.
+ * Called when the user clicks "Save Name".
+ */
+async function updateDisplayName() {
+    if (!_currentUser) return;
+    const nameInput = document.getElementById('profileNameInput');
+    const newName   = (nameInput?.value || '').trim();
+    if (!newName) { _pfStatus('Display name cannot be empty.', 'error'); return; }
+
+    _pfStatus('Saving name…');
+    try {
+        // 1. Update Firebase Auth profile
+        await _currentUser.updateProfile({ displayName: newName });
+
+        // 2. Sync to Cosmos DB via backend
+        await _syncProfileToBackend({ display_name: newName });
+
+        // 3. Refresh the nav strip
+        updateAuthButtons();
+        _pfStatus('Display name updated.', 'success');
+    } catch (err) {
+        console.error('[PROFILE] updateDisplayName error:', err);
+        _pfStatus(`Error: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Start the phone-number verification flow.
+ * Creates an invisible reCAPTCHA, sends an SMS, and stores the verificationId.
+ * Called when the user clicks "Send Code".
+ *
+ * NOTE: Requires Firebase Phone Auth enabled in the Firebase Console *and* a
+ * billing plan (Blaze) because SMS is a paid service.
+ */
+async function initPhoneVerification() {
+    if (!_currentUser) return;
+    const phoneInput = document.getElementById('profilePhoneInput');
+    const phone      = (phoneInput?.value || '').trim();
+    if (!phone) { _pfStatus('Enter a phone number first.', 'error'); return; }
+
+    _pfStatus('Sending verification code…');
+    try {
+        // Destroy any previous reCAPTCHA to avoid the "already rendered" error.
+        if (_recaptchaVerifier) {
+            _recaptchaVerifier.clear();
+            _recaptchaVerifier = null;
+        }
+
+        _recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+            size: 'invisible',
+            callback: () => {},    // fires when reCAPTCHA solves automatically
+        });
+
+        // PhoneAuthProvider.verifyPhoneNumber returns a verificationId.
+        const provider        = new firebase.auth.PhoneAuthProvider();
+        _pendingVerificationId = await provider.verifyPhoneNumber(phone, _recaptchaVerifier);
+
+        // Show the SMS code input row.
+        const smsGroup = document.getElementById('smsCodeGroup');
+        if (smsGroup) smsGroup.style.display = '';
+        document.getElementById('smsCodeInput')?.focus();
+
+        _pfStatus('Code sent! Enter it below.', 'success');
+    } catch (err) {
+        console.error('[PROFILE] initPhoneVerification error:', err);
+        _pfStatus(`Error: ${err.message}`, 'error');
+        if (_recaptchaVerifier) { _recaptchaVerifier.clear(); _recaptchaVerifier = null; }
+    }
+}
+
+/**
+ * Confirm the SMS code and link the phone number to the Firebase account.
+ * Called when the user clicks "Verify".
+ */
+async function verifyPhoneCode() {
+    if (!_currentUser || !_pendingVerificationId) return;
+    const codeInput = document.getElementById('smsCodeInput');
+    const code      = (codeInput?.value || '').trim();
+    if (code.length !== 6) { _pfStatus('Enter the 6-digit code from the SMS.', 'error'); return; }
+
+    _pfStatus('Verifying code…');
+    try {
+        // Build a PhoneAuthCredential from the verificationId + user code.
+        const credential = firebase.auth.PhoneAuthProvider.credential(
+            _pendingVerificationId,
+            code,
+        );
+
+        // updatePhoneNumber links the credential to the signed-in account.
+        await _currentUser.updatePhoneNumber(credential);
+
+        // Sync the verified number to Cosmos DB.
+        await _syncProfileToBackend({ phone_number: _currentUser.phoneNumber });
+
+        // Hide the SMS row and reset state.
+        document.getElementById('smsCodeGroup').style.display = 'none';
+        if (codeInput) codeInput.value = '';
+        _pendingVerificationId = null;
+
+        _pfStatus('Phone number verified and saved.', 'success');
+    } catch (err) {
+        console.error('[PROFILE] verifyPhoneCode error:', err);
+        // err.code === 'auth/invalid-verification-code' → wrong code
+        // err.code === 'auth/requires-recent-login'     → user must re-authenticate
+        const msg = err.code === 'auth/requires-recent-login'
+            ? 'Re-authentication required. Please sign out and sign back in, then try again.'
+            : `Error: ${err.message}`;
+        _pfStatus(msg, 'error');
+    }
+}
+
+/**
+ * PATCH /api/profile — push profile field changes to Cosmos DB.
+ * Fields: { display_name?, phone_number? }
+ */
+async function _syncProfileToBackend(fields) {
+    try {
+        const res = await apiFetch('/api/profile', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(fields),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            console.warn('[PROFILE] Backend sync failed:', err.detail || res.status);
+        }
+    } catch (e) {
+        if (!e.guestMode) console.error('[PROFILE] _syncProfileToBackend error:', e);
     }
 }
 
@@ -376,8 +567,6 @@ class DaiBaiApp {
         this.modeSelect = document.getElementById('modeSelect');
         this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
         this.autoCsvCheckbox = document.getElementById('autoCsvCheckbox');
-        this.loginBtn = document.getElementById('loginBtn');
-        this.logoutBtn = document.getElementById('logoutBtn');
         this.schemaBtn = document.getElementById('schemaBtn');
         this.schemaModal = document.getElementById('schemaModal');
         this.schemaModalClose = document.getElementById('schemaModalClose');
@@ -425,9 +614,34 @@ class DaiBaiApp {
         this.autoCsvCheckbox.addEventListener('change', () => this.savePreferences());
         this.executeCheckbox.addEventListener('change', () => this.savePreferences());
         
-        // Auth
-        this.loginBtn.addEventListener('click', () => signIn());
-        this.logoutBtn.addEventListener('click', () => signOut());
+
+        // Profile avatar dropdown
+        const profileAvatarBtn = document.getElementById('profileAvatarBtn');
+        const profileDropdown  = document.getElementById('profileDropdown');
+        if (profileAvatarBtn && profileDropdown) {
+            profileAvatarBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = profileDropdown.classList.toggle('open');
+                profileAvatarBtn.setAttribute('aria-expanded', isOpen);
+            });
+            // Close when clicking outside
+            document.addEventListener('click', () => {
+                profileDropdown.classList.remove('open');
+                profileAvatarBtn.setAttribute('aria-expanded', 'false');
+            });
+        }
+
+        // Dropdown: Settings
+        document.getElementById('dropdownSettings')?.addEventListener('click', () => {
+            profileDropdown?.classList.remove('open');
+            this.showSettings();
+        });
+
+        // Dropdown: Sign Out
+        document.getElementById('dropdownSignOut')?.addEventListener('click', () => {
+            profileDropdown?.classList.remove('open');
+            signOut();
+        });
 
         // Schema modal
         this.schemaBtn.addEventListener('click', () => this.showSchema());
@@ -1613,7 +1827,10 @@ class DaiBaiApp {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Auth-modal close button and backdrop click.
+    // Replace all <i data-lucide="..."> elements with inline SVGs.
+    lucide.createIcons();
+
+    // Auth modal: close button + backdrop.
     document.getElementById('authModalClose')?.addEventListener('click', () => {
         document.getElementById('authModal')?.classList.remove('active');
     });
@@ -1621,6 +1838,40 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target === document.getElementById('authModal')) {
             e.target.classList.remove('active');
         }
+    });
+
+    // Profile modal: close button + backdrop.
+    document.getElementById('profileModalClose')?.addEventListener('click', () => {
+        document.getElementById('profileModal')?.classList.remove('active');
+    });
+    document.getElementById('profileModal')?.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('profileModal')) {
+            e.target.classList.remove('active');
+        }
+    });
+
+    // Guest: Sign In dropdown item.
+    document.getElementById('dropdownSignIn')?.addEventListener('click', () => {
+        document.getElementById('profileDropdown')?.classList.remove('open');
+        document.getElementById('profileAvatarBtn')?.setAttribute('aria-expanded', 'false');
+        signIn();
+    });
+
+    // Edit Profile dropdown item.
+    document.getElementById('dropdownEditProfile')?.addEventListener('click', () => {
+        document.getElementById('profileDropdown')?.classList.remove('open');
+        document.getElementById('profileAvatarBtn')?.setAttribute('aria-expanded', 'false');
+        openProfileModal();
+    });
+
+    // Profile modal action buttons.
+    document.getElementById('saveDisplayNameBtn')?.addEventListener('click', updateDisplayName);
+    document.getElementById('sendSmsBtn')?.addEventListener('click', initPhoneVerification);
+    document.getElementById('verifySmsBtn')?.addEventListener('click', verifyPhoneCode);
+
+    // Allow pressing Enter in the SMS code field to confirm.
+    document.getElementById('smsCodeInput')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') verifyPhoneCode();
     });
 
     // onAuthStateChanged is the single source of truth for session state.

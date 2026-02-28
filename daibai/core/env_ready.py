@@ -157,13 +157,7 @@ def check_redis() -> Tuple[bool, str]:
         os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
         or os.environ.get("REDIS_URL", "").strip()
     )
-    if conn:
-        return True, "set"
-    use_entra = os.environ.get("REDIS_USE_ENTRA_ID", "").strip().lower() in ("1", "true", "yes")
-    host = os.environ.get("AZURE_REDIS_HOST", "").strip()
-    if use_entra and host:
-        return True, "Entra ID"
-    return False, "not set"
+    return (True, "set") if conn else (False, "not set")
 
 
 def check_cosmos() -> Tuple[bool, str]:

@@ -229,6 +229,245 @@ body {
     gap: 8px;
 }
 
+/* Authenticated user identity strip */
+.user-identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.user-display-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Profile avatar button */
+.profile-menu {
+    position: relative;
+}
+
+.profile-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: transparent;
+    border: 2px solid transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition-fast);
+    padding: 0;
+    overflow: hidden;
+}
+
+.profile-avatar:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+/* Guest mode: Lucide circle-user icon */
+.avatar-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    transition: color 0.15s;
+}
+
+.avatar-icon svg {
+    width: 26px;
+    height: 26px;
+    stroke-width: 1.5;
+}
+
+.profile-avatar:hover .avatar-icon {
+    color: var(--text-primary);
+}
+
+/* Authenticated mode: green-gradient circle with initials */
+.avatar-initials {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #0e7f63);
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+    font-family: var(--font-sans);
+}
+
+/* Profile dropdown */
+.profile-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    width: 240px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+    overflow: hidden;
+    animation: dropdownFadeIn 0.15s ease;
+}
+
+.profile-dropdown.open {
+    display: block;
+}
+
+@keyframes dropdownFadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.profile-dropdown-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+}
+
+.avatar-lg {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #0e7f63);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+    font-family: var(--font-sans);
+}
+
+.profile-dropdown-info {
+    min-width: 0;
+}
+
+.profile-dropdown-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.profile-dropdown-email {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+}
+
+.profile-dropdown-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0;
+}
+
+.profile-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    text-align: left;
+}
+
+.profile-dropdown-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.profile-dropdown-item--danger {
+    color: var(--error);
+}
+
+.profile-dropdown-item--danger:hover {
+    background: rgba(239, 68, 68, 0.08);
+    color: var(--error);
+}
+
+.profile-dropdown-item--signin {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.profile-dropdown-item--signin:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+/* ── Lucide icon defaults ───────────────────────────────────────────────── */
+/* All <i data-lucide> elements are replaced by <svg> at runtime.           */
+
+.lucide {
+    display: block;
+    flex-shrink: 0;
+}
+
+/* Standard nav icon size */
+.sidebar-toggle .lucide,
+.icon-btn .lucide {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2;
+}
+
+/* Sidebar footer settings icon */
+.sidebar-icon .lucide {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.75;
+}
+
+/* New Chat button plus icon */
+.new-chat-btn .lucide {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2.5;
+}
+
+/* Attach + Send buttons in the chat input */
+.attach-btn .lucide,
+.send-btn .lucide {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2;
+}
+
+/* Profile dropdown menu items */
+.profile-dropdown-item .lucide {
+    width: 15px;
+    height: 15px;
+    stroke-width: 2;
+    flex-shrink: 0;
+}
+
 .icon-btn {
     display: flex;
     align-items: center;
@@ -1044,6 +1283,103 @@ body {
 
 .btn-danger:hover {
     background: #dc2626;
+}
+
+/* ── Profile Modal ─────────────────────────────────────────────────────────── */
+
+.profile-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 10px;
+}
+
+.pf-badge {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 20px;
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.pf-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 20px 0;
+}
+
+.pf-field {
+    margin-bottom: 12px;
+}
+
+.pf-field--row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.pf-input {
+    width: 100%;
+    padding: 9px 12px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    outline: none;
+    transition: var(--transition-fast);
+    box-sizing: border-box;
+}
+
+.pf-input:focus {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.pf-btn {
+    font-family: var(--font-sans);
+    white-space: nowrap;
+}
+
+.pf-btn--inline {
+    flex-shrink: 0;
+    padding: 9px 14px;
+    font-size: 13px;
+}
+
+.pf-status {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.pf-status--success {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.pf-status--error {
+    background: rgba(239, 68, 68, 0.10);
+    color: var(--error);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.pf-status--loading {
+    background: rgba(161, 161, 161, 0.10);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
 }
 
 /* Settings Modal */

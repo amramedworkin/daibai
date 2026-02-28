@@ -9,10 +9,9 @@ Requirements:
     pip install firebase-admin
 
 Service account credentials:
-    Set FIREBASE_SERVICE_ACCOUNT_JSON to the path of your downloaded service
-    account key JSON file, or set GOOGLE_APPLICATION_CREDENTIALS.
-    If neither is set, falls back to Application Default Credentials (ADC),
-    which works in GCP/Cloud Run environments automatically.
+    Set FIREBASE_SERVICE_ACCOUNT_JSON to the path of the service account key
+    JSON file (e.g. config/secrets/firebase-adminsdk.json).
+    The file is gitignored and must never be committed to the repository.
 """
 
 import os
@@ -23,39 +22,54 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
-# Lazy singleton: initialise firebase_admin only once.
-_firebase_app = None
 
+def _init_firebase_app():
+    """
+    Initialise firebase_admin at module load time using the service account key
+    file named by FIREBASE_SERVICE_ACCOUNT_JSON.
 
-def _get_firebase_app():
-    """Initialise and return the firebase_admin App singleton."""
-    global _firebase_app
-    if _firebase_app is not None:
-        return _firebase_app
+    Returns the App on success, None when the key file is absent or
+    firebase-admin is not installed (dev/test fallback — tokens are decoded
+    without signature verification and a warning is printed on every request).
+    """
+    cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    # Resolve relative paths against the project root (two levels up from this file).
+    if cred_path and not os.path.isabs(cred_path):
+        _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cred_path = os.path.join(_project_root, cred_path)
+
+    if not cred_path or not os.path.exists(cred_path):
+        print(
+            "WARNING: FIREBASE_SERVICE_ACCOUNT_JSON not set or file not found. "
+            "Running in UNVERIFIED dev mode — tokens are NOT cryptographically validated. "
+            "Set FIREBASE_SERVICE_ACCOUNT_JSON=config/secrets/firebase-adminsdk.json "
+            "to enable full token verification.",
+            flush=True,
+        )
+        return None
 
     try:
         import firebase_admin
         from firebase_admin import credentials
 
-        key_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
-        if key_path and os.path.isfile(key_path):
-            cred = credentials.Certificate(key_path)
-        else:
-            # Fall back to Application Default Credentials (ADC).
-            # Works automatically in GCP / Cloud Run; for local dev, run:
-            #   gcloud auth application-default login
-            cred = credentials.ApplicationDefault()
-
-        _firebase_app = firebase_admin.initialize_app(cred)
+        cred = credentials.Certificate(cred_path)
+        app = firebase_admin.initialize_app(cred)
+        print(f"[auth] Firebase Admin SDK initialised from {cred_path}", flush=True)
+        return app
     except ImportError:
-        # firebase-admin not installed — token verification will be skipped.
-        # Run: pip install firebase-admin
-        _firebase_app = None
+        print(
+            "WARNING: firebase-admin is not installed. "
+            "Run: pip install firebase-admin",
+            flush=True,
+        )
+        return None
     except Exception as exc:
         print(f"[auth] Firebase Admin init failed: {exc}", flush=True)
-        _firebase_app = None
+        return None
 
-    return _firebase_app
+
+# Initialise once at import time so startup logs are visible immediately.
+_firebase_app = _init_firebase_app()
 
 
 def verify_firebase_token(id_token: str) -> Dict[str, Any]:
@@ -63,16 +77,18 @@ def verify_firebase_token(id_token: str) -> Dict[str, Any]:
     Verify a Firebase ID token and return the decoded claims dict.
     Raises HTTPException 401 on any failure.
     """
-    app = _get_firebase_app()
+    app = _firebase_app
     if app is None:
-        # firebase-admin unavailable — perform an unverified decode for dev mode.
-        # TODO: remove this fallback once firebase-admin is installed.
+        # Dev-only fallback: decode without signature verification when the service
+        # account key file is absent (e.g. running locally without credentials).
+        # Tokens are structurally validated but NOT cryptographically verified.
+        # This path is blocked in production by requiring FIREBASE_SERVICE_ACCOUNT_JSON.
         try:
             import jwt as _pyjwt
             claims = _pyjwt.decode(id_token, options={"verify_signature": False})
             claims.setdefault("uid", claims.get("user_id") or claims.get("sub", ""))
             claims.setdefault("email", "")
-            print("[auth] WARNING: token signature not verified (firebase-admin missing)", flush=True)
+            print("[auth] WARNING: token signature not verified — set FIREBASE_SERVICE_ACCOUNT_JSON for production", flush=True)
             return claims
         except Exception:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")

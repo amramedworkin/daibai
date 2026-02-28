@@ -110,3 +110,23 @@ from firebase_admin import credentials
 cred = credentials.Certificate("firebase-adminsdk.json")
 firebase_admin.initialize_app(cred)
 ```
+
+# Auto Registration Point
+
+| Step | Action | Responsibility |
+| :--- | :--- | :--- |
+| **1. Validation** | User enters email; clicks verification link or logs in via Google. | **Firebase (Client-Side)** |
+| **2. Issuance** | Firebase issues a cryptographically signed JWT to the browser. | **Firebase (Cloud)** |
+| **3. Verification** | FastAPI uses the Service Account JSON to verify the JWT signature. | **FastAPI (auth.py)** |
+| **4. Registration** | If verified, the backend calls `ensure_user_exists` to create the Cosmos DB profile. | **FastAPI (database.py)** |
+
+# Account Management Matrix
+Since you want to finalize account management now, here is exactly how to handle each requirement using the most efficient 2026 methods:
+
+| Requirement | Recommended Mechanism | UX Approach |
+| :--- | :--- | :--- |
+| **Change Name** | `updateProfile(user, {displayName: "New Name"})` | Custom Modal in your Navigation Bar. |
+| **Change Phone** | `updatePhoneNumber(user, phoneCredential)` | Custom Modal + Firebase SMS Verification. |
+| **Change Password** | `sendPasswordResetEmail(auth, email)` | **Best Way:** Sends an email link. Offloads the "New Password" UI to Google's secure servers. |
+| **Pause/Cancel Sub** | **Stripe Customer Portal** | **Best Way:** Redirect the user to a Stripe-hosted page. Do not build this UI yourself. |
+| **Close Account** | `user.delete()` | Trigger a "Are you sure?" modal, then call delete. (Requires recent login!) |

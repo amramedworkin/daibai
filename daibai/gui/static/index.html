@@ -16,12 +16,8 @@
         <!-- Top Navigation Bar -->
         <header class="top-nav">
             <div class="nav-left">
-                <button class="sidebar-toggle" id="sidebarToggle">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="3" y1="6" x2="21" y2="6"></line>
-                        <line x1="3" y1="12" x2="21" y2="12"></line>
-                        <line x1="3" y1="18" x2="21" y2="18"></line>
-                    </svg>
+                <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+                    <i data-lucide="menu"></i>
                 </button>
                 <div class="logo">
                     <img src="/static/logo.png" alt="DaiBai" onerror="this.style.display='none'">
@@ -67,15 +63,56 @@
             </div>
             
             <div class="nav-right">
-                <button class="icon-btn" id="loginBtn" title="Sign in">Sign In</button>
-                <button class="icon-btn" id="logoutBtn" title="Sign out" style="display:none">Sign Out</button>
+                <!-- Profile menu — always visible; dropdown adapts to auth state -->
+                <div class="user-identity" id="userIdentity">
+                    <span class="user-display-name" id="userDisplayName" style="display:none"></span>
+                    <div class="profile-menu" id="profileMenu">
+                        <button class="profile-avatar" id="profileAvatarBtn" aria-haspopup="true" aria-expanded="false" title="Account">
+                            <!-- Guest: Lucide user-circle icon -->
+                            <i data-lucide="circle-user" class="avatar-icon" id="avatarIcon"></i>
+                            <!-- Auth: green-gradient initials overlay (JS toggles) -->
+                            <span class="avatar-initials" id="avatarInitials" style="display:none"></span>
+                        </button>
+                        <div class="profile-dropdown" id="profileDropdown" role="menu">
+
+                            <!-- Authenticated: user header (hidden in guest mode) -->
+                            <div class="profile-dropdown-header" id="profileDropdownHeader" style="display:none">
+                                <div class="avatar-lg" id="avatarLg"></div>
+                                <div class="profile-dropdown-info">
+                                    <div class="profile-dropdown-name" id="profileName"></div>
+                                    <div class="profile-dropdown-email" id="profileEmail"></div>
+                                </div>
+                            </div>
+                            <div class="profile-dropdown-divider" id="profileHeaderDivider" style="display:none"></div>
+
+                            <!-- Guest: Sign In item -->
+                            <button class="profile-dropdown-item profile-dropdown-item--signin" id="dropdownSignIn" role="menuitem">
+                                <i data-lucide="log-in"></i>
+                                Sign In
+                            </button>
+
+                            <!-- Authenticated: profile actions (hidden in guest mode) -->
+                            <div id="profileAuthItems" style="display:none">
+                                <button class="profile-dropdown-item" id="dropdownEditProfile" role="menuitem">
+                                    <i data-lucide="user"></i>
+                                    Edit Profile
+                                </button>
+                                <button class="profile-dropdown-item" id="dropdownSettings" role="menuitem">
+                                    <i data-lucide="settings"></i>
+                                    Settings
+                                </button>
+                                <div class="profile-dropdown-divider"></div>
+                                <button class="profile-dropdown-item profile-dropdown-item--danger" id="dropdownSignOut" role="menuitem">
+                                    <i data-lucide="log-out"></i>
+                                    Sign Out
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <button class="icon-btn" id="schemaBtn" title="View Schema">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="7" height="7"></rect>
-                        <rect x="14" y="3" width="7" height="7"></rect>
-                        <rect x="14" y="14" width="7" height="7"></rect>
-                        <rect x="3" y="14" width="7" height="7"></rect>
-                    </svg>
+                    <i data-lucide="table-2"></i>
                 </button>
             </div>
         </header>
@@ -86,10 +123,7 @@
                 <div class="nav-top">
                     <div class="sidebar-header">
                         <button class="new-chat-btn" id="newChatBtn">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19"></line>
-                                <line x1="5" y1="12" x2="19" y2="12"></line>
-                            </svg>
+                            <i data-lucide="plus"></i>
                             New Chat
                         </button>
                     </div>
@@ -105,10 +139,7 @@
                 </div>
                 <div class="nav-footer">
                     <button type="button" id="settingsBtn" class="sidebar-icon" title="Settings">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="3"></circle>
-                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                        </svg>
+                        <i data-lucide="settings"></i>
                         <span class="label">Settings</span>
                     </button>
                 </div>
@@ -150,9 +181,7 @@
                         <div class="input-wrapper">
                             <input type="file" id="fileInput" multiple accept="*/*" style="display:none">
                             <button class="attach-btn" id="attachBtn" type="button" title="Attach files">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                                </svg>
+                                <i data-lucide="paperclip"></i>
                             </button>
                             <textarea 
                                 id="promptInput" 
@@ -161,10 +190,7 @@
                                 autofocus
                             ></textarea>
                             <button class="send-btn" id="sendBtn" disabled>
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                                </svg>
+                                <i data-lucide="send"></i>
                             </button>
                         </div>
                         <div class="attached-files" id="attachedFiles"></div>
@@ -215,6 +241,48 @@
             </div>
         </div>
 
+        <!-- Edit Profile Modal -->
+        <div class="modal" id="profileModal">
+            <div class="modal-content" style="max-width:420px">
+                <div class="modal-header">
+                    <h2>Edit Profile</h2>
+                    <button class="modal-close" id="profileModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+
+                    <!-- Display Name -->
+                    <div class="profile-section-title">Display Name</div>
+                    <div class="pf-field">
+                        <input type="text" id="profileNameInput" class="pf-input" placeholder="Your name" autocomplete="name" maxlength="80">
+                    </div>
+                    <button class="btn-primary pf-btn" id="saveDisplayNameBtn">Save Name</button>
+
+                    <div class="pf-divider"></div>
+
+                    <!-- Phone Number -->
+                    <div class="profile-section-title">
+                        Phone Number
+                        <span class="pf-badge">SMS required</span>
+                    </div>
+                    <div class="pf-field pf-field--row">
+                        <input type="tel" id="profilePhoneInput" class="pf-input" placeholder="+1 555 000 0000" autocomplete="tel">
+                        <button class="btn-secondary pf-btn pf-btn--inline" id="sendSmsBtn">Send Code</button>
+                    </div>
+                    <!-- Invisible reCAPTCHA mounts here -->
+                    <div id="recaptcha-container"></div>
+
+                    <!-- SMS code row, shown after code is sent -->
+                    <div class="pf-field pf-field--row" id="smsCodeGroup" style="display:none">
+                        <input type="text" id="smsCodeInput" class="pf-input" placeholder="6-digit code" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+                        <button class="btn-primary pf-btn pf-btn--inline" id="verifySmsBtn">Verify</button>
+                    </div>
+
+                    <!-- Status feedback -->
+                    <div id="profileStatus" class="pf-status" style="display:none"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Auth Modal — FirebaseUI renders inside #firebaseui-auth-container -->
         <div class="modal" id="authModal">
             <div class="modal-content" style="max-width:440px">
@@ -234,6 +302,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-analytics-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth.js"></script>
+    <!-- Lucide icons (UMD build — no build step required) -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

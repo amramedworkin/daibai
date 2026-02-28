@@ -133,6 +133,7 @@ Commands (mirrors menu.sh):
     cosmos-role [--principal-id ID]  Set up Cosmos DB role for signed-in user
                             Uses az ad signed-in-user show for principal-id if not given.
                             Account: daibai-metadata, RG: daibai-rg (override via env)
+    list-users               List all registered users from Cosmos DB (Firebase UIDs, emails, registration time)
     test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
     verify-azure-auth        Verify secretless Cosmos access (lists containers, no COSMOS_KEY)
@@ -187,16 +188,12 @@ Examples:
     $(basename "$0") config-path
     $(basename "$0") cosmos-role
     $(basename "$0") cosmos-role --principal-id <object-id>
+    $(basename "$0") list-users
     $(basename "$0") test-db
     $(basename "$0") test-cosmos
     $(basename "$0") verify-azure-auth
     $(basename "$0") redis-create
     $(basename "$0") keyvault-create
-    $(basename "$0") entra identify
-    $(basename "$0") entra list
-    $(basename "$0") entra delete
-    $(basename "$0") entra delete --soft
-    $(basename "$0") entra bulk-delete
     $(basename "$0") test-redis
     $(basename "$0") test-cache-connection
     $(basename "$0") cache-stats
@@ -556,56 +553,46 @@ sync_cosmos_env() {
     echo "COSMOS_DB=$COSMOS_DB"
 }
 
-# -----------------------------------------------------------------------------
-# Ghost user cleanup: cross-reference Entra users against Cosmos "Users" container
-# -----------------------------------------------------------------------------
-cleanup_ghosts() {
-    DRY_RUN=${1:-"true"}
+cmd_list_users() {
     load_env
-    echo -e "\033[1;33m[GHOST HUNTER] System Quiesced. Starting direct cross-reference cleanup...\033[0m"
-    echo -e "Dry Run: $DRY_RUN\n"
+    print_header "Registered Users (Cosmos DB → Users container)"
 
     local COSMOS_ACCOUNT="${COSMOS_ACCOUNT_NAME:-${COSMOS_ACCOUNT:-}}"
     local COSMOS_DB="${COSMOS_DATABASE:-${COSMOS_DB:-daibai-metadata}}"
+
     if [[ -z "$COSMOS_ACCOUNT" ]]; then
-        echo -e "\033[1;31m[CRITICAL] COSMOS account not configured (COSMOS_ACCOUNT or COSMOS_ACCOUNT_NAME). Aborting.\033[0m"
+        print_error "COSMOS_ACCOUNT not set in .env. Run: ./scripts/cli.sh sync-env"
         return 1
     fi
 
-    echo "Syncing Allow List from CosmosDB (Users container)..."
-    AUTHORIZED_OIDS=$(az cosmosdb sql query --account-name "$COSMOS_ACCOUNT" --database-name "$COSMOS_DB" --container-name Users --query "[].id" -o tsv 2>/dev/null || true)
+    local RAW
+    RAW=$(az cosmosdb sql query \
+        --account-name "$COSMOS_ACCOUNT" \
+        --database-name "$COSMOS_DB" \
+        --container-name Users \
+        --query "items" \
+        -o json 2>/dev/null)
 
-    if [ -z "$AUTHORIZED_OIDS" ]; then
-        echo -e "\033[1;31m[CRITICAL] No users found in CosmosDB. Aborting to prevent accidental total wipeout!\033[0m"
-        return 1
+    if [[ -z "$RAW" || "$RAW" == "[]" || "$RAW" == "null" ]]; then
+        echo "No users found in the Users container."
+        return 0
     fi
 
-    echo "Fetching all users from Entra ID..."
-    ENTRA_USERS=$(az ad user list --query "[].{id:id, name:displayName, upn:userPrincipalName}" -o json 2>/dev/null || echo "[]")
+    local COUNT
+    COUNT=$(echo "$RAW" | jq 'length' 2>/dev/null || echo "?")
+    echo -e "  Total users: \033[1;32m${COUNT}\033[0m\n"
 
-    echo -e "\n--- IDENTIFYING ORPHANED ACCOUNTS ---"
-    GHOST_COUNT=0
+    printf "  %-36s  %-32s  %-26s  %s\n" "UID (Firebase)" "Email" "Registered" "Display Name"
+    printf "  %-36s  %-32s  %-26s  %s\n" "$(printf '%0.s-' {1..36})" "$(printf '%0.s-' {1..32})" "$(printf '%0.s-' {1..26})" "$(printf '%0.s-' {1..20})"
 
-    echo "$ENTRA_USERS" | jq -c '.[]' 2>/dev/null | while read -r user; do
-        OID=$(echo "$user" | jq -r '.id')
-        NAME=$(echo "$user" | jq -r '.name')
-        UPN=$(echo "$user" | jq -r '.upn')
-
-        if [[ ! "$AUTHORIZED_OIDS" =~ "$OID" ]]; then
-            GHOST_COUNT=$((GHOST_COUNT + 1))
-            echo -e "\033[1;31m[GHOST]\033[0m $NAME | OID: $OID | UPN: $UPN"
-            if [ "$DRY_RUN" == "false" ]; then
-                echo "   -> EXECUTING DELETE..."
-                az ad user delete --id "$OID" || echo "   -> delete failed for $OID"
-            else
-                echo "   -> [DRY RUN] Would be deleted."
-            fi
-        fi
+    echo "$RAW" | jq -r '.[] | [
+        (.uid // .id // "—"),
+        (.email // .username // "—"),
+        (.onboarded_at // .created_at // "—"),
+        (.display_name // "—")
+    ] | @tsv' 2>/dev/null | while IFS=$'\t' read -r uid email ts name; do
+        printf "  %-36s  %-32s  %-26s  %s\n" "$uid" "$email" "$ts" "$name"
     done
-
-    if [ "$GHOST_COUNT" -eq 0 ]; then
-        echo -e "\033[1;32mNo ghost users found. Identity and Data planes are perfectly aligned.\033[0m"
-    fi
 }
 
 cmd_test_redis() {
@@ -994,13 +981,8 @@ main() {
         keyvault-create)
             cmd_keyvault_create
             ;;
-        ghost-cleanup)
-            if [[ "$2" == "confirm" || "$1" == "confirm" ]]; then
-                cleanup_ghosts "false"
-            else
-                cleanup_ghosts "true"
-                echo -e "\n\033[1;36mHINT:\033[0m Verified the list above? Run: ./scripts/cli.sh ghost-cleanup confirm"
-            fi
+        list-users)
+            cmd_list_users
             ;;
         sync-env)
             sync_cosmos_env
