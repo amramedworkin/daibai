@@ -345,6 +345,38 @@
                 </div>
             </div>
         </div>
+
+        <!-- Email Verification Modal — no close button; must verify to proceed -->
+        <div class="modal verification-modal" id="verificationModal">
+            <div class="modal-content verification-modal-content">
+                <div class="verification-icon">
+                    <i data-lucide="mail-check"></i>
+                </div>
+                <h2 class="verification-title">Verify Your Email</h2>
+                <p class="verification-body">
+                    We sent a verification link to<br>
+                    <strong id="verificationEmail"></strong>
+                </p>
+                <p class="verification-hint">
+                    Click the link in that email, then come back here and press the button below.
+                    Check your spam folder if you don't see it within a minute.
+                </p>
+                <div class="verification-actions">
+                    <button class="btn btn-primary" id="checkVerifiedBtn">
+                        <i data-lucide="check-circle"></i>
+                        I've Verified My Email
+                    </button>
+                    <button class="btn btn-secondary" id="resendVerificationBtn">
+                        <i data-lucide="send"></i>
+                        Resend Email
+                    </button>
+                </div>
+                <p class="verification-status" id="verificationStatus"></p>
+                <button class="verification-cancel" id="verificationCancelBtn">
+                    Cancel — go back to sign in
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Firebase v10 compat (required by FirebaseUI 6.x) -->

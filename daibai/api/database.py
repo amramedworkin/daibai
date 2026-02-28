@@ -204,6 +204,62 @@ class CosmosStore:
         existing.update(fields)
         return await self.upsert_user(existing)
 
+    async def delete_user(self, uid: str) -> bool:
+        """
+        Delete a user document from the Users container.
+        Returns True if deleted, False if not found (idempotent).
+        """
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client("Users")
+        try:
+            await container.delete_item(item=uid, partition_key=uid)
+            return True
+        except CosmosResourceNotFoundError:
+            return False
+
+    async def delete_all_users(self) -> int:
+        """
+        Delete every document from the Users container.
+        Returns the number of records deleted.
+        Used by the admin wipe operation — call with caution.
+        """
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client("Users")
+        ids: List[str] = []
+        async for item in container.query_items(query="SELECT c.id FROM c"):
+            ids.append(item["id"])
+        count = 0
+        for uid in ids:
+            try:
+                await container.delete_item(item=uid, partition_key=uid)
+                count += 1
+            except CosmosResourceNotFoundError:
+                pass
+        return count
+
+    async def delete_all_conversations(self) -> int:
+        """
+        Delete every document from the conversations container.
+        Returns the number of records deleted.
+        Used by the admin wipe operation — call with caution.
+        """
+        client = await self._ensure_client()
+        database = client.get_database_client(self._database_name)
+        container = database.get_container_client(self._container_name)
+        ids: List[str] = []
+        async for item in container.query_items(query="SELECT c.id FROM c"):
+            ids.append(item["id"])
+        count = 0
+        for session_id in ids:
+            try:
+                await container.delete_item(item=session_id, partition_key=session_id)
+                count += 1
+            except CosmosResourceNotFoundError:
+                pass
+        return count
+
     async def ensure_user_exists(self, user_id: str, email: str) -> None:
         """
         Just-in-Time user registration.

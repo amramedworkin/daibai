@@ -95,6 +95,8 @@ show_main_menu() {
         "monitor, stats, Redis Insight setup"
     print_submenu_option "7" "Monitoring" \
         "Redis connection info for Redis Insight"
+    print_submenu_option "8" "Firebase User Management" \
+        "create, list, update, delete, claims, links, revoke"
     echo ""
     print_action_option "q" "Quick Commit & Push ${YELLOW}${DIM}(gitqik.sh)${NC}"
     print_action_option "s" "Start/Stop Chat Service ${YELLOW}${DIM}(toggle, opens browser on start)${NC}"
@@ -754,6 +756,235 @@ handle_monitoring_menu() {
 }
 
 # =============================================================================
+# FIREBASE USER MANAGEMENT SUBMENU (8)
+# =============================================================================
+
+# Helper: run firebase_admin_mgr.py via cli.sh so env loading is consistent.
+_fb() { "$SCRIPT_DIR/cli.sh" firebase-admin "$@"; }
+
+# Prompt for a UID and store in $REPLY_UID. Returns 1 if cancelled.
+_prompt_uid() {
+    echo ""
+    echo -n "  Enter Firebase UID (or 'c' to cancel): "
+    read -r REPLY_UID
+    if [[ -z "$REPLY_UID" || "$REPLY_UID" == "c" ]]; then
+        echo -e "${YELLOW}Cancelled.${NC}"
+        return 1
+    fi
+}
+
+show_firebase_admin_menu() {
+    show_header "Firebase User Management"
+    echo -e "  ${DIM}Manage Firebase Authentication users via Admin SDK${NC}"
+    echo ""
+    print_action_option "1" "List Users"
+    print_action_option "2" "Create User ${YELLOW}${DIM}(email_verified=True, no email sent)${NC}"
+    print_submenu_option "3" "Modify User" \
+        "change email / name / password / phone for a UID"
+    print_submenu_option "4" "Set Permissions (Claims)" \
+        "toggle admin or premium_user flags"
+    print_submenu_option "5" "Security Tools" \
+        "generate reset/verify link, revoke sessions"
+    print_action_option "6" "Delete User ${YELLOW}${DIM}(Firebase + Cosmos)${NC}"
+    print_action_option "7" "${RED}WIPE ALL DATA${NC} ${DIM}(Auth + Database — irreversible)${NC}"
+    print_action_option "8" "Run Sync Repair ${YELLOW}${DIM}(fix Firebase ↔ Cosmos mismatches)${NC}"
+    echo ""
+    print_action_option "0" "Back to Main Menu"
+    echo ""
+    echo -n "  Select > "
+}
+
+# 1 — List
+handle_fb_list() {
+    clear
+    _fb list
+    echo "Press Enter to continue..."
+    read -r
+}
+
+# 2 — Create
+handle_fb_create() {
+    clear
+    show_header "Create Firebase User"
+    echo -e "  ${DIM}Admin-created accounts have email_verified=True automatically.${NC}"
+    echo ""
+    echo -n "  Email address : "; read -r fb_email
+    [[ -z "$fb_email" ]] && { echo -e "${YELLOW}Cancelled.${NC}"; return; }
+    echo -n "  Password      : "; read -rs fb_pass; echo
+    [[ -z "$fb_pass" ]]  && { echo -e "${YELLOW}Cancelled.${NC}"; return; }
+    echo -n "  Display name  : "; read -r fb_name
+    echo -n "  Phone (E.164, optional): "; read -r fb_phone
+    echo ""
+    local args=("--email" "$fb_email" "--password" "$fb_pass")
+    [[ -n "$fb_name"  ]] && args+=("--name"  "$fb_name")
+    [[ -n "$fb_phone" ]] && args+=("--phone" "$fb_phone")
+    _fb create "${args[@]}"
+    echo ""
+    echo "Press Enter to continue..."
+    read -r
+}
+
+# 3 — Modify
+handle_fb_modify_menu() {
+    while true; do
+        clear
+        show_header "Modify User"
+        echo ""
+        print_action_option "1" "List users first (to find a UID)"
+        print_action_option "2" "Change Email"
+        print_action_option "3" "Change Display Name"
+        print_action_option "4" "Change Password"
+        print_action_option "5" "Change Phone Number"
+        echo ""
+        print_action_option "0" "Back"
+        echo ""
+        echo -n "  Select > "
+        read_menu_choice
+        case $choice in
+            1)  clear; _fb list; echo "Press Enter..."; read -r ;;
+            2|3|4|5)
+                clear
+                _fb list 2>/dev/null
+                _prompt_uid || continue
+                local uid="$REPLY_UID"
+                case $choice in
+                    2) echo -n "  New email    : "; read -r val; [[ -n "$val" ]] && _fb update "$uid" --email "$val" ;;
+                    3) echo -n "  New name     : "; read -r val; _fb update "$uid" --name "$val" ;;
+                    4) echo -n "  New password : "; read -rs val; echo; [[ -n "$val" ]] && _fb update "$uid" --password "$val" ;;
+                    5) echo -n "  New phone (E.164, blank to remove): "; read -r val; _fb update "$uid" --phone "$val" ;;
+                esac
+                echo ""; echo "Press Enter to continue..."; read -r
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+# 4 — Set claims
+handle_fb_claims_menu() {
+    while true; do
+        clear
+        show_header "Set Permissions (Custom Claims)"
+        echo -e "  ${DIM}Claims take effect after the user refreshes their ID token.${NC}"
+        echo ""
+        print_action_option "1" "Grant admin"
+        print_action_option "2" "Revoke admin"
+        print_action_option "3" "Grant premium_user"
+        print_action_option "4" "Revoke premium_user"
+        print_action_option "5" "Enter custom JSON"
+        print_action_option "6" "List users (to find UID)"
+        echo ""
+        print_action_option "0" "Back"
+        echo ""
+        echo -n "  Select > "
+        read_menu_choice
+        [[ "$choice" == "0" ]] && return
+        [[ "$choice" == "6" ]] && { clear; _fb list; echo "Press Enter..."; read -r; continue; }
+        clear
+        _prompt_uid || continue
+        local uid="$REPLY_UID"
+        local json_claims
+        case $choice in
+            1) json_claims='{"admin":true}' ;;
+            2) json_claims='{"admin":false}' ;;
+            3) json_claims='{"premium_user":true}' ;;
+            4) json_claims='{"premium_user":false}' ;;
+            5) echo -n "  JSON claims (e.g. {\"role\":\"editor\"}): "; read -r json_claims ;;
+            *) continue ;;
+        esac
+        _fb set-claims "$uid" "$json_claims"
+        echo ""; echo "Press Enter to continue..."; read -r
+    done
+}
+
+# 5 — Security tools
+handle_fb_security_menu() {
+    while true; do
+        clear
+        show_header "Security Tools"
+        echo ""
+        print_action_option "1" "Generate Password-Reset Link"
+        print_action_option "2" "Generate Email-Verify Link"
+        print_action_option "3" "Revoke All Sessions (refresh tokens)"
+        echo ""
+        print_action_option "0" "Back"
+        echo ""
+        echo -n "  Select > "
+        read_menu_choice
+        [[ "$choice" == "0" ]] && return
+        [[ "$choice" != "1" && "$choice" != "2" && "$choice" != "3" ]] && continue
+
+        # Always list users first so the admin can confirm the UID and email
+        # before performing any action.
+        clear
+        show_header "Security Tools — Select a User"
+        _fb list
+        echo ""
+
+        _prompt_uid || continue
+        local uid="$REPLY_UID"
+        echo ""
+
+        case $choice in
+            1) _fb links "$uid" reset  ;;
+            2) _fb links "$uid" verify ;;
+            3) _fb revoke "$uid"       ;;
+        esac
+        echo ""; echo "Press Enter to continue..."; read -r
+    done
+}
+
+# 6 — Delete one
+handle_fb_delete() {
+    clear
+    _fb list 2>/dev/null
+    _prompt_uid || return
+    _fb delete "$REPLY_UID"
+    echo ""; echo "Press Enter to continue..."; read -r
+}
+
+# 7 — Delete all
+handle_fb_delete_all() {
+    clear
+    show_header "NUCLEAR: Delete ALL Firebase Users"
+    echo -e "  ${RED}This will permanently remove every user from Firebase Authentication.${NC}"
+    echo ""
+    _fb delete-all
+    echo ""; echo "Press Enter to continue..."; read -r
+}
+
+handle_fb_sync_repair() {
+    clear
+    show_header "Sync Repair — Firebase ↔ Cosmos DB"
+    echo -e "  ${DIM}Checks both systems for mismatches and offers to fix them.${NC}"
+    echo ""
+    _fb sync-check
+    echo ""
+    echo "Press Enter to continue..."
+    read -r
+}
+
+handle_firebase_admin_menu() {
+    while true; do
+        show_firebase_admin_menu
+        read_menu_choice
+        case $choice in
+            1) handle_fb_list ;;
+            2) handle_fb_create ;;
+            3) handle_fb_modify_menu ;;
+            4) handle_fb_claims_menu ;;
+            5) handle_fb_security_menu ;;
+            6) handle_fb_delete ;;
+            7) handle_fb_delete_all ;;
+            8) handle_fb_sync_repair ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
+}
+
+# =============================================================================
 # MAIN LOOP
 # =============================================================================
 
@@ -768,6 +999,7 @@ while true; do
         5) handle_test_menu ;;
         6) handle_redis_menu ;;
         7) handle_monitoring_menu ;;
+        8) handle_firebase_admin_menu ;;
         q|Q) handle_quick_commit ;;
         s|S) handle_start_stop_chat_service ;;
         0)

@@ -137,6 +137,11 @@ Commands (mirrors menu.sh):
                             Auto-detects IP, preserves existing rules, applies the update
     list-users               List all registered users from Cosmos DB (Firebase UIDs, emails, registration time)
     wait-for-users           Poll Cosmos DB every 5 s until at least one user appears, then print the table
+    firebase-admin <cmd>     Firebase Authentication management (wraps scripts/firebase_admin_mgr.py)
+                             Commands: list | create | update | delete | delete-all | set-claims | links | revoke
+                             Example:  ./scripts/cli.sh firebase-admin list
+                             Example:  ./scripts/cli.sh firebase-admin create --email a@b.com --password secret --name "Alice"
+                             Example:  ./scripts/cli.sh firebase-admin set-claims <uid> '{"admin":true}'
     test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
     verify-azure-auth        Verify secretless Cosmos access (lists containers, no COSMOS_KEY)
@@ -1131,6 +1136,12 @@ main() {
             ;;
         wait-for-users)
             cmd_wait_for_users
+            ;;
+        firebase-admin)
+            load_env
+            local py
+            py="$(_resolve_python)"
+            exec "$py" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" "$@"
             ;;
         sync-env)
             sync_cosmos_env

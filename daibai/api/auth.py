@@ -63,8 +63,17 @@ def _init_firebase_app():
             flush=True,
         )
         return None
+    except ValueError as exc:
+        # "The default Firebase app already exists" — another module (e.g. the
+        # admin CLI) initialised it first.  Reuse the existing app silently.
+        try:
+            return firebase_admin.get_app()
+        except Exception:
+            pass
+        print(f"[auth] Firebase Admin init warning: {exc}", flush=True, file=__import__('sys').stderr)
+        return None
     except Exception as exc:
-        print(f"[auth] Firebase Admin init failed: {exc}", flush=True)
+        print(f"[auth] Firebase Admin init failed: {exc}", flush=True, file=__import__('sys').stderr)
         return None
 
 

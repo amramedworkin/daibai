@@ -23,7 +23,8 @@ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
     .catch((e) => console.error('[AUTH] setPersistence failed:', e));
 
 const _ui = new firebaseui.auth.AuthUI(firebase.auth());
-let _currentUser = null;   // firebase.User | null — updated by onAuthStateChanged
+let _currentUser             = null;   // firebase.User | null — updated by onAuthStateChanged
+let _pendingVerificationUser = null;   // unverified email user waiting to confirm their address
 
 // ── FirebaseUI configuration ───────────────────────────────────────────────
 
@@ -38,10 +39,23 @@ const _uiConfig = {
     ],
     callbacks: {
         signInSuccessWithAuthResult: (authResult) => {
-            const u = authResult.user;
+            const u         = authResult.user;
+            const isNew     = authResult.additionalUserInfo?.isNewUser;
+            const providerId = authResult.additionalUserInfo?.providerId;
             console.log('[AUTH] Sign-in success:', u.email || u.uid,
-                        '| provider:', authResult.additionalUserInfo?.providerId,
-                        '| new user:', authResult.additionalUserInfo?.isNewUser);
+                        '| provider:', providerId,
+                        '| new user:', isNew,
+                        '| emailVerified:', u.emailVerified);
+
+            // For brand-new email/password registrations, send the verification
+            // email immediately so the user receives it before they can do anything.
+            // onAuthStateChanged will block the app until they click the link.
+            if (isNew && providerId === 'password') {
+                u.sendEmailVerification()
+                    .then(() => console.log('[AUTH] Verification email sent to', u.email))
+                    .catch(e  => console.warn('[AUTH] sendEmailVerification failed:', e.message));
+            }
+
             document.getElementById('authModal')?.classList.remove('active');
             return false; // must be false — prevents FirebaseUI from redirecting
         },
@@ -64,8 +78,107 @@ function signIn() {
 
 /** Sign the current user out of Firebase. */
 async function signOut() {
+    _pendingVerificationUser = null;
     await firebase.auth().signOut();
     // onAuthStateChanged fires next and resets _currentUser + UI
+}
+
+// ── Email verification ─────────────────────────────────────────────────────
+
+/**
+ * Returns true when the user MUST verify their email before accessing the app.
+ * Only email/password accounts require this — OAuth providers (Google, GitHub)
+ * already guarantee a verified email so their users always have emailVerified=true.
+ */
+function _requiresEmailVerification(user) {
+    const isEmailPassword = user.providerData.some(p => p.providerId === 'password');
+    return isEmailPassword && !user.emailVerified;
+}
+
+/** Show the blocking verification modal and populate the email address. */
+function _showVerificationModal(email) {
+    const modal = document.getElementById('verificationModal');
+    const emailEl = document.getElementById('verificationEmail');
+    const status = document.getElementById('verificationStatus');
+    if (emailEl) emailEl.textContent = email || '';
+    if (status)  { status.textContent = ''; status.className = 'verification-status'; }
+    modal?.classList.add('active');
+    // Re-run Lucide so icons inside the modal are rendered.
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+/** Hide the verification modal. */
+function _hideVerificationModal() {
+    document.getElementById('verificationModal')?.classList.remove('active');
+}
+
+/** "Resend Verification Email" button handler. */
+async function resendVerificationEmail() {
+    const btn    = document.getElementById('resendVerificationBtn');
+    const status = document.getElementById('verificationStatus');
+    const user   = _pendingVerificationUser || firebase.auth().currentUser;
+    if (!user) return;
+    if (btn) btn.disabled = true;
+    if (status) { status.textContent = 'Sending…'; status.className = 'verification-status loading'; }
+    try {
+        await user.sendEmailVerification();
+        if (status) { status.textContent = 'Sent! Check your inbox (and spam folder).'; status.className = 'verification-status success'; }
+    } catch (e) {
+        console.error('[AUTH] resendVerificationEmail:', e);
+        if (status) { status.textContent = `Could not send: ${e.message}`; status.className = 'verification-status error'; }
+    } finally {
+        if (btn) { setTimeout(() => { btn.disabled = false; }, 5000); } // rate-limit UI
+    }
+}
+
+/**
+ * "I've Verified My Email" button handler.
+ * Reloads the Firebase user to pick up the latest emailVerified flag without
+ * requiring a full sign-out / sign-in cycle.
+ */
+async function checkEmailVerified() {
+    const checkBtn = document.getElementById('checkVerifiedBtn');
+    const status   = document.getElementById('verificationStatus');
+    const user     = _pendingVerificationUser || firebase.auth().currentUser;
+    if (!user) return;
+
+    if (checkBtn) checkBtn.disabled = true;
+    if (status) { status.textContent = 'Checking…'; status.className = 'verification-status loading'; }
+
+    try {
+        await user.reload();
+        const refreshed = firebase.auth().currentUser;
+
+        if (refreshed?.emailVerified) {
+            if (status) { status.textContent = 'Verified! Loading your workspace…'; status.className = 'verification-status success'; }
+            _pendingVerificationUser = null;
+            _hideVerificationModal();
+
+            // Manually complete the sign-in flow that was paused.
+            const wasGuest = !_currentUser;
+            _currentUser = refreshed;
+            await onboardUser(refreshed);
+            if (wasGuest && window.app) {
+                window.app.guestMode = false;
+                await window.app.exitGuestMode();
+            }
+            updateAuthButtons();
+        } else {
+            if (status) { status.textContent = 'Not verified yet — click the link in your email first.'; status.className = 'verification-status error'; }
+            if (checkBtn) checkBtn.disabled = false;
+        }
+    } catch (e) {
+        console.error('[AUTH] checkEmailVerified reload failed:', e);
+        if (status) { status.textContent = `Error: ${e.message}`; status.className = 'verification-status error'; }
+        if (checkBtn) checkBtn.disabled = false;
+    }
+}
+
+/** Cancel button — sign out fully and return to guest/sign-in state. */
+async function cancelVerification() {
+    _pendingVerificationUser = null;
+    _hideVerificationModal();
+    await firebase.auth().signOut();   // clears the unverified session
 }
 
 /** Returns a fresh Firebase ID token for the signed-in user. */
@@ -1945,6 +2058,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Verification modal buttons.
+    document.getElementById('checkVerifiedBtn')?.addEventListener('click', checkEmailVerified);
+    document.getElementById('resendVerificationBtn')?.addEventListener('click', resendVerificationEmail);
+    document.getElementById('verificationCancelBtn')?.addEventListener('click', cancelVerification);
+
     // Profile modal action buttons.
     document.getElementById('saveDisplayNameBtn')?.addEventListener('click', updateDisplayName);
     document.getElementById('sendSmsBtn')?.addEventListener('click', initPhoneVerification);
@@ -1956,34 +2074,53 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // onAuthStateChanged is the single source of truth for session state.
-    // The detailed logging below helps trace why a user is asked to re-login.
     firebase.auth().onAuthStateChanged(async (user) => {
         const wasGuest = !_currentUser;
-        _currentUser = user;
 
-        if (user) {
-            console.group('[AUTH] Session restored / signed in');
-            console.log('  uid        :', user.uid);
-            console.log('  email      :', user.email || '(none)');
-            console.log('  displayName:', user.displayName || '(not set)');
-            console.log('  anonymous  :', user.isAnonymous);
-            console.log('  provider   :', user.providerData.map(p => p.providerId).join(', ') || 'anonymous');
-            console.log('  token exp  :', user.stsTokenManager?.expirationTime
+        if (user && !user.isAnonymous) {
+            console.group('[AUTH] Session event');
+            console.log('  uid          :', user.uid);
+            console.log('  email        :', user.email || '(none)');
+            console.log('  emailVerified:', user.emailVerified);
+            console.log('  displayName  :', user.displayName || '(not set)');
+            console.log('  provider     :', user.providerData.map(p => p.providerId).join(', '));
+            console.log('  token exp    :', user.stsTokenManager?.expirationTime
                 ? new Date(user.stsTokenManager.expirationTime).toLocaleString()
                 : 'unknown');
             console.groupEnd();
 
-            if (!user.isAnonymous) await onboardUser(user);
+            // Block email/password users who have not yet clicked the verification link.
+            // _pendingVerificationUser keeps the Firebase session alive so reload() and
+            // sendEmailVerification() work from the modal — we just don't grant app access.
+            if (_requiresEmailVerification(user)) {
+                console.log('[AUTH] Email not verified — blocking access, showing verification modal');
+                _pendingVerificationUser = user;
+                _currentUser = null;   // app stays in guest mode
+                document.getElementById('authModal')?.classList.remove('active');
+                _showVerificationModal(user.email);
+                updateAuthButtons();
+                return;                // skip onboarding and exitGuestMode
+            }
+
+            // Verified (or OAuth) user — grant full access.
+            _currentUser = user;
+            await onboardUser(user);
             if (wasGuest && window.app) {
                 window.app.guestMode = false;
                 await window.app.exitGuestMode();
             }
+
+        } else if (user?.isAnonymous) {
+            _currentUser = user;
+
         } else {
-            // Check localStorage to help diagnose why the session was lost.
+            // No session at all.
             const fbKeys = Object.keys(localStorage).filter(k => k.startsWith('firebase:'));
             console.group('[AUTH] No session — guest mode');
-            console.log('  firebase localStorage keys:', fbKeys.length ? fbKeys : '(none — session was never saved or was cleared)');
+            console.log('  firebase localStorage keys:',
+                fbKeys.length ? fbKeys : '(none — session was never saved or was cleared)');
             console.groupEnd();
+            _currentUser = null;
         }
 
         updateAuthButtons();
