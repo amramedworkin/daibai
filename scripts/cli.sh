@@ -128,6 +128,9 @@ Commands (mirrors menu.sh):
     cli-query <query>       Single natural-language query
     train [--database <name>]  Train schema (daibai-train)
                             --database  Train specific database
+    index [target] [--force]  Semantic schema indexing (Redis vector store)
+                            target: playground (default) or a db name from daibai.yaml
+                            --force  Re-index even if refresh interval has not elapsed
 
   AZURE
     cosmos-role [--principal-id ID]  Set up Cosmos DB role for signed-in user
@@ -192,6 +195,9 @@ Examples:
     $(basename "$0") server
     $(basename "$0") cli-query "How many users are in the database?"
     $(basename "$0") train --database suitecrm
+    $(basename "$0") index
+    $(basename "$0") index playground
+    $(basename "$0") index my_db --force
     $(basename "$0") is-ready
     $(basename "$0") config-path
     $(basename "$0") cosmos-role
@@ -335,6 +341,25 @@ cmd_train() {
     else
         run_daibai_train
     fi
+}
+
+cmd_index() {
+    load_env
+    local target="${1:-playground}"
+    local extra_args=()
+    shift || true
+    # Pass remaining flags (e.g. --force) straight through to the Python script.
+    while [[ $# -gt 0 ]]; do
+        extra_args+=("$1")
+        shift
+    done
+
+    local py
+    py="$(_resolve_python)"
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+
+    print_header "Semantic Schema Indexer — target: $target"
+    "$py" "$PROJECT_DIR/scripts/index_db.py" "$target" "${extra_args[@]}"
 }
 
 # ============================================================================
@@ -1109,6 +1134,9 @@ main() {
             ;;
         train)
             cmd_train "$@"
+            ;;
+        index)
+            cmd_index "$@"
             ;;
         cosmos-role)
             cmd_cosmos_role "$@"

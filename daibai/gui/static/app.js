@@ -1438,24 +1438,39 @@ class DaiBaiApp {
         }
         const wsUrl = `${protocol}//${window.location.host}/ws/chat?token=${encodeURIComponent(token)}`;
         this.ws = new WebSocket(wsUrl);
-        
-        this.ws.onopen = () => {
-            console.log('WebSocket connected');
-        };
-        
-        this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.handleWebSocketMessage(data);
-        };
-        
-        this.ws.onclose = () => {
-            console.log('WebSocket disconnected, reconnecting...');
-            setTimeout(() => this.connectWebSocket(), 3000);
-        };
-        
-        this.ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
+
+        // Return a promise that resolves once the socket is open (or rejects on error),
+        // so callers that need the connection ready can await this method.
+        return new Promise((resolve, reject) => {
+            const onOpen = () => {
+                console.log('WebSocket connected');
+                this.ws.removeEventListener('open', onOpen);
+                this.ws.removeEventListener('error', onError);
+                resolve();
+            };
+            const onError = (e) => {
+                console.error('WebSocket error:', e);
+                this.ws.removeEventListener('open', onOpen);
+                this.ws.removeEventListener('error', onError);
+                reject(e);
+            };
+            this.ws.addEventListener('open', onOpen);
+            this.ws.addEventListener('error', onError);
+
+            this.ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                this.handleWebSocketMessage(data);
+            };
+
+            this.ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                setTimeout(() => this.connectWebSocket(), 3000);
+            };
+
+            this.ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        });
     }
     
     handleWebSocketMessage(data) {
@@ -1463,18 +1478,36 @@ class DaiBaiApp {
             case 'ack':
                 this.conversationId = data.conversation_id;
                 break;
-                
-            case 'sql':
+
+            case 'sql': {
+                // "Thinking…" phase is done — show the generated SQL.
                 this.removeLoadingIndicator();
                 this.lastGeneratedSql = data.content;
-                const assistantMsg = { role: 'assistant', content: data.content, sql: data.content, timestamp: new Date().toISOString() };
+                const assistantMsg = {
+                    role: 'assistant',
+                    content: data.content,
+                    sql: data.content,
+                    timestamp: new Date().toISOString(),
+                };
                 this.sessionMessages.push(assistantMsg);
                 this.renderAssistantMessage(data.content, null, this.sessionMessages.length - 1);
                 this.copyToClipboard(data.content);
                 this.updatePromptsList(this.sessionMessages);
+
+                // If the server will execute the SQL, show a contextual indicator
+                // for the data-retrieval / data-write phase that follows.
+                if (this.executeCheckbox.checked && data.content) {
+                    const label = this._isWriteSql(data.content)
+                        ? 'Modifying data…'
+                        : 'Getting data…';
+                    this.showLoadingIndicator(label);
+                }
                 break;
-                
+            }
+
             case 'results':
+                // Data phase complete — remove its indicator before appending rows.
+                this.removeLoadingIndicator();
                 this.appendResultsToLastMessage(data);
                 this.saveToCsv(data.content);
                 if (this.sessionMessages.length > 0) {
@@ -1482,7 +1515,7 @@ class DaiBaiApp {
                     if (last.role === 'assistant') last.results = data.content;
                 }
                 break;
-                
+
             case 'error':
                 this.removeLoadingIndicator();
                 if (data.content === 'QUOTA_EXCEEDED') {
@@ -1491,8 +1524,10 @@ class DaiBaiApp {
                     this.renderErrorMessage(data.content);
                 }
                 break;
-                
+
             case 'done':
+                // Safety net: remove any lingering indicator (e.g. execute=false path).
+                this.removeLoadingIndicator();
                 this.isLoading = false;
                 this.updateSendButton();
                 this.updatePromptsList(this.sessionMessages);
@@ -1534,8 +1569,8 @@ class DaiBaiApp {
         this.renderAttachedFiles();
         this.autoResizeTextarea();
         
-        // Show loading indicator
-        this.showLoadingIndicator();
+        // Show contextual loading indicator — "Thinking…" while the LLM works.
+        this.showLoadingIndicator('Thinking…');
         
         // Send via WebSocket
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -1842,7 +1877,13 @@ class DaiBaiApp {
         this.scrollToBottom();
     }
     
-    showLoadingIndicator() {
+    /**
+     * Append a "daibai is working" indicator to the chat.
+     * @param {string} label - Human-readable status shown next to the dots.
+     */
+    showLoadingIndicator(label = 'Thinking…') {
+        // Avoid stacking multiple indicators.
+        this.removeLoadingIndicator();
         const loadingEl = document.createElement('div');
         loadingEl.className = 'message assistant loading-message';
         loadingEl.innerHTML = `
@@ -1853,18 +1894,31 @@ class DaiBaiApp {
                     <span></span>
                     <span></span>
                 </div>
-                <span>Generating...</span>
+                <span class="loading-label">${label}</span>
             </div>
         `;
         this.messagesContainer.appendChild(loadingEl);
         this.scrollToBottom();
     }
-    
+
+    /** Update the status text of the currently visible loading indicator. */
+    updateLoadingLabel(label) {
+        const el = this.messagesContainer.querySelector('.loading-message .loading-label');
+        if (el) el.textContent = label;
+    }
+
     removeLoadingIndicator() {
         const loading = this.messagesContainer.querySelector('.loading-message');
-        if (loading) {
-            loading.remove();
-        }
+        if (loading) loading.remove();
+    }
+
+    /**
+     * Return true when the SQL statement makes a write to the database
+     * (INSERT / UPDATE / DELETE / DDL).  Used to pick the right status label.
+     */
+    _isWriteSql(sql) {
+        return /^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE|REPLACE|MERGE)\b/i
+            .test(sql || '');
     }
     
     async showSchema() {
@@ -2532,6 +2586,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (count >= 20) {
                     showQuotaModal();
                     return;   // do not activate playground mode
+                }
+            }
+
+            // Anonymous users skip exitGuestMode() so they never get a WebSocket.
+            // Open one now so playground messages stream instead of falling back to
+            // the slow blocking REST endpoint.
+            if (window.app && (!window.app.ws || window.app.ws.readyState !== WebSocket.OPEN)) {
+                console.log('[Playground] Opening WebSocket for anonymous session…');
+                try {
+                    await window.app.connectWebSocket();
+                } catch (e) {
+                    console.warn('[Playground] WebSocket failed to open — will use REST fallback:', e);
                 }
             }
         }

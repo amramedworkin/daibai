@@ -91,6 +91,9 @@ _CHINOOK_SYSTEM_PROMPT = (
 _CHINOOK_SYSTEM_PROMPT += get_chinook_schema()
 
 
+_PLAYGROUND_LLM_TIMEOUT: float = 60.0   # seconds before we give up on the LLM
+
+
 async def _generate_playground_sql(
     agent: DaiBaiAgent,
     user_query: str,
@@ -113,7 +116,16 @@ async def _generate_playground_sql(
             {"role": m.get("role"), "content": m.get("content", "")}
             for m in history
         ]
-    response = await agent.generate_async(enhanced_prompt, context)
+    try:
+        response = await asyncio.wait_for(
+            agent.generate_async(enhanced_prompt, context),
+            timeout=_PLAYGROUND_LLM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise PlaygroundError(
+            f"SQL generation timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f} s. "
+            "Please try a simpler question."
+        )
     return response.sql or agent._extract_sql(response.text)
 
 
@@ -133,7 +145,13 @@ async def _run_playground(
     if execute and sql:
         # execute_playground_query is synchronous (uses threading.Timer); run in
         # a thread so we don't block the async event loop.
-        raw = await asyncio.to_thread(execute_playground_query, sql)
+        try:
+            raw = await asyncio.to_thread(execute_playground_query, sql)
+        except FileNotFoundError:
+            # playground.db hasn't been created yet — auto-reset from master.
+            print("[playground] playground.db missing — auto-initialising from chinook_master.db", flush=True)
+            await asyncio.to_thread(reset_playground)
+            raw = await asyncio.to_thread(execute_playground_query, sql)
         results = _playground_rows_to_records(raw["columns"], raw["rows"])
         row_count = raw["row_count"]
     return sql, results, row_count
