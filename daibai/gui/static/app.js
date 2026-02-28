@@ -25,6 +25,7 @@ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
 const _ui = new firebaseui.auth.AuthUI(firebase.auth());
 let _currentUser             = null;   // firebase.User | null — updated by onAuthStateChanged
 let _pendingVerificationUser = null;   // unverified email user waiting to confirm their address
+let _isPlaygroundActive      = false;  // true when "Query Chinook DB" mode is active
 
 // ── FirebaseUI configuration ───────────────────────────────────────────────
 
@@ -171,6 +172,162 @@ async function checkEmailVerified() {
         console.error('[AUTH] checkEmailVerified reload failed:', e);
         if (status) { status.textContent = `Error: ${e.message}`; status.className = 'verification-status error'; }
         if (checkBtn) checkBtn.disabled = false;
+    }
+}
+
+// ── Playground helpers ─────────────────────────────────────────────────────
+
+/** Show the sandbox reset confirmation toast. */
+function showSandboxConfirmToast() {
+    const toast = document.getElementById('sandboxToast');
+    if (!toast) return;
+    toast.setAttribute('aria-hidden', 'false');
+    toast.classList.add('visible');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+/** Hide the sandbox reset confirmation toast. */
+function hideSandboxConfirmToast() {
+    const toast = document.getElementById('sandboxToast');
+    if (!toast) return;
+    toast.classList.remove('visible');
+    toast.setAttribute('aria-hidden', 'true');
+}
+
+/**
+ * Show a brief auto-dismissing status toast.
+ * @param {'success'|'error'} type
+ * @param {string} message
+ */
+function showSandboxStatusToast(type, message) {
+    // Reuse an existing element or create one on the fly.
+    let el = document.getElementById('sandboxStatusToast');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'sandboxStatusToast';
+        el.className = 'sandbox-status-toast';
+        document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.className   = `sandbox-status-toast ${type}`;
+    // Force reflow so the CSS transition fires even on back-to-back calls.
+    el.offsetHeight; // eslint-disable-line no-unused-expressions
+    el.classList.add('visible');
+    setTimeout(() => el.classList.remove('visible'), 3000);
+}
+
+/** Show the playground guest-quota modal and lock the chat input. */
+function showQuotaModal() {
+    const modal = document.getElementById('quotaModal');
+    if (!modal) return;
+    modal.classList.add('active');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+
+    // Hard-block the chat input — only restored after a real sign-in.
+    if (window.app) {
+        window.app.promptInput.disabled = true;
+        window.app.promptInput.placeholder = 'Sign in to continue…';
+        window.app.sendBtn.disabled = true;
+    }
+}
+
+/** Hide the playground guest-quota modal. */
+function hideQuotaModal() {
+    document.getElementById('quotaModal')?.classList.remove('active');
+}
+
+/**
+ * "Return to Home" action from the quota modal.
+ * Exits playground mode visually, then signs out the anonymous Firebase session
+ * so the app returns to proper guest/sign-in state with the input locked.
+ */
+async function exitPlaygroundFromQuota() {
+    hideQuotaModal();
+
+    // Exit playground mode UI (deactivate toggle button, remove theme, restore dropdowns).
+    const queryChinookBtn = document.getElementById('queryChinookBtn');
+    if (queryChinookBtn) queryChinookBtn.classList.remove('active');
+    document.body.classList.remove('active-playground');
+    window.app?.setPlaygroundMode?.(false);
+
+    // Sign out the anonymous Firebase session so onAuthStateChanged fires with null,
+    // returning the app to an unauthenticated guest state (input stays locked).
+    if (_currentUser?.isAnonymous) {
+        try { await firebase.auth().signOut(); } catch (e) {
+            console.warn('[Quota] anonymous sign-out error:', e);
+        }
+        // Explicitly keep input locked in case onAuthStateChanged fires slowly.
+        if (window.app) {
+            window.app.promptInput.disabled = true;
+            window.app.promptInput.placeholder = 'Sign in to start chatting…';
+            window.app.sendBtn.disabled = true;
+        }
+    }
+}
+
+/**
+ * Fetch the caller's playground_count from Cosmos via GET /api/profile.
+ * Returns 0 when the profile cannot be read (e.g. anonymous user not yet created).
+ */
+async function checkPlaygroundQuota() {
+    try {
+        const res = await apiFetch('/api/profile');
+        if (!res.ok) return 0;
+        const data = await res.json();
+        return typeof data.playground_count === 'number' ? data.playground_count : 0;
+    } catch (e) {
+        if (!e.guestMode) console.warn('[Playground] checkPlaygroundQuota error:', e);
+        return 0;
+    }
+}
+
+/** Confirm handler — call POST /api/playground/reset with progress modal feedback. */
+async function executePlaygroundReset() {
+    const confirmBtn = document.getElementById('sandboxConfirmBtn');
+    if (confirmBtn) confirmBtn.disabled = true;
+    hideSandboxConfirmToast();
+
+    // ── Open the progress modal as a visual loading indicator ────────────
+    const app = window.app;
+    app?._showIndexingModal?.('playground');
+    app?._updateIndexingProgress?.(0, 'Copying chinook_master.db → playground.db…', null);
+
+    // Animate bar to ~45 % while the network request is in flight.
+    let fakePct = 0;
+    const fakeTimer = setInterval(() => {
+        fakePct = Math.min(fakePct + 9, 45);
+        app?._updateIndexingProgress?.(fakePct, 'Restoring database file…', null);
+    }, 120);
+
+    try {
+        const res = await apiFetch('/api/playground/reset', { method: 'POST' });
+        clearInterval(fakeTimer);
+
+        if (res.ok) {
+            // Sweep to 100 %, brief pause, then close + toast.
+            app?._updateIndexingProgress?.(100, '✔ Sandbox restored from master', 0);
+            setTimeout(() => {
+                app?._hideIndexingModal?.();
+                showSandboxStatusToast('success', '✔ Sandbox reset — playground.db restored from master.');
+            }, 1200);
+            console.log('[Playground] reset successful');
+        } else {
+            const err = await res.text().catch(() => String(res.status));
+            app?._hideIndexingModal?.();
+            showSandboxStatusToast('error', `Reset failed: ${err}`);
+            console.error('[Playground] reset failed:', err);
+        }
+    } catch (e) {
+        clearInterval(fakeTimer);
+        app?._hideIndexingModal?.();
+        showSandboxStatusToast('error', `Reset error: ${e.message}`);
+        console.error('[Playground] reset error:', e);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i data-lucide="rotate-ccw"></i> Yes, Reset';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
     }
 }
 
@@ -586,6 +743,248 @@ class DaiBaiApp {
         console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
 
+    /**
+     * Called by the "Query Chinook DB" sidebar button.
+     * Updates the module-level flag and re-enables/disables the chat input for
+     * anonymous users who enter playground mode via guest access.
+     */
+    setPlaygroundMode(active) {
+        _isPlaygroundActive = active;
+
+        // ── Body class for global CSS overrides ──────────────────────────
+        document.body.classList.toggle('playground-active', active);
+
+        if (active) {
+            // ── Lock the nav dropdowns to Chinook / Sandbox LLM ──────────
+            // Save current HTML so we can restore exactly on exit.
+            this._savedDbHtml  = this.databaseSelect.outerHTML.includes('chinook_playground')
+                ? this._savedDbHtml  // already saved from a previous enter
+                : this.databaseSelect.innerHTML;
+            this._savedLlmHtml = this.llmSelect.outerHTML.includes('_sandbox')
+                ? this._savedLlmHtml
+                : this.llmSelect.innerHTML;
+            this._savedDbValue  = this.databaseSelect.value;
+            this._savedLlmValue = this.llmSelect.value;
+
+            this.databaseSelect.innerHTML =
+                '<option value="chinook_playground">Chinook (SQLite)</option>';
+            this.databaseSelect.value    = 'chinook_playground';
+            this.databaseSelect.disabled = true;
+
+            this.llmSelect.innerHTML =
+                '<option value="_sandbox">GPT-4o-Mini (Sandbox)</option>';
+            this.llmSelect.value    = '_sandbox';
+            this.llmSelect.disabled = true;
+
+            // ── Anonymous-guest tooltip ───────────────────────────────────
+            const anonMsg = _currentUser?.isAnonymous
+                ? 'Sign in to connect your own data.'
+                : 'Locked while Playground mode is active.';
+            this.databaseSelect.title = anonMsg;
+            this.llmSelect.title      = anonMsg;
+
+            // ── Re-enable the chat input for anonymous/guest users ────────
+            if (_currentUser?.isAnonymous) {
+                this.promptInput.disabled = false;
+                this.promptInput.placeholder = 'Ask me about the Chinook database…';
+                this.sendBtn.disabled = false;
+            }
+
+        } else {
+            // ── Unlock and restore the nav dropdowns ─────────────────────
+            this.databaseSelect.disabled = false;
+            this.llmSelect.disabled      = false;
+            this.databaseSelect.title    = '';
+            this.llmSelect.title         = '';
+
+            // Reload from server to restore real options & persisted selection.
+            this.loadSettings().catch(() => {
+                // Fallback: restore saved HTML directly if API is unreachable.
+                if (this._savedDbHtml)  this.databaseSelect.innerHTML = this._savedDbHtml;
+                if (this._savedLlmHtml) this.llmSelect.innerHTML      = this._savedLlmHtml;
+                if (this._savedDbValue)  this.databaseSelect.value    = this._savedDbValue;
+                if (this._savedLlmValue) this.llmSelect.value         = this._savedLlmValue;
+            });
+
+            // Hide the index nudge (the restored DB may already be indexed).
+            this._hideIndexNudge();
+        }
+
+        console.log('[Playground] _isPlaygroundActive =', active);
+    }
+
+    // ── Schema Index Status ────────────────────────────────────────────────
+
+    /** Update the status dot next to the Database label.
+     * @param {'unknown'|'indexed'|'not-indexed'|'indexing'} state */
+    _updateDbStatusDot(state) {
+        const dot = document.getElementById('dbStatusDot');
+        if (!dot) return;
+        dot.classList.remove('status-green', 'status-red', 'status-pulse');
+        switch (state) {
+            case 'indexed':
+                dot.classList.add('status-green');
+                dot.title = 'Indexed for AI search';
+                break;
+            case 'not-indexed':
+                dot.classList.add('status-red');
+                dot.title = 'Not indexed — click "Index now" to enable AI search';
+                break;
+            case 'indexing':
+                dot.classList.add('status-pulse');
+                dot.title = 'Indexing in progress…';
+                break;
+            default:
+                dot.title = '';
+        }
+    }
+
+    /** Show the "Not indexed" nudge bar below the nav dropdowns. */
+    _showIndexNudge() {
+        const el = document.getElementById('dbIndexNudge');
+        if (el) el.style.display = 'flex';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    /** Hide the "Not indexed" nudge bar. */
+    _hideIndexNudge() {
+        const el = document.getElementById('dbIndexNudge');
+        if (el) el.style.display = 'none';
+    }
+
+    /** Open the indexing progress modal for the given database. */
+    _showIndexingModal(dbId) {
+        const modal = document.getElementById('indexingModal');
+        if (!modal) return;
+        // Reset to initial state.
+        this._updateIndexingProgress(0, `Vectorizing "${dbId}"…`, null);
+        document.getElementById('indexingStatusLine').textContent = 'Starting…';
+        modal.classList.add('active');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    /** Close the indexing progress modal. */
+    _hideIndexingModal() {
+        document.getElementById('indexingModal')?.classList.remove('active');
+    }
+
+    /**
+     * Update the progress bar, percentage, status line, and ETA.
+     * @param {number} pct      0–100
+     * @param {string} status   Status message from the server
+     * @param {number|null} eta Seconds remaining (null = not yet known)
+     */
+    _updateIndexingProgress(pct, status, eta) {
+        const bar    = document.getElementById('indexingBar');
+        const pctEl  = document.getElementById('indexingPct');
+        const etaEl  = document.getElementById('indexingEta');
+        const statEl = document.getElementById('indexingStatusLine');
+        const track  = document.getElementById('indexingTrack');
+
+        if (bar)    bar.style.width    = `${Math.min(100, pct)}%`;
+        if (pctEl)  pctEl.textContent  = `${Math.round(pct)}%`;
+        if (statEl) statEl.textContent = status || '';
+        if (track)  track.setAttribute('aria-valuenow', Math.round(pct));
+
+        if (etaEl) {
+            if (eta === null || eta === undefined) {
+                etaEl.textContent = 'Calculating…';
+            } else if (eta <= 0) {
+                etaEl.textContent = 'Almost done';
+            } else if (eta < 60) {
+                etaEl.textContent = `~${Math.ceil(eta)}s remaining`;
+            } else {
+                const m = Math.floor(eta / 60);
+                const s = Math.ceil(eta % 60);
+                etaEl.textContent = `~${m}m ${s}s remaining`;
+            }
+        }
+    }
+
+    /**
+     * Call GET /api/schema/status/{dbId}.  Updates the dot and shows/hides the nudge.
+     * Safe to call in guest mode — silently no-ops.
+     */
+    async checkDbIndexStatus(dbId) {
+        if (!dbId || !isAuthenticated()) {
+            this._updateDbStatusDot('unknown');
+            this._hideIndexNudge();
+            return;
+        }
+        this._updateDbStatusDot('unknown');
+        try {
+            const res  = await apiFetch(`/api/schema/status/${encodeURIComponent(dbId)}`);
+            const data = await res.json();
+            if (data.is_indexed) {
+                this._updateDbStatusDot('indexed');
+                this._hideIndexNudge();
+                console.log(`[Schema] "${dbId}" indexed at ${data.last_indexed_at}`);
+            } else {
+                this._updateDbStatusDot('not-indexed');
+                this._showIndexNudge();
+                console.log(`[Schema] "${dbId}" not yet indexed`);
+            }
+        } catch (e) {
+            if (!e.guestMode) console.warn('[Schema] Status check failed:', e);
+        }
+    }
+
+    /**
+     * Open /ws/schema-progress and stream indexing progress into the modal.
+     * Automatically closes the modal and updates the status dot on completion.
+     */
+    async startSchemaIndexing(dbId) {
+        if (!dbId) return;
+        let token;
+        try { token = await getApiToken(); }
+        catch (e) { console.error('[Schema] Cannot start indexing — not authenticated'); return; }
+
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${proto}//${location.host}/ws/schema-progress`
+                    + `?token=${encodeURIComponent(token)}&db=${encodeURIComponent(dbId)}`;
+
+        this._showIndexingModal(dbId);
+        this._updateDbStatusDot('indexing');
+        this._hideIndexNudge();
+
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => console.log(`[Schema] WS open for "${dbId}"`);
+
+        ws.onmessage = ({ data }) => {
+            let msg;
+            try { msg = JSON.parse(data); } catch { return; }
+
+            if (msg.type === 'progress') {
+                this._updateIndexingProgress(msg.pct, msg.status, msg.eta);
+
+            } else if (msg.type === 'done') {
+                this._updateIndexingProgress(100, msg.status, 0);
+                // Show completed state briefly, then close modal.
+                setTimeout(() => {
+                    this._hideIndexingModal();
+                    this._updateDbStatusDot('indexed');
+                }, 1400);
+
+            } else if (msg.type === 'error') {
+                console.error('[Schema] Indexing error:', msg.message);
+                this._hideIndexingModal();
+                this._updateDbStatusDot('not-indexed');
+                this._showIndexNudge();
+                showSandboxStatusToast('error', `Indexing failed: ${msg.message}`);
+            }
+        };
+
+        ws.onerror = (e) => {
+            console.error('[Schema] WS error', e);
+            this._hideIndexingModal();
+            this._updateDbStatusDot('not-indexed');
+            this._showIndexNudge();
+        };
+
+        ws.onclose = () => console.log(`[Schema] WS closed for "${dbId}"`);
+    }
+
     loadPreferences() {
         const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
         
@@ -755,6 +1154,12 @@ class DaiBaiApp {
         this.databaseSelect.addEventListener('change', () => {
             this.updateSettings();
             this.savePreferences();
+            this.checkDbIndexStatus(this.databaseSelect.value);
+        });
+
+        // Schema index nudge — "Index now" button
+        document.getElementById('dbIndexBtn')?.addEventListener('click', () => {
+            this.startSchemaIndexing(this.databaseSelect.value);
         });
         this.llmSelect.addEventListener('change', () => {
             this.updateSettings();
@@ -894,7 +1299,9 @@ class DaiBaiApp {
             this.databaseSelect.innerHTML = settings.databases
                 .map(db => `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`)
                 .join('');
-            
+            // Check indexing status for the freshly-selected database.
+            this.checkDbIndexStatus(this.databaseSelect.value);
+
             // Populate LLM dropdown
             const savedLlm = prefs.llm && settings.llm_providers.includes(prefs.llm)
                 ? prefs.llm : settings.current_llm;
@@ -1078,7 +1485,11 @@ class DaiBaiApp {
                 
             case 'error':
                 this.removeLoadingIndicator();
-                this.renderErrorMessage(data.content);
+                if (data.content === 'QUOTA_EXCEEDED') {
+                    showQuotaModal();
+                } else {
+                    this.renderErrorMessage(data.content);
+                }
                 break;
                 
             case 'done':
@@ -1091,7 +1502,15 @@ class DaiBaiApp {
     }
     
     async sendMessage() {
-        if (!isAuthenticated()) {
+        // In playground mode, anonymous users are allowed (they signed in silently).
+        // Re-check quota on every send so we block mid-session when limit is reached.
+        if (_isPlaygroundActive && _currentUser?.isAnonymous) {
+            const count = await checkPlaygroundQuota();
+            if (count >= 20) {
+                showQuotaModal();
+                return;
+            }
+        } else if (!isAuthenticated()) {
             signIn();
             return;
         }
@@ -1123,7 +1542,8 @@ class DaiBaiApp {
             this.ws.send(JSON.stringify({
                 query: query,
                 conversation_id: this.conversationId,
-                execute: this.executeCheckbox.checked
+                execute: this.executeCheckbox.checked,
+                is_playground: _isPlaygroundActive,
             }));
         } else {
             // Fallback to REST API
@@ -1141,10 +1561,22 @@ class DaiBaiApp {
                 body: JSON.stringify({
                     query: query,
                     conversation_id: this.conversationId,
-                    execute: this.executeCheckbox.checked
+                    execute: this.executeCheckbox.checked,
+                    is_playground: _isPlaygroundActive,
                 })
             });
-            
+
+            // Handle quota-exceeded response from server.
+            if (response.status === 403) {
+                const err = await response.json().catch(() => ({}));
+                this.removeLoadingIndicator();
+                if (err.detail === 'QUOTA_EXCEEDED') {
+                    showQuotaModal();
+                    return;
+                }
+                throw new Error(`HTTP 403: ${err.detail || 'Forbidden'}`);
+            }
+
             const data = await response.json();
             
             this.removeLoadingIndicator();
@@ -2057,6 +2489,71 @@ document.addEventListener('DOMContentLoaded', () => {
             e.target.classList.remove('active');
         }
     });
+
+    // ── Playground sidebar ──────────────────────────────────────────────────
+
+    // Toggle the Playground submenu open/closed.
+    document.getElementById('playgroundToggle')?.addEventListener('click', () => {
+        const btn     = document.getElementById('playgroundToggle');
+        const submenu = document.getElementById('playgroundSubmenu');
+        const isOpen  = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', String(!isOpen));
+        btn.classList.toggle('open', !isOpen);
+        submenu.classList.toggle('open', !isOpen);
+        submenu.setAttribute('aria-hidden', String(isOpen));
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    });
+
+    // "Query Chinook DB" — activate playground mode (sign in anonymously if needed).
+    document.getElementById('queryChinookBtn')?.addEventListener('click', async () => {
+        const sidebar  = document.getElementById('sidebar');
+        const btn      = document.getElementById('queryChinookBtn');
+        const turningOn = !btn.classList.contains('active');
+
+        if (turningOn) {
+            // Ensure a Firebase session exists (anonymous is fine for guests).
+            if (!_currentUser) {
+                try {
+                    console.log('[Playground] No session — signing in anonymously…');
+                    const cred = await firebase.auth().signInAnonymously();
+                    _currentUser = cred.user;
+                    console.log('[Playground] Anonymous UID:', cred.user.uid);
+                } catch (e) {
+                    console.error('[Playground] Anonymous sign-in failed:', e);
+                    showSandboxStatusToast('error', 'Could not start a guest session — please sign in.');
+                    return;
+                }
+            }
+
+            // Check quota for anonymous (guest) users.
+            if (_currentUser.isAnonymous) {
+                const count = await checkPlaygroundQuota();
+                console.log(`[Playground] Guest quota: ${count}/20`);
+                if (count >= 20) {
+                    showQuotaModal();
+                    return;   // do not activate playground mode
+                }
+            }
+        }
+
+        btn.classList.toggle('active', turningOn);
+        sidebar?.classList.toggle('active-playground', turningOn);
+        window.app?.setPlaygroundMode?.(turningOn);
+        console.log('[Playground] mode:', turningOn ? 'ON' : 'OFF');
+    });
+
+    // "Reset Sandbox" — show confirmation toast.
+    document.getElementById('resetSandboxBtn')?.addEventListener('click', showSandboxConfirmToast);
+    document.getElementById('sandboxCancelBtn')?.addEventListener('click', hideSandboxConfirmToast);
+    document.getElementById('sandboxToastClose')?.addEventListener('click', hideSandboxConfirmToast);
+    document.getElementById('sandboxConfirmBtn')?.addEventListener('click', executePlaygroundReset);
+
+    // Quota modal buttons.
+    document.getElementById('quotaSignupBtn')?.addEventListener('click', () => {
+        hideQuotaModal();
+        signIn();
+    });
+    document.getElementById('quotaReturnBtn')?.addEventListener('click', exitPlaygroundFromQuota);
 
     // Verification modal buttons.
     document.getElementById('checkVerifiedBtn')?.addEventListener('click', checkEmailVerified);

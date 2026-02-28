@@ -28,7 +28,10 @@
             <div class="nav-center">
                 <div class="nav-dropdowns">
                     <div class="dropdown">
-                        <label>Database</label>
+                        <label>
+                            Database
+                            <span class="db-status-dot" id="dbStatusDot" title=""></span>
+                        </label>
                         <select id="databaseSelect">
                             <option value="">Loading...</option>
                         </select>
@@ -59,6 +62,12 @@
                             <span>Auto-CSV</span>
                         </label>
                     </div>
+                </div>
+                <!-- Shown when selected DB is not yet indexed for semantic search -->
+                <div class="db-index-nudge" id="dbIndexNudge" aria-live="polite">
+                    <i data-lucide="zap"></i>
+                    <span>Not indexed for AI search.</span>
+                    <button class="db-index-btn" id="dbIndexBtn">Index now</button>
                 </div>
             </div>
             
@@ -161,6 +170,36 @@
                         </div>
                     </div>
                 </div>
+                <!-- EXPLORE navigation group -->
+                <nav class="nav-explore" aria-label="Explore">
+                    <div class="nav-group">
+                        <div class="nav-group-label">EXPLORE</div>
+
+                        <div class="nav-item" id="playgroundNavItem">
+                            <button class="nav-item-header"
+                                    id="playgroundToggle"
+                                    aria-expanded="false"
+                                    aria-controls="playgroundSubmenu"
+                                    title="Playground">
+                                <i data-lucide="flask-conical" class="nav-item-icon"></i>
+                                <span class="nav-item-label">Playground</span>
+                                <i data-lucide="chevron-right" class="nav-chevron"></i>
+                            </button>
+
+                            <div class="nav-submenu" id="playgroundSubmenu" aria-hidden="true">
+                                <button class="nav-subitem" id="queryChinookBtn" title="Switch to Chinook sandbox chat">
+                                    <i data-lucide="terminal-square"></i>
+                                    Query Chinook DB
+                                </button>
+                                <button class="nav-subitem nav-subitem--reset" id="resetSandboxBtn" title="Restore playground.db from master">
+                                    <i data-lucide="rotate-ccw"></i>
+                                    Reset Sandbox
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </nav>
+
                 <div class="nav-footer">
                     <button type="button" id="settingsBtn" class="sidebar-icon" title="Settings">
                         <i data-lucide="settings"></i>
@@ -168,6 +207,24 @@
                     </button>
                 </div>
             </aside>
+
+            <!-- Sandbox reset confirmation toast -->
+            <div class="sandbox-toast" id="sandboxToast" role="alertdialog" aria-modal="true" aria-hidden="true">
+                <div class="sandbox-toast-icon"><i data-lucide="triangle-alert"></i></div>
+                <div class="sandbox-toast-body">
+                    <p class="sandbox-toast-title">Reset Sandbox?</p>
+                    <p class="sandbox-toast-msg">This will overwrite <code>playground.db</code> with the original Chinook master. All unsaved changes will be lost.</p>
+                    <div class="sandbox-toast-actions">
+                        <button class="sandbox-toast-btn sandbox-toast-btn--confirm" id="sandboxConfirmBtn">
+                            <i data-lucide="rotate-ccw"></i> Yes, Reset
+                        </button>
+                        <button class="sandbox-toast-btn sandbox-toast-btn--cancel" id="sandboxCancelBtn">Cancel</button>
+                    </div>
+                </div>
+                <button class="sandbox-toast-close" id="sandboxToastClose" aria-label="Dismiss">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
 
             <!-- Main Chat Area -->
             <main class="chat-area">
@@ -342,6 +399,49 @@
                 </div>
                 <div class="modal-body" style="padding:0 0 16px">
                     <div id="firebaseui-auth-container"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Schema Indexing Progress Modal -->
+        <div class="modal indexing-modal" id="indexingModal">
+            <div class="modal-content indexing-modal-content">
+                <div class="indexing-icon">
+                    <i data-lucide="cpu"></i>
+                </div>
+                <h2 class="indexing-title">Indexing Schema</h2>
+                <p class="indexing-db-label" id="indexingDbLabel">Preparing…</p>
+                <div class="indexing-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="indexingTrack">
+                    <div class="indexing-bar" id="indexingBar" style="width:0%"></div>
+                </div>
+                <div class="indexing-stats">
+                    <span class="indexing-pct" id="indexingPct">0%</span>
+                    <span class="indexing-eta" id="indexingEta"></span>
+                </div>
+                <p class="indexing-status-line" id="indexingStatusLine">Starting…</p>
+            </div>
+        </div>
+
+        <!-- Playground Guest Quota Modal -->
+        <div class="modal quota-modal" id="quotaModal">
+            <div class="modal-content quota-modal-content">
+                <div class="quota-icon">
+                    <i data-lucide="zap-off"></i>
+                </div>
+                <h2 class="quota-title">Guest Limit Reached</h2>
+                <p class="quota-body">
+                    You've used your <strong>20 free Playground queries</strong>.<br>
+                    Sign up to keep your history and keep playing!
+                </p>
+                <div class="quota-actions">
+                    <button class="btn btn-primary quota-btn--signup" id="quotaSignupBtn">
+                        <i data-lucide="user-plus"></i>
+                        Sign Up Now
+                    </button>
+                    <button class="btn btn-secondary quota-btn--return" id="quotaReturnBtn">
+                        <i data-lucide="home"></i>
+                        Return to Home
+                    </button>
                 </div>
             </div>
         </div>

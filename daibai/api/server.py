@@ -24,6 +24,14 @@ from ..core.agent import DaiBaiAgent
 from .database import CosmosConversationStore
 from . import auth
 from .auth import get_current_user
+from ..core import playground_manager
+from ..core.playground_manager import (
+    get_chinook_schema,
+    execute_playground_query,
+    reset_playground,
+    PlaygroundError,
+    QueryTimeoutError,
+)
 
 
 def get_store(request: Request) -> CosmosConversationStore:
@@ -52,6 +60,83 @@ def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
                 new_row[k] = v
         out.append(new_row)
     return out
+
+
+def _playground_rows_to_records(
+    columns: list, rows: list
+) -> List[Dict[str, Any]]:
+    """Convert execute_playground_query output (rows as lists) to list-of-dicts."""
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def _is_anonymous_user(claims: Dict[str, Any]) -> bool:
+    """Return True when the Firebase token belongs to an anonymous (signInAnonymously) session.
+
+    get_current_user wraps raw token claims inside {"uid": …, "email": …, "claims": {…}}.
+    This helper handles both that wrapper and raw claim dicts.
+    """
+    raw = claims.get("claims", claims)
+    return raw.get("firebase", {}).get("sign_in_provider") == "anonymous"
+
+
+# Chinook-specific system prompt injected when is_playground=True.
+_CHINOOK_SYSTEM_PROMPT = (
+    "You are a SQL expert for the Chinook music store sample database (SQLite dialect).\n"
+    "The database has 11 tables: Artist, Album, Track, MediaType, Genre, Employee, "
+    "Customer, Invoice, InvoiceLine, Playlist, PlaylistTrack.\n"
+    "Use only standard SQLite syntax. Do NOT use SHOW TABLES or INFORMATION_SCHEMA.\n"
+    "Return ONLY a SQL query inside a ```sql … ``` code block — no prose, no explanation.\n\n"
+    "Schema:\n"
+)
+_CHINOOK_SYSTEM_PROMPT += get_chinook_schema()
+
+
+async def _generate_playground_sql(
+    agent: DaiBaiAgent,
+    user_query: str,
+    history: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Use the LLM to generate SQL targeted at the Chinook SQLite playground."""
+    enhanced_prompt = (
+        "Generate ONLY a SQL query (SELECT by default unless the user explicitly asks "
+        "to insert/update/delete) for this request.\n"
+        f"Database: Chinook (SQLite)\n\n"
+        f"Request: {user_query}\n\n"
+        "Return the SQL in a ```sql code block. Do not execute it."
+    )
+    context: Dict[str, Any] = {
+        "system_prompt": _CHINOOK_SYSTEM_PROMPT,
+        "schema": get_chinook_schema(),
+    }
+    if history:
+        context["messages"] = [
+            {"role": m.get("role"), "content": m.get("content", "")}
+            for m in history
+        ]
+    response = await agent.generate_async(enhanced_prompt, context)
+    return response.sql or agent._extract_sql(response.text)
+
+
+async def _run_playground(
+    agent: DaiBaiAgent,
+    user_query: str,
+    execute: bool,
+    history: Optional[List[Dict[str, Any]]] = None,
+) -> tuple:
+    """
+    Generate SQL via the Chinook system prompt, then optionally execute it
+    against playground.db.  Returns (sql, results, row_count).
+    """
+    sql = await _generate_playground_sql(agent, user_query, history)
+    results = None
+    row_count = None
+    if execute and sql:
+        # execute_playground_query is synchronous (uses threading.Timer); run in
+        # a thread so we don't block the async event loop.
+        raw = await asyncio.to_thread(execute_playground_query, sql)
+        results = _playground_rows_to_records(raw["columns"], raw["rows"])
+        row_count = raw["row_count"]
+    return sql, results, row_count
 
 
 @asynccontextmanager
@@ -110,6 +195,7 @@ class QueryRequest(BaseModel):
     query: str
     conversation_id: Optional[str] = None
     execute: bool = False
+    is_playground: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -267,6 +353,31 @@ async def patch_profile(
         raise HTTPException(status_code=400, detail="No fields provided to update")
     updated = await store.patch_user(uid, fields)
     return updated
+
+
+@app.get("/api/profile")
+async def get_profile(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
+    """Return the caller's Cosmos DB user profile (creates a stub for new anonymous users)."""
+    uid = current_user["uid"]
+    record = await store.get_user(oid=uid)
+    if record is None:
+        record = {"id": uid, "uid": uid, "playground_count": 0}
+    return record
+
+
+@app.post("/api/playground/reset")
+async def playground_reset(_user: Dict[str, Any] = Depends(get_current_user)):
+    """Restore playground.db from the read-only chinook_master.db."""
+    try:
+        path = await asyncio.to_thread(reset_playground)
+        return {"status": "ok", "path": str(path)}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/health")
@@ -442,11 +553,22 @@ async def query(
     _user: Dict[str, Any] = Depends(get_current_user),
     store: CosmosConversationStore = Depends(get_store),
 ):
-    """Process a natural language query."""
-    agent = get_agent()
+    """Process a natural language query (production DB or Chinook playground)."""
+    agent   = get_agent()
     conv_id = request.conversation_id or str(uuid.uuid4())
+    uid     = _user.get("uid", "")
 
-    # Pull: get history at start
+    # ── Quota gate: anonymous users are limited to 20 playground queries ───────
+    if request.is_playground and _is_anonymous_user(_user):
+        try:
+            profile = await store.get_user(oid=uid) or {}
+            if int(profile.get("playground_count", 0)) >= 20:
+                raise HTTPException(status_code=403, detail="QUOTA_EXCEEDED")
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # non-fatal — allow request if Cosmos is unreachable
+
     history = await store.get_history(conv_id)
 
     user_msg = {
@@ -456,15 +578,21 @@ async def query(
     }
 
     try:
-        # Process: pass history to the LLM
-        sql = await agent.generate_sql_async(request.query, "sql", history=history)
-        results = None
-        row_count = None
-        if request.execute and sql:
-            df = agent.run_sql(sql)
-            if df is not None:
-                results = _dataframe_to_json_safe(df)
-                row_count = len(df)
+        if request.is_playground:
+            # ── Playground path: Chinook system prompt + SQLite execution ──────
+            sql, results, row_count = await _run_playground(
+                agent, request.query, execute=request.execute, history=history
+            )
+        else:
+            # ── Production path: user's configured database ───────────────────
+            sql = await agent.generate_sql_async(request.query, "sql", history=history)
+            results   = None
+            row_count = None
+            if request.execute and sql:
+                df = agent.run_sql(sql)
+                if df is not None:
+                    results   = _dataframe_to_json_safe(df)
+                    row_count = len(df)
 
         assistant_msg = {
             "role": "assistant",
@@ -473,25 +601,35 @@ async def query(
             "results": results,
             "timestamp": datetime.now().isoformat(),
         }
-        # Push: append both messages and upsert
         updated = history + [user_msg, assistant_msg]
         await store.upsert_history(conv_id, updated)
 
+        # Increment playground quota counter *after* a successful response.
+        if request.is_playground and uid:
+            try:
+                profile   = await store.get_user(oid=uid) or {}
+                new_count = int(profile.get("playground_count", 0)) + 1
+                await store.patch_user(uid, {"playground_count": new_count})
+            except Exception as exc:
+                print(f"[query] playground_count increment skipped: {exc}", flush=True)
+
         return QueryResponse(
             sql=sql,
-            explanation="Generated SQL query",
+            explanation="Chinook playground query" if request.is_playground else "Generated SQL query",
             results=results,
             row_count=row_count,
             conversation_id=conv_id,
         )
+
+    except (PlaygroundError, QueryTimeoutError) as e:
+        error_msg = str(e)
+        updated = history + [user_msg, {"role": "assistant", "content": f"Playground error: {error_msg}", "timestamp": datetime.now().isoformat()}]
+        await store.upsert_history(conv_id, updated)
+        raise HTTPException(status_code=422, detail=error_msg)
+
     except Exception as e:
         error_msg = str(e)
-        error_assistant_msg = {
-            "role": "assistant",
-            "content": f"Error: {error_msg}",
-            "timestamp": datetime.now().isoformat(),
-        }
-        updated = history + [user_msg, error_assistant_msg]
+        updated = history + [user_msg, {"role": "assistant", "content": f"Error: {error_msg}", "timestamp": datetime.now().isoformat()}]
         await store.upsert_history(conv_id, updated)
         raise HTTPException(status_code=500, detail=error_msg)
 
@@ -562,6 +700,144 @@ async def get_tables(_user: Dict[str, Any] = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Schema status & real-time indexing progress ────────────────────────────
+
+@app.get("/api/schema/status/{db_id}")
+async def schema_index_status(
+    db_id: str,
+    _user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Return the schema-indexing status for a database connection.
+
+    Reads two Redis keys written by SchemaManager.index_schema():
+      schema:status:is_indexed:{db_id}      → "1" when indexed, absent/other = false
+      schema:status:last_indexed_at:{db_id} → ISO-8601 UTC timestamp of last run
+    """
+    from ..core.cache import CacheManager
+    from ..core.schema import SCHEMA_STATUS_IS_INDEXED, SCHEMA_STATUS_LAST_INDEXED_AT
+
+    cache = CacheManager()
+    redis = cache._get_client()
+    is_indexed     = False
+    last_indexed_at = None
+
+    if redis:
+        try:
+            raw = redis.get(f"{SCHEMA_STATUS_IS_INDEXED}:{db_id}")
+            is_indexed = raw == "1"
+            raw_at = redis.get(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db_id}")
+            last_indexed_at = raw_at or None
+        except Exception:
+            pass
+
+    return {
+        "db_id":           db_id,
+        "is_indexed":      is_indexed,
+        "last_indexed_at": last_indexed_at,
+    }
+
+
+@app.websocket("/ws/schema-progress")
+async def ws_schema_progress(websocket: WebSocket):
+    """
+    Stream real-time schema-indexing progress.
+
+    Query params:
+      token  – Firebase ID token (required)
+      db     – database name to index (optional; falls back to agent's current db)
+
+    Emits a sequence of JSON frames:
+      { "type": "progress", "pct": 0-100, "status": "Vectorizing: Orders", "eta": 12.3 }
+      { "type": "done",     "pct": 100,   "status": "Indexed N tables",    "eta": 0   }
+      { "type": "error",    "message": "..." }   (on failure)
+    """
+    token  = websocket.query_params.get("token", "")
+    db_arg = websocket.query_params.get("db", "")
+
+    try:
+        auth.verify_firebase_token(token)
+    except HTTPException:
+        await websocket.close(code=4001)
+        return
+
+    await websocket.accept()
+
+    agent     = get_agent()
+    target_db = db_arg or agent._current_db
+
+    if not target_db:
+        await websocket.send_json({"type": "error", "message": "No database selected"})
+        await websocket.close()
+        return
+
+    sm = agent._get_schema_manager(target_db)
+    if sm is None:
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Schema manager unavailable for '{target_db}' (Redis not configured?)",
+        })
+        await websocket.close()
+        return
+
+    loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
+    queue: asyncio.Queue            = asyncio.Queue()
+
+    def _progress_cb(pct: float, status: str, eta: float) -> None:
+        """Called from the worker thread; routes updates into the async queue."""
+        asyncio.run_coroutine_threadsafe(
+            queue.put({
+                "type":   "progress",
+                "pct":    round(pct, 1),
+                "status": status,
+                "eta":    round(eta, 1),
+            }),
+            loop,
+        )
+
+    # Run the blocking index_schema inside a thread pool so the event loop stays free.
+    index_task: asyncio.Future = asyncio.ensure_future(
+        asyncio.to_thread(sm.index_schema, schema_name=target_db, force=True, progress_cb=_progress_cb)
+    )
+
+    try:
+        # Drain the queue until the indexing task finishes.
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=0.25)
+                await websocket.send_json(msg)
+            except asyncio.TimeoutError:
+                if index_task.done():
+                    break
+
+        # Flush any messages that arrived between the last poll and task completion.
+        while not queue.empty():
+            await websocket.send_json(queue.get_nowait())
+
+        if index_task.exception():
+            await websocket.send_json({
+                "type":    "error",
+                "message": str(index_task.exception()),
+            })
+        else:
+            n = index_task.result()
+            await websocket.send_json({
+                "type":   "done",
+                "pct":    100,
+                "status": f"Indexed {n} table{'s' if n != 1 else ''}",
+                "eta":    0,
+            })
+
+    except WebSocketDisconnect:
+        index_task.cancel()
+
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 # WebSocket for streaming responses
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
@@ -571,22 +847,38 @@ async def websocket_chat(websocket: WebSocket):
         await websocket.close(code=4001)
         return
     try:
-        auth.verify_firebase_token(token)
+        ws_claims = auth.verify_firebase_token(token)
     except HTTPException:
         await websocket.close(code=4001)
         return
     await websocket.accept()
+    ws_uid       = ws_claims.get("uid", "")
+    ws_anonymous = _is_anonymous_user(ws_claims)
     agent = get_agent()
     store = websocket.app.state.store
 
     try:
         while True:
-            data = await websocket.receive_json()
-            query = data.get("query", "")
-            conv_id = data.get("conversation_id", str(uuid.uuid4()))
-            execute = data.get("execute", False)
+            data          = await websocket.receive_json()
+            query         = data.get("query", "")
+            conv_id       = data.get("conversation_id", str(uuid.uuid4()))
+            execute       = data.get("execute", False)
+            is_playground = data.get("is_playground", False)
 
-            # Pull: get history at start
+            # ── Quota gate for anonymous playground users ──────────────────
+            if is_playground and ws_anonymous:
+                try:
+                    profile = await store.get_user(oid=ws_uid) or {}
+                    if int(profile.get("playground_count", 0)) >= 20:
+                        await websocket.send_json({
+                            "type": "error",
+                            "content": "QUOTA_EXCEEDED",
+                            "conversation_id": conv_id,
+                        })
+                        continue
+                except Exception:
+                    pass  # non-fatal
+
             history = await store.get_history(conv_id)
 
             user_msg = {
@@ -595,30 +887,51 @@ async def websocket_chat(websocket: WebSocket):
                 "timestamp": datetime.now().isoformat(),
             }
 
-            # Send acknowledgment
             await websocket.send_json({"type": "ack", "conversation_id": conv_id})
 
             try:
-                # Process: pass history to the LLM
-                sql = await agent.generate_sql_async(query, "sql", history=history)
-                await websocket.send_json({
-                    "type": "sql",
-                    "content": sql,
-                    "conversation_id": conv_id,
-                })
-
-                results = None
-                if execute and sql:
-                    df = agent.run_sql(sql)
-                    if df is not None:
-                        results = _dataframe_to_json_safe(df)
+                if is_playground:
+                    # ── Playground path ──────────────────────────────────────
+                    sql, results, row_count = await _run_playground(
+                        agent, query, execute=execute, history=history
+                    )
+                    await websocket.send_json({
+                        "type": "sql",
+                        "content": sql,
+                        "conversation_id": conv_id,
+                        "is_playground": True,
+                    })
+                    if results is not None:
+                        cols = list(results[0].keys()) if results else []
                         await websocket.send_json({
                             "type": "results",
                             "content": results,
-                            "row_count": len(df),
-                            "columns": list(df.columns),
+                            "row_count": row_count,
+                            "columns": cols,
                             "conversation_id": conv_id,
                         })
+                else:
+                    # ── Production path ──────────────────────────────────────
+                    sql = await agent.generate_sql_async(query, "sql", history=history)
+                    await websocket.send_json({
+                        "type": "sql",
+                        "content": sql,
+                        "conversation_id": conv_id,
+                    })
+                    results   = None
+                    row_count = None
+                    if execute and sql:
+                        df = agent.run_sql(sql)
+                        if df is not None:
+                            results   = _dataframe_to_json_safe(df)
+                            row_count = len(df)
+                            await websocket.send_json({
+                                "type": "results",
+                                "content": results,
+                                "row_count": row_count,
+                                "columns": list(df.columns),
+                                "conversation_id": conv_id,
+                            })
 
                 assistant_msg = {
                     "role": "assistant",
@@ -627,23 +940,27 @@ async def websocket_chat(websocket: WebSocket):
                     "results": results,
                     "timestamp": datetime.now().isoformat(),
                 }
-                # Push: append both messages and upsert
                 updated = history + [user_msg, assistant_msg]
                 await store.upsert_history(conv_id, updated)
+
+                # Increment quota counter after a successful playground response.
+                if is_playground and ws_uid:
+                    try:
+                        profile   = await store.get_user(oid=ws_uid) or {}
+                        new_count = int(profile.get("playground_count", 0)) + 1
+                        await store.patch_user(ws_uid, {"playground_count": new_count})
+                    except Exception:
+                        pass   # non-fatal
 
                 await websocket.send_json({"type": "done", "conversation_id": conv_id})
 
             except Exception as e:
-                error_assistant_msg = {
-                    "role": "assistant",
-                    "content": str(e),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                updated = history + [user_msg, error_assistant_msg]
+                err_msg = str(e)
+                updated = history + [{"role": "assistant", "content": err_msg, "timestamp": datetime.now().isoformat()}]
                 await store.upsert_history(conv_id, updated)
                 await websocket.send_json({
                     "type": "error",
-                    "content": str(e),
+                    "content": err_msg,
                     "conversation_id": conv_id,
                 })
 

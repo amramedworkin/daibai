@@ -12,6 +12,7 @@ index_schema(), and search_schema_v1() using schema:v1:* Redis keys.
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
@@ -46,6 +47,10 @@ SCHEMA_V1_DDL_PREFIX = "schema:v1:ddl:"
 SCHEMA_V1_TEXT_PREFIX = "schema:v1:text:"
 SCHEMA_V1_INDEX_KEY = "schema:v1:index"
 SCHEMA_V1_LAST_INDEXED = "schema:v1:last_indexed"
+
+# Schema indexing status keys (suffixed with :{db} at runtime)
+SCHEMA_STATUS_IS_INDEXED    = "schema:status:is_indexed"
+SCHEMA_STATUS_LAST_INDEXED_AT = "schema:status:last_indexed_at"
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -348,6 +353,7 @@ class SchemaManager:
         schema_name: Optional[str] = None,
         force: bool = False,
         ttl: int = 86400,
+        progress_cb: Optional[Callable[[float, str, float], None]] = None,
     ) -> int:
         """
         Index schema into Redis using v1 key format for semantic search.
@@ -363,6 +369,10 @@ class SchemaManager:
             schema_name: Database/schema to index.
             force: If True, bypass refresh interval check.
             ttl: Redis TTL in seconds for stored keys.
+            progress_cb: Optional callable(pct, status, eta_seconds) fired after each
+                table.  ``pct`` is 0-100, ``eta_seconds`` is a simple moving average
+                estimate of seconds remaining.  Exceptions inside the callback are
+                silently swallowed so they never abort indexing.
 
         Returns:
             Number of tables indexed.
@@ -376,7 +386,7 @@ class SchemaManager:
             logger.warning("Schema indexing skipped: no Redis client")
             return 0
 
-        # Check refresh interval
+        # Check refresh interval (skipped when force=True)
         if not force:
             last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
             try:
@@ -396,16 +406,23 @@ class SchemaManager:
         if not tables_ddl:
             return 0
 
+        total = len(tables_ddl)
         stored = 0
+        # Rolling window of the last 5 per-table durations for ETA estimation.
+        _recent_times: List[float] = []
+
         try:
-            for table, ddl in tables_ddl.items():
+            for i, (table, ddl) in enumerate(tables_ddl.items()):
+                t0 = time.time()
+
                 vector = self._get_embedding(ddl)
                 if vector is None:
                     logger.critical(
                         "Embedding model unavailable; schema indexing falling back to Lazy Discovery"
                     )
                     return 0
-                ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
+
+                ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{table}"
                 text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
                 try:
                     redis.set(ddl_key, json.dumps(vector), ex=ttl)
@@ -414,12 +431,32 @@ class SchemaManager:
                     stored += 1
                 except Exception as e:
                     logger.warning("Failed to store schema for table %s: %s", table, e)
+
+                # ── Progress reporting ───────────────────────────────────────
+                elapsed = time.time() - t0
+                _recent_times.append(elapsed)
+                if len(_recent_times) > 5:      # keep a 5-table rolling window
+                    _recent_times.pop(0)
+                avg_per_table = sum(_recent_times) / len(_recent_times)
+                remaining_tables = total - (i + 1)
+                eta = avg_per_table * remaining_tables
+                pct = ((i + 1) / total) * 100.0
+
+                if progress_cb is not None:
+                    try:
+                        progress_cb(pct, f"Vectorizing: {table}", eta)
+                    except Exception:
+                        pass   # progress errors must never abort indexing
+
             if stored > 0:
-                last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
+                now_iso = datetime.now(timezone.utc).isoformat()
                 try:
-                    redis.set(last_key, str(time.time()), ex=ttl)
+                    redis.set(f"{SCHEMA_V1_LAST_INDEXED}:{db}",      str(time.time()), ex=ttl)
+                    redis.set(f"{SCHEMA_STATUS_IS_INDEXED}:{db}",     "1",              ex=ttl)
+                    redis.set(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}", now_iso,          ex=ttl)
                 except Exception:
                     pass
+
         except Exception as e:
             logger.critical(
                 "Schema indexing failed: %s; falling back to Lazy Discovery",
@@ -427,6 +464,7 @@ class SchemaManager:
                 exc_info=True,
             )
             return 0
+
         return stored
 
     def search_schema_v1(
