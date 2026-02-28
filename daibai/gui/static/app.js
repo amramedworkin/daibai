@@ -17,6 +17,11 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 firebase.analytics();
 
+// Explicitly pin session storage to localStorage so it survives page reloads.
+// Must be called before onAuthStateChanged is registered.
+firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+    .catch((e) => console.error('[AUTH] setPersistence failed:', e));
+
 const _ui = new firebaseui.auth.AuthUI(firebase.auth());
 let _currentUser = null;   // firebase.User | null — updated by onAuthStateChanged
 
@@ -26,16 +31,19 @@ const _uiConfig = {
     signInFlow: 'popup',
     signInOptions: [
         firebase.auth.GoogleAuthProvider.PROVIDER_ID,
-        firebase.auth.GithubAuthProvider.PROVIDER_ID,   // enable in Firebase Console → Authentication → Sign-in method
+        firebase.auth.GithubAuthProvider.PROVIDER_ID,
         firebase.auth.EmailAuthProvider.PROVIDER_ID,
-        firebaseui.auth.AnonymousAuthProvider.PROVIDER_ID,
+        // AnonymousAuthProvider intentionally removed — anonymous sessions are
+        // not persisted the same way and confuse the "stay logged in" flow.
     ],
     callbacks: {
         signInSuccessWithAuthResult: (authResult) => {
-            console.log('[AUTH] Signed in as:', authResult.user.email || 'Anonymous');
-            // onAuthStateChanged handles app state; just close the modal here.
+            const u = authResult.user;
+            console.log('[AUTH] Sign-in success:', u.email || u.uid,
+                        '| provider:', authResult.additionalUserInfo?.providerId,
+                        '| new user:', authResult.additionalUserInfo?.isNewUser);
             document.getElementById('authModal')?.classList.remove('active');
-            return false; // prevent FirebaseUI redirect
+            return false; // must be false — prevents FirebaseUI from redirecting
         },
         uiShown: () => console.log('[AUTH] FirebaseUI widget rendered'),
     },
@@ -1947,20 +1955,34 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // onAuthStateChanged is the single source of truth for session state.
+    // The detailed logging below helps trace why a user is asked to re-login.
     firebase.auth().onAuthStateChanged(async (user) => {
         const wasGuest = !_currentUser;
         _currentUser = user;
 
         if (user) {
-            console.log('[AUTH] Signed in:', user.email || `anonymous:${user.uid}`);
+            console.group('[AUTH] Session restored / signed in');
+            console.log('  uid        :', user.uid);
+            console.log('  email      :', user.email || '(none)');
+            console.log('  displayName:', user.displayName || '(not set)');
+            console.log('  anonymous  :', user.isAnonymous);
+            console.log('  provider   :', user.providerData.map(p => p.providerId).join(', ') || 'anonymous');
+            console.log('  token exp  :', user.stsTokenManager?.expirationTime
+                ? new Date(user.stsTokenManager.expirationTime).toLocaleString()
+                : 'unknown');
+            console.groupEnd();
+
             if (!user.isAnonymous) await onboardUser(user);
-            // Upgrade from guest mode to full mode if the app is already running.
             if (wasGuest && window.app) {
                 window.app.guestMode = false;
                 await window.app.exitGuestMode();
             }
         } else {
-            console.log('[AUTH] No session — guest mode');
+            // Check localStorage to help diagnose why the session was lost.
+            const fbKeys = Object.keys(localStorage).filter(k => k.startsWith('firebase:'));
+            console.group('[AUTH] No session — guest mode');
+            console.log('  firebase localStorage keys:', fbKeys.length ? fbKeys : '(none — session was never saved or was cleared)');
+            console.groupEnd();
         }
 
         updateAuthButtons();
