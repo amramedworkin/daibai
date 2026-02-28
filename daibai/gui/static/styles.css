@@ -320,11 +320,11 @@ body {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     z-index: 1000;
     overflow: hidden;
-    animation: dropdownFadeIn 0.15s ease;
 }
 
 .profile-dropdown.open {
     display: block;
+    animation: dropdownFadeIn 0.15s ease;
 }
 
 @keyframes dropdownFadeIn {
@@ -1283,6 +1283,50 @@ body {
 
 .btn-danger:hover {
     background: #dc2626;
+}
+
+/* ── Keyboard Shortcuts Modal ───────────────────────────────────────────────── */
+
+.kb-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.kb-table td {
+    padding: 7px 4px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.kb-table td:first-child {
+    width: 44%;
+    white-space: nowrap;
+}
+
+.kb-table tr:last-child td {
+    border-bottom: none;
+}
+
+.kb-section {
+    padding-top: 16px !important;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-muted) !important;
+}
+
+kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    box-shadow: 0 1px 0 var(--border-light);
 }
 
 /* ── Profile Modal ─────────────────────────────────────────────────────────── */

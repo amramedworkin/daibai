@@ -133,6 +133,8 @@ Commands (mirrors menu.sh):
     cosmos-role [--principal-id ID]  Set up Cosmos DB role for signed-in user
                             Uses az ad signed-in-user show for principal-id if not given.
                             Account: daibai-metadata, RG: daibai-rg (override via env)
+    cosmos-allow-ip          Whitelist your current public IP in the Cosmos DB firewall
+                            Auto-detects IP, preserves existing rules, applies the update
     list-users               List all registered users from Cosmos DB (Firebase UIDs, emails, registration time)
     test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
@@ -557,24 +559,64 @@ cmd_list_users() {
     load_env
     print_header "Registered Users (Cosmos DB → Users container)"
 
-    local COSMOS_ACCOUNT="${COSMOS_ACCOUNT_NAME:-${COSMOS_ACCOUNT:-}}"
-    local COSMOS_DB="${COSMOS_DATABASE:-${COSMOS_DB:-daibai-metadata}}"
+    local COSMOS_EP="${COSMOS_ENDPOINT:-}"
+    local COSMOS_DB="${COSMOS_DATABASE:-daibai-metadata}"
 
-    if [[ -z "$COSMOS_ACCOUNT" ]]; then
-        print_error "COSMOS_ACCOUNT not set in .env. Run: ./scripts/cli.sh sync-env"
+    if [[ -z "$COSMOS_EP" ]]; then
+        print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
         return 1
     fi
 
+    # Resolve the virtualenv Python (same SDK as the backend).
+    # `az cosmosdb sql query` does not exist in the Azure CLI — the data plane
+    # must be reached through the SDK with DefaultAzureCredential.
+    local py
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        py="$PROJECT_DIR/.venv/bin/python"
+    else
+        py="$(command -v python3 python 2>/dev/null | head -1)"
+    fi
+
     local RAW
-    RAW=$(az cosmosdb sql query \
-        --account-name "$COSMOS_ACCOUNT" \
-        --database-name "$COSMOS_DB" \
-        --container-name Users \
-        --query "items" \
-        -o json 2>/dev/null)
+    RAW=$(COSMOS_ENDPOINT="$COSMOS_EP" COSMOS_DATABASE="$COSMOS_DB" \
+        "$py" - 2>/dev/null <<'PYEOF'
+import os, json
+
+endpoint = os.environ.get("COSMOS_ENDPOINT", "").rstrip("/")
+database = os.environ.get("COSMOS_DATABASE", "daibai-metadata")
+
+if not endpoint:
+    print(json.dumps([])); raise SystemExit(0)
+
+try:
+    from azure.cosmos import CosmosClient
+    from azure.identity import DefaultAzureCredential
+    cred      = DefaultAzureCredential()
+    client    = CosmosClient(endpoint, credential=cred)
+    container = client.get_database_client(database).get_container_client("Users")
+    users = list(container.query_items(
+        query="SELECT * FROM c WHERE c.type = 'user'",
+        enable_cross_partition_query=True,
+    ))
+    print(json.dumps(users))
+except Exception as exc:
+    # Output a sentinel object so the shell can detect the failure reliably.
+    print(json.dumps({"_error": str(exc)}))
+PYEOF
+    )
+
+    # Detect Python-reported errors (structured sentinel, not raw stderr).
+    if echo "$RAW" | jq -e '._error' >/dev/null 2>&1; then
+        local ERR_MSG
+        ERR_MSG=$(echo "$RAW" | jq -r '._error')
+        print_error "Cosmos DB query failed — ensure 'az login' is active and your account has the Cosmos DB Data Reader role."
+        echo ""
+        echo "  Detail: ${ERR_MSG}" | fold -s -w 100
+        return 1
+    fi
 
     if [[ -z "$RAW" || "$RAW" == "[]" || "$RAW" == "null" ]]; then
-        echo "No users found in the Users container."
+        echo "  No users found in the Users container."
         return 0
     fi
 
@@ -582,8 +624,12 @@ cmd_list_users() {
     COUNT=$(echo "$RAW" | jq 'length' 2>/dev/null || echo "?")
     echo -e "  Total users: \033[1;32m${COUNT}\033[0m\n"
 
-    printf "  %-36s  %-32s  %-26s  %s\n" "UID (Firebase)" "Email" "Registered" "Display Name"
-    printf "  %-36s  %-32s  %-26s  %s\n" "$(printf '%0.s-' {1..36})" "$(printf '%0.s-' {1..32})" "$(printf '%0.s-' {1..26})" "$(printf '%0.s-' {1..20})"
+    printf "  %-36s  %-34s  %-26s  %s\n" "UID (Firebase)" "Email" "Registered" "Display Name"
+    printf "  %-36s  %-34s  %-26s  %s\n" \
+        "$(printf '%0.s-' {1..36})" \
+        "$(printf '%0.s-' {1..34})" \
+        "$(printf '%0.s-' {1..26})" \
+        "$(printf '%0.s-' {1..20})"
 
     echo "$RAW" | jq -r '.[] | [
         (.uid // .id // "—"),
@@ -591,7 +637,7 @@ cmd_list_users() {
         (.onboarded_at // .created_at // "—"),
         (.display_name // "—")
     ] | @tsv' 2>/dev/null | while IFS=$'\t' read -r uid email ts name; do
-        printf "  %-36s  %-32s  %-26s  %s\n" "$uid" "$email" "$ts" "$name"
+        printf "  %-36s  %-34s  %-26s  %s\n" "$uid" "$email" "$ts" "$name"
     done
 }
 
@@ -836,6 +882,83 @@ cmd_cosmos_role() {
     fi
 }
 
+cmd_cosmos_allow_ip() {
+    load_env
+    print_header "Cosmos DB Firewall — Add Current IP"
+
+    # ── Resolve account + resource group ──────────────────────────────────────
+    local account="${COSMOS_ACCOUNT:-${COSMOS_ACCOUNT_NAME:-}}"
+    local rg="${COSMOS_RESOURCE_GROUP:-}"
+
+    if [[ -z "$account" ]]; then
+        print_info "Looking up Cosmos DB account from Azure..."
+        account=$(az cosmosdb list --query "[0].name" -o tsv 2>/dev/null || true)
+    fi
+    if [[ -z "$rg" ]]; then
+        rg=$(az cosmosdb list --query "[0].resourceGroup" -o tsv 2>/dev/null || true)
+    fi
+    if [[ -z "$account" || -z "$rg" ]]; then
+        print_error "Could not determine Cosmos DB account or resource group."
+        echo "  Ensure 'az login' is active and a Cosmos DB account exists in your subscription."
+        return 1
+    fi
+    print_info "Account : $account"
+    print_info "RG      : $rg"
+
+    # ── Detect public IP ───────────────────────────────────────────────────────
+    local my_ip
+    my_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null \
+         || curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null \
+         || true)
+    my_ip="${my_ip// /}"   # strip any whitespace
+    if [[ -z "$my_ip" ]]; then
+        print_error "Could not detect your public IP. Check internet connectivity."
+        return 1
+    fi
+    print_info "Your IP : $my_ip"
+
+    # ── Fetch existing IPs as a comma-separated list ──────────────────────────
+    # az cosmosdb update uses --ip-range-filter "ip1,ip2,..." (not JSON).
+    local existing_csv
+    existing_csv=$(az cosmosdb show \
+        --name "$account" \
+        --resource-group "$rg" \
+        --query "join(',', ipRules[].ipAddressOrRange)" \
+        -o tsv 2>/dev/null || true)
+
+    # Check if the IP is already present.
+    if [[ ",$existing_csv," == *",$my_ip,"* ]]; then
+        print_success "IP $my_ip is already in the Cosmos DB firewall allow-list."
+        return 0
+    fi
+
+    # Append the new IP.
+    local new_filter
+    if [[ -z "$existing_csv" ]]; then
+        new_filter="$my_ip"
+    else
+        new_filter="${existing_csv},${my_ip}"
+    fi
+
+    echo ""
+    print_info "Adding $my_ip to the firewall rule set..."
+    print_info "Filter  : $new_filter"
+    echo ""
+
+    if az cosmosdb update \
+        --name "$account" \
+        --resource-group "$rg" \
+        --ip-range-filter "$new_filter" \
+        --output none 2>&1; then
+        echo ""
+        print_success "Done. IP $my_ip is now allowed. Re-run 'list-users' in ~30 seconds."
+    else
+        echo ""
+        print_error "Update failed. You may need the 'Contributor' or 'DocumentDB Account Contributor' role on the Cosmos DB account."
+        return 1
+    fi
+}
+
 cmd_env_preferences() {
     print_header "User Preferences"
     echo "Path: $HOME/.daibai/preferences.json"
@@ -965,6 +1088,9 @@ main() {
             ;;
         cosmos-role)
             cmd_cosmos_role "$@"
+            ;;
+        cosmos-allow-ip)
+            cmd_cosmos_allow_ip
             ;;
         test-db)
             cmd_test_db

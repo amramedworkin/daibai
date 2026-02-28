@@ -85,8 +85,9 @@ function updateAuthButtons() {
     if (el('userDisplayName')) el('userDisplayName').style.display = hasAccount ? '' : 'none';
 
     // Dropdown: guest section vs auth section
-    if (el('dropdownSignIn'))       el('dropdownSignIn').style.display       = hasAccount ? 'none' : '';
+    if (el('profileGuestItems'))    el('profileGuestItems').style.display    = hasAccount ? 'none' : '';
     if (el('profileAuthItems'))     el('profileAuthItems').style.display     = hasAccount ? '' : 'none';
+    if (el('dropdownSignOut'))      el('dropdownSignOut').style.display      = hasAccount ? '' : 'none';
     if (el('profileDropdownHeader'))el('profileDropdownHeader').style.display= hasAccount ? '' : 'none';
     if (el('profileHeaderDivider')) el('profileHeaderDivider').style.display = hasAccount ? '' : 'none';
 
@@ -179,8 +180,8 @@ function _pfStatus(msg, type = 'loading') {
 /** Open the Edit Profile modal and pre-populate fields from the current user. */
 function openProfileModal() {
     if (!_currentUser) return;
-    const modal     = document.getElementById('profileModal');
-    const nameInput = document.getElementById('profileNameInput');
+    const modal      = document.getElementById('profileModal');
+    const nameInput  = document.getElementById('profileNameInput');
     const phoneInput = document.getElementById('profilePhoneInput');
 
     if (nameInput)  nameInput.value  = _currentUser.displayName || '';
@@ -192,6 +193,34 @@ function openProfileModal() {
     _pfStatus('', '');
 
     modal?.classList.add('active');
+
+    // Initialise reCAPTCHA here (inside the modal context) so its hidden
+    // iframe does not sit over the main page and intercept click events.
+    // Only creates a new instance if the previous one was cleared (e.g. expired).
+    if (!_recaptchaVerifier) {
+        try {
+            _recaptchaVerifier = new firebase.auth.RecaptchaVerifier(
+                'recaptcha-container',
+                {
+                    size: 'invisible',
+                    callback: () => console.log('[reCAPTCHA] Solved and ready'),
+                    'expired-callback': () => {
+                        console.warn('[reCAPTCHA] Token expired');
+                        _recaptchaVerifier = null;
+                    },
+                },
+            );
+            _recaptchaVerifier.render()
+                .then((id) => console.log('[reCAPTCHA] Widget ready, id:', id))
+                .catch((e) => {
+                    console.warn('[reCAPTCHA] render() failed:', e.message);
+                    _recaptchaVerifier = null;
+                });
+        } catch (e) {
+            console.warn('[reCAPTCHA] Init failed:', e.message);
+            _recaptchaVerifier = null;
+        }
+    }
 }
 
 /**
@@ -237,19 +266,18 @@ async function initPhoneVerification() {
 
     _pfStatus('Sending verification code…');
     try {
-        // Destroy any previous reCAPTCHA to avoid the "already rendered" error.
-        if (_recaptchaVerifier) {
-            _recaptchaVerifier.clear();
-            _recaptchaVerifier = null;
+        // Reuse the verifier initialised when the profile modal opened.
+        // If it was cleared (token expired or previous error), recreate it now.
+        if (!_recaptchaVerifier) {
+            _recaptchaVerifier = new firebase.auth.RecaptchaVerifier(
+                'recaptcha-container',
+                { size: 'invisible', callback: () => {} },
+            );
+            await _recaptchaVerifier.render();
         }
 
-        _recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
-            size: 'invisible',
-            callback: () => {},    // fires when reCAPTCHA solves automatically
-        });
-
         // PhoneAuthProvider.verifyPhoneNumber returns a verificationId.
-        const provider        = new firebase.auth.PhoneAuthProvider();
+        const provider         = new firebase.auth.PhoneAuthProvider();
         _pendingVerificationId = await provider.verifyPhoneNumber(phone, _recaptchaVerifier);
 
         // Show the SMS code input row.
@@ -261,6 +289,7 @@ async function initPhoneVerification() {
     } catch (err) {
         console.error('[PROFILE] initPhoneVerification error:', err);
         _pfStatus(`Error: ${err.message}`, 'error');
+        // On any error, clear the verifier so it's recreated fresh on the next attempt.
         if (_recaptchaVerifier) { _recaptchaVerifier.clear(); _recaptchaVerifier = null; }
     }
 }
@@ -634,12 +663,14 @@ class DaiBaiApp {
         // Dropdown: Settings
         document.getElementById('dropdownSettings')?.addEventListener('click', () => {
             profileDropdown?.classList.remove('open');
+            profileAvatarBtn?.setAttribute('aria-expanded', 'false');
             this.showSettings();
         });
 
         // Dropdown: Sign Out
         document.getElementById('dropdownSignOut')?.addEventListener('click', () => {
             profileDropdown?.classList.remove('open');
+            profileAvatarBtn?.setAttribute('aria-expanded', 'false');
             signOut();
         });
 
@@ -1828,7 +1859,11 @@ class DaiBaiApp {
 
 document.addEventListener('DOMContentLoaded', () => {
     // Replace all <i data-lucide="..."> elements with inline SVGs.
-    lucide.createIcons();
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    } else {
+        console.warn('[Lucide] Library not loaded — icons will appear as empty elements. Check CDN.');
+    }
 
     // Auth modal: close button + backdrop.
     document.getElementById('authModalClose')?.addEventListener('click', () => {
@@ -1857,11 +1892,48 @@ document.addEventListener('DOMContentLoaded', () => {
         signIn();
     });
 
-    // Edit Profile dropdown item.
-    document.getElementById('dropdownEditProfile')?.addEventListener('click', () => {
+    // Helper: close the profile dropdown
+    const closeProfileDropdown = () => {
         document.getElementById('profileDropdown')?.classList.remove('open');
         document.getElementById('profileAvatarBtn')?.setAttribute('aria-expanded', 'false');
+    };
+
+    // Edit Profile dropdown item.
+    document.getElementById('dropdownEditProfile')?.addEventListener('click', () => {
+        closeProfileDropdown();
         openProfileModal();
+    });
+
+    // Database Schema shortcut from dropdown.
+    document.getElementById('dropdownSchema')?.addEventListener('click', () => {
+        closeProfileDropdown();
+        window.app?.showSchema();
+    });
+
+    // Documentation — opens in a new tab.
+    document.getElementById('dropdownDocs')?.addEventListener('click', () => {
+        closeProfileDropdown();
+        window.open('https://github.com/your-org/daibai#readme', '_blank', 'noopener');
+    });
+
+    // Help & Support.
+    document.getElementById('dropdownHelp')?.addEventListener('click', () => {
+        closeProfileDropdown();
+        window.open('https://github.com/your-org/daibai/issues', '_blank', 'noopener');
+    });
+
+    // Keyboard shortcuts modal.
+    document.getElementById('dropdownKeyboard')?.addEventListener('click', () => {
+        closeProfileDropdown();
+        document.getElementById('keyboardModal')?.classList.add('active');
+    });
+    document.getElementById('keyboardModalClose')?.addEventListener('click', () => {
+        document.getElementById('keyboardModal')?.classList.remove('active');
+    });
+    document.getElementById('keyboardModal')?.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('keyboardModal')) {
+            e.target.classList.remove('active');
+        }
     });
 
     // Profile modal action buttons.

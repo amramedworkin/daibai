@@ -85,28 +85,52 @@
                             </div>
                             <div class="profile-dropdown-divider" id="profileHeaderDivider" style="display:none"></div>
 
-                            <!-- Guest: Sign In item -->
-                            <button class="profile-dropdown-item profile-dropdown-item--signin" id="dropdownSignIn" role="menuitem">
-                                <i data-lucide="log-in"></i>
-                                Sign In
-                            </button>
+                            <!-- Guest: Sign In -->
+                            <div id="profileGuestItems">
+                                <button class="profile-dropdown-item profile-dropdown-item--signin" id="dropdownSignIn" role="menuitem">
+                                    <i data-lucide="log-in"></i>
+                                    Sign In
+                                </button>
+                                <div class="profile-dropdown-divider"></div>
+                            </div>
 
-                            <!-- Authenticated: profile actions (hidden in guest mode) -->
+                            <!-- Authenticated: account group -->
                             <div id="profileAuthItems" style="display:none">
                                 <button class="profile-dropdown-item" id="dropdownEditProfile" role="menuitem">
-                                    <i data-lucide="user"></i>
+                                    <i data-lucide="user-pen"></i>
                                     Edit Profile
                                 </button>
                                 <button class="profile-dropdown-item" id="dropdownSettings" role="menuitem">
                                     <i data-lucide="settings"></i>
                                     Settings
                                 </button>
-                                <div class="profile-dropdown-divider"></div>
-                                <button class="profile-dropdown-item profile-dropdown-item--danger" id="dropdownSignOut" role="menuitem">
-                                    <i data-lucide="log-out"></i>
-                                    Sign Out
+                                <button class="profile-dropdown-item" id="dropdownSchema" role="menuitem">
+                                    <i data-lucide="table-2"></i>
+                                    Database Schema
                                 </button>
+                                <div class="profile-dropdown-divider"></div>
                             </div>
+
+                            <!-- Always visible: support group -->
+                            <button class="profile-dropdown-item" id="dropdownDocs" role="menuitem">
+                                <i data-lucide="book-open"></i>
+                                Documentation
+                            </button>
+                            <button class="profile-dropdown-item" id="dropdownHelp" role="menuitem">
+                                <i data-lucide="life-buoy"></i>
+                                Help &amp; Support
+                            </button>
+                            <button class="profile-dropdown-item" id="dropdownKeyboard" role="menuitem">
+                                <i data-lucide="keyboard"></i>
+                                Keyboard Shortcuts
+                            </button>
+                            <div class="profile-dropdown-divider"></div>
+
+                            <!-- Authenticated: sign out -->
+                            <button class="profile-dropdown-item profile-dropdown-item--danger" id="dropdownSignOut" role="menuitem" style="display:none">
+                                <i data-lucide="log-out"></i>
+                                Sign Out
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -279,6 +303,32 @@
 
                     <!-- Status feedback -->
                     <div id="profileStatus" class="pf-status" style="display:none"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Keyboard Shortcuts Modal -->
+        <div class="modal" id="keyboardModal">
+            <div class="modal-content" style="max-width:480px">
+                <div class="modal-header">
+                    <h2>Keyboard Shortcuts</h2>
+                    <button class="modal-close" id="keyboardModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <table class="kb-table">
+                        <tbody>
+                            <tr><td class="kb-section" colspan="2">Chat</td></tr>
+                            <tr><td><kbd>Enter</kbd></td><td>Send message</td></tr>
+                            <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>New line</td></tr>
+                            <tr><td><kbd>↑</kbd></td><td>Edit last message</td></tr>
+                            <tr><td class="kb-section" colspan="2">Navigation</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Toggle sidebar</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>New conversation</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Focus prompt input</td></tr>
+                            <tr><td class="kb-section" colspan="2">Results</td></tr>
+                            <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Copy last SQL result</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
