@@ -178,13 +178,17 @@ class CosmosStore:
             return None
 
     async def list_users(self) -> List[Dict[str, Any]]:
-        """Fetch all user documents from the Users container."""
+        """Fetch all user documents from the Users container.
+
+        No WHERE filter: every document in the Users container is a user.
+        Older records may lack the 'type' field (written before that field was
+        added to the onboard endpoint), so filtering on type would miss them.
+        """
         client = await self._ensure_client()
         database = client.get_database_client(self._database_name)
         container = database.get_container_client("Users")
         users = []
-        query = "SELECT * FROM c WHERE c.type = 'user'"
-        async for item in container.query_items(query=query, enable_cross_partition_query=True):
+        async for item in container.query_items(query="SELECT * FROM c"):
             users.append(item)
         return users
 

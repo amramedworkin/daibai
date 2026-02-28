@@ -54,7 +54,7 @@ def _init_firebase_app():
 
         cred = credentials.Certificate(cred_path)
         app = firebase_admin.initialize_app(cred)
-        print(f"[auth] Firebase Admin SDK initialised from {cred_path}", flush=True)
+        print(f"[auth] Firebase Admin SDK initialised from {cred_path}", flush=True, file=__import__('sys').stderr)
         return app
     except ImportError:
         print(

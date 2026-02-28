@@ -155,8 +155,9 @@ async function onboardUser(user) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                uid:      user.uid,
-                username: user.email,
+                uid:          user.uid,
+                username:     user.email,
+                display_name: user.displayName || '',
             }),
         });
         if (res.ok) {

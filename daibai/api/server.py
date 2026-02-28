@@ -156,6 +156,7 @@ class ConversationSummary(BaseModel):
 class OnboardRequest(BaseModel):
     uid: Optional[str] = None
     username: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 class ProfilePatchRequest(BaseModel):
@@ -211,20 +212,36 @@ async def auth_onboard(
         raise HTTPException(status_code=401, detail="Missing user identity")
 
     email = claims.get("email") or body.username or ""
-    name = claims.get("name", "")
 
-    user_record: Dict[str, Any] = {
-        "id": uid,
-        "uid": uid,
+    # Resolve display name: JWT 'name' claim (set by OAuth providers like Google/GitHub)
+    # takes precedence, then the body field (sent by the frontend from user.displayName),
+    # then fall back to empty. We never overwrite an existing Cosmos name with "".
+    name = (claims.get("name") or body.display_name or "").strip()
+
+    # Fields that are always refreshed on every login.
+    fields: Dict[str, Any] = {
+        "id":       uid,   # patch_user needs this to locate the document
+        "type":     "user",
+        "uid":      uid,
+        "email":    email,
         "username": email,
-        "display_name": name,
-        "onboarded_at": datetime.now().isoformat(),
     }
+    # Only write display_name when we actually have a value — preserves any
+    # name the user may have set via Edit Profile on a previous session.
+    if name:
+        fields["display_name"] = name
 
     try:
-        await store.upsert_user(user_record)
+        # patch_user fetches the existing record (or creates a stub), merges
+        # fields, and upserts — so profile edits done outside onboarding survive.
+        user_record = await store.patch_user(user_id=uid, fields=fields)
+        # Stamp onboarded_at only if this is the first time we've seen the user.
+        if not user_record.get("onboarded_at"):
+            user_record["onboarded_at"] = datetime.now().isoformat()
+            await store.upsert_user(user_record)
     except Exception as e:
         print(f"[onboard] Cosmos upsert skipped: {e}", flush=True)
+        user_record = fields
 
     return user_record
 

@@ -136,6 +136,7 @@ Commands (mirrors menu.sh):
     cosmos-allow-ip          Whitelist your current public IP in the Cosmos DB firewall
                             Auto-detects IP, preserves existing rules, applies the update
     list-users               List all registered users from Cosmos DB (Firebase UIDs, emails, registration time)
+    wait-for-users           Poll Cosmos DB every 5 s until at least one user appears, then print the table
     test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
     test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
     verify-azure-auth        Verify secretless Cosmos access (lists containers, no COSMOS_KEY)
@@ -555,57 +556,31 @@ sync_cosmos_env() {
     echo "COSMOS_DB=$COSMOS_DB"
 }
 
+_resolve_python() {
+    # Return the path to the virtualenv Python (same SDK as the backend).
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        echo "$PROJECT_DIR/.venv/bin/python"
+    else
+        command -v python3 python 2>/dev/null | head -1
+    fi
+}
+
 cmd_list_users() {
     load_env
     print_header "Registered Users (Cosmos DB → Users container)"
 
-    local COSMOS_EP="${COSMOS_ENDPOINT:-}"
-    local COSMOS_DB="${COSMOS_DATABASE:-daibai-metadata}"
-
-    if [[ -z "$COSMOS_EP" ]]; then
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
         print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
         return 1
     fi
 
-    # Resolve the virtualenv Python (same SDK as the backend).
-    # `az cosmosdb sql query` does not exist in the Azure CLI — the data plane
-    # must be reached through the SDK with DefaultAzureCredential.
     local py
-    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
-        py="$PROJECT_DIR/.venv/bin/python"
-    else
-        py="$(command -v python3 python 2>/dev/null | head -1)"
-    fi
+    py="$(_resolve_python)"
 
     local RAW
-    RAW=$(COSMOS_ENDPOINT="$COSMOS_EP" COSMOS_DATABASE="$COSMOS_DB" \
-        "$py" - 2>/dev/null <<'PYEOF'
-import os, json
+    RAW=$("$py" "$PROJECT_DIR/scripts/check_users.py" 2>/dev/null)
 
-endpoint = os.environ.get("COSMOS_ENDPOINT", "").rstrip("/")
-database = os.environ.get("COSMOS_DATABASE", "daibai-metadata")
-
-if not endpoint:
-    print(json.dumps([])); raise SystemExit(0)
-
-try:
-    from azure.cosmos import CosmosClient
-    from azure.identity import DefaultAzureCredential
-    cred      = DefaultAzureCredential()
-    client    = CosmosClient(endpoint, credential=cred)
-    container = client.get_database_client(database).get_container_client("Users")
-    users = list(container.query_items(
-        query="SELECT * FROM c WHERE c.type = 'user'",
-        enable_cross_partition_query=True,
-    ))
-    print(json.dumps(users))
-except Exception as exc:
-    # Output a sentinel object so the shell can detect the failure reliably.
-    print(json.dumps({"_error": str(exc)}))
-PYEOF
-    )
-
-    # Detect Python-reported errors (structured sentinel, not raw stderr).
+    # Detect Python-reported errors (structured sentinel {"_error": "..."}).
     if echo "$RAW" | jq -e '._error' >/dev/null 2>&1; then
         local ERR_MSG
         ERR_MSG=$(echo "$RAW" | jq -r '._error')
@@ -638,6 +613,50 @@ PYEOF
         (.display_name // "—")
     ] | @tsv' 2>/dev/null | while IFS=$'\t' read -r uid email ts name; do
         printf "  %-36s  %-34s  %-26s  %s\n" "$uid" "$email" "$ts" "$name"
+    done
+}
+
+cmd_wait_for_users() {
+    load_env
+    print_header "Waiting for Users in Cosmos DB"
+
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
+        print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
+        return 1
+    fi
+
+    local py
+    py="$(_resolve_python)"
+    local attempt=0
+
+    echo "  Polling every 5 s — press Ctrl+C to abort."
+    echo ""
+
+    while true; do
+        attempt=$((attempt + 1))
+        local RAW
+        RAW=$("$py" "$PROJECT_DIR/scripts/check_users.py" 2>/dev/null)
+
+        if echo "$RAW" | jq -e '._error' >/dev/null 2>&1; then
+            local ERR
+            ERR=$(echo "$RAW" | jq -r '._error')
+            echo "  [attempt $attempt] DB error — retrying in 10 s: $ERR"
+            sleep 10
+            continue
+        fi
+
+        local COUNT
+        COUNT=$(echo "$RAW" | jq 'length' 2>/dev/null || echo "0")
+
+        if [[ "$COUNT" -gt 0 ]]; then
+            print_success "Found $COUNT user(s)! Running list-users..."
+            echo ""
+            cmd_list_users
+            return 0
+        fi
+
+        echo "  [attempt $attempt] No users yet — checking again in 5 s..."
+        sleep 5
     done
 }
 
@@ -1109,6 +1128,9 @@ main() {
             ;;
         list-users)
             cmd_list_users
+            ;;
+        wait-for-users)
+            cmd_wait_for_users
             ;;
         sync-env)
             sync_cosmos_env
