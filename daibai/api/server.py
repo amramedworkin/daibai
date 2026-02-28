@@ -6,12 +6,133 @@ FastAPI backend providing REST and WebSocket endpoints for the GUI.
 
 import asyncio
 import json
+import logging
+import logging.handlers
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+_LOG_MAX_BYTES = 10 * 1024 * 1024   # 10 MB per file
+_LOG_BACKUP_COUNT = 7               # keep 7 days of rotated files
+
+
+class _SizeAndTimeRotatingHandler(logging.handlers.TimedRotatingFileHandler):
+    """Rotate on midnight OR when the file reaches *max_bytes* — whichever is first.
+
+    Python's standard library only offers time-based or size-based rotation
+    independently.  This subclass combines both by extending shouldRollover().
+    """
+
+    def __init__(self, filename: str, max_bytes: int = _LOG_MAX_BYTES, **kwargs):
+        super().__init__(filename, **kwargs)
+        self.max_bytes = max_bytes
+
+    def shouldRollover(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+        if self.stream and self.stream.tell() >= self.max_bytes:
+            return True
+        return super().shouldRollover(record)
+
+
+def _setup_file_logging() -> Path:
+    """Attach a rolling file handler to the root logger.
+
+    Log directory follows the XDG Base Directory Specification:
+        $XDG_STATE_HOME/daibai/logs/   (default: ~/.local/state/daibai/logs/)
+
+    Files rotate at midnight or at 10 MB, whichever comes first.
+    Seven days of history are retained, then older files are removed.
+
+    Returns the resolved log file path so it can be included in startup logs.
+    """
+    xdg_state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    log_dir = xdg_state / "daibai" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "daibai.log"
+
+    handler = _SizeAndTimeRotatingHandler(
+        filename=str(log_file),
+        max_bytes=_LOG_MAX_BYTES,
+        when="midnight",              # daily rollover at 00:00 local time
+        backupCount=_LOG_BACKUP_COUNT,
+        encoding="utf-8",
+        delay=False,                  # create the file immediately on startup
+    )
+    handler.suffix = "%Y-%m-%d"       # rotated files: daibai.log.2026-02-21
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    handler.setLevel(logging.INFO)
+
+    # Attach to the root logger — all daibai.* loggers inherit it automatically.
+    logging.getLogger().addHandler(handler)
+    return log_file
+
+
+# stdout handler for local development
+logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
+
+# rolling file handler (XDG path, size + time rotation)
+_log_file_path = _setup_file_logging()
+
+logger = logging.getLogger("daibai.websocket")
+
+# ── OTel Telemetry Router ─────────────────────────────────────────────────────
+# Priority:
+#   1. APPLICATIONINSIGHTS_CONNECTION_STRING → Azure Monitor (production)
+#   2. OTEL_EXPORTER_OTLP_ENDPOINT           → Aspire Dashboard (local dev)
+#   3. Neither set                            → stdout + rolling file only
+#
+# All branches are gracefully skipped if the optional packages are absent so the
+# server always boots regardless of which observability extras are installed.
+_APPINSIGHTS_CONN = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip()
+_OTLP_ENDPOINT    = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+
+if _APPINSIGHTS_CONN:
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor()
+        logger.info(
+            "Azure Monitor configured — telemetry forwarded to Application Insights",
+            extra={"connection_string_present": True},
+        )
+    except ImportError:
+        logger.warning(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING is set but "
+            "azure-monitor-opentelemetry is not installed. "
+            "Run: pip install -e '.[observability]'"
+        )
+
+elif _OTLP_ENDPOINT:
+    try:
+        from opentelemetry.sdk._logs import LoggerProvider, set_logger_provider  # type: ignore[import]
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor       # type: ignore[import]
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter  # type: ignore[import]
+        from opentelemetry.sdk._logs.logging import LoggingHandler               # type: ignore[import]
+
+        _logger_provider = LoggerProvider()
+        set_logger_provider(_logger_provider)
+
+        # insecure=True is required for plain HTTP/2 on localhost:4317
+        _otlp_exporter = OTLPLogExporter(insecure=True)
+        _logger_provider.add_log_record_processor(BatchLogRecordProcessor(_otlp_exporter))
+
+        # Bridge: standard Python logging calls → OTel → Aspire Dashboard
+        logging.getLogger().addHandler(LoggingHandler(logger_provider=_logger_provider))
+
+        logger.info(
+            "OTLP exporter configured — telemetry forwarded to Aspire Dashboard",
+            extra={"otlp_endpoint": _OTLP_ENDPOINT},
+        )
+    except ImportError:
+        logger.warning(
+            "OTEL_EXPORTER_OTLP_ENDPOINT is set but opentelemetry-exporter-otlp "
+            "is not installed. Run: pip install opentelemetry-exporter-otlp"
+        )
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends, Request
 from fastapi.staticfiles import StaticFiles
@@ -149,7 +270,10 @@ async def _run_playground(
             raw = await asyncio.to_thread(execute_playground_query, sql)
         except FileNotFoundError:
             # playground.db hasn't been created yet — auto-reset from master.
-            print("[playground] playground.db missing — auto-initialising from chinook_master.db", flush=True)
+            logger.warning(
+                "playground.db missing — auto-initialising from chinook_master.db",
+                extra={"action": "auto_reset_playground"},
+            )
             await asyncio.to_thread(reset_playground)
             raw = await asyncio.to_thread(execute_playground_query, sql)
         results = _playground_rows_to_records(raw["columns"], raw["rows"])
@@ -166,10 +290,32 @@ async def lifespan(app: FastAPI):
     """
     STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Instrument FastAPI with OpenTelemetry so every HTTP request and
+    # WebSocket connection is automatically traced.  No-op when the
+    # package is absent (local dev without observability deps).
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("FastAPI OpenTelemetry instrumentation enabled")
+    except ImportError:
+        pass  # observability package not installed — skip silently
+
     app.state.store = CosmosConversationStore()
+    logger.info(
+        "DaiBai server started",
+        extra={
+            "store":    "CosmosConversationStore",
+            "log_file": str(_log_file_path),
+            "log_max_bytes": _LOG_MAX_BYTES,
+            "log_rotate": "midnight + 10 MB",
+            "log_retention_days": _LOG_BACKUP_COUNT,
+        },
+    )
     yield
     if hasattr(app.state, "store") and app.state.store:
         await app.state.store.close()
+    logger.info("DaiBai server shut down cleanly")
 
 
 app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=lifespan)
@@ -344,7 +490,10 @@ async def auth_onboard(
             user_record["onboarded_at"] = datetime.now().isoformat()
             await store.upsert_user(user_record)
     except Exception as e:
-        print(f"[onboard] Cosmos upsert skipped: {e}", flush=True)
+        logger.warning(
+            "Cosmos upsert skipped during onboarding",
+            extra={"error": str(e), "uid": fields.get("uid", "unknown")},
+        )
         user_record = fields
 
     return user_record
@@ -386,12 +535,22 @@ async def get_profile(
     return record
 
 
+_PLAYGROUND_RESET_TIMEOUT = 15.0  # seconds — file copy is sub-second; this is a safety net
+
 @app.post("/api/playground/reset")
 async def playground_reset(_user: Dict[str, Any] = Depends(get_current_user)):
     """Restore playground.db from the read-only chinook_master.db."""
     try:
-        path = await asyncio.to_thread(reset_playground)
+        path = await asyncio.wait_for(
+            asyncio.to_thread(reset_playground),
+            timeout=_PLAYGROUND_RESET_TIMEOUT,
+        )
         return {"status": "ok", "path": str(path)}
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="Reset timed out — file copy took too long.",
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -502,7 +661,14 @@ async def fetch_models(request: FetchModelsRequest, _user: Dict[str, Any] = Depe
     base_url = request.base_url if request.base_url else None
     _debug = os.environ.get("DAIBAI_DEBUG_MODELS", "").strip() in ("1", "true", "yes")
     if _debug:
-        print(f"[fetch-models] endpoint: provider={request.provider!r} api_key={'SET' if api_key else 'MISSING'} base_url={base_url!r}", flush=True)
+        logger.debug(
+            "fetch-models request",
+            extra={
+                "provider": request.provider,
+                "api_key_present": bool(api_key),
+                "base_url": base_url,
+            },
+        )
     try:
         result = await fetch_provider_models(
             provider=request.provider,
@@ -510,7 +676,13 @@ async def fetch_models(request: FetchModelsRequest, _user: Dict[str, Any] = Depe
             base_url=base_url,
         )
         if _debug:
-            print(f"[fetch-models] result: models={len(result.get('models', []))} error={result.get('error')!r}", flush=True)
+            logger.debug(
+                "fetch-models result",
+                extra={
+                    "model_count": len(result.get("models", [])),
+                    "error": result.get("error"),
+                },
+            )
         return _sanitize_result(result)
     except (UnicodeEncodeError, UnicodeDecodeError) as e:
         import traceback
@@ -629,7 +801,10 @@ async def query(
                 new_count = int(profile.get("playground_count", 0)) + 1
                 await store.patch_user(uid, {"playground_count": new_count})
             except Exception as exc:
-                print(f"[query] playground_count increment skipped: {exc}", flush=True)
+                logger.warning(
+                    "playground_count increment skipped",
+                    extra={"error": str(exc), "uid": uid},
+                )
 
         return QueryResponse(
             sql=sql,
@@ -859,107 +1034,169 @@ async def ws_schema_progress(websocket: WebSocket):
 # WebSocket for streaming responses
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat responses. Requires Firebase token in query param."""
-    token = websocket.query_params.get("token")
+    """WebSocket endpoint for streaming chat responses with detailed Azure telemetry."""
+    conn_start  = time.perf_counter()
+    token       = websocket.query_params.get("token")
+    client_host = websocket.client.host if websocket.client else "unknown"
+
+    # Shared context propagated into every log record from this connection.
+    # Each key becomes a searchable customDimension in Azure Monitor / KQL.
+    log_context: Dict[str, Any] = {
+        "client_ip": client_host,
+        "endpoint":  "/ws/chat",
+    }
+
+    # ── Authentication ────────────────────────────────────────────────────────
     if not token:
+        logger.warning("WebSocket connection rejected: missing token", extra=log_context)
         await websocket.close(code=4001)
         return
+
     try:
         ws_claims = auth.verify_firebase_token(token)
-    except HTTPException:
+    except HTTPException as exc:
+        logger.warning(
+            "WebSocket auth failed",
+            extra={**log_context, "auth_error": exc.detail},
+        )
         await websocket.close(code=4001)
         return
+
     await websocket.accept()
+
     ws_uid       = ws_claims.get("uid", "")
     ws_anonymous = _is_anonymous_user(ws_claims)
-    agent = get_agent()
-    store = websocket.app.state.store
+    agent        = get_agent()
+    store        = websocket.app.state.store
+
+    # Enrich context with identity fields; auth_provider surfaces in KQL instantly.
+    log_context.update({
+        "uid":           ws_uid,
+        "is_anonymous":  ws_anonymous,
+        "auth_provider": ws_claims.get("firebase", {}).get("sign_in_provider", "unknown"),
+    })
+    logger.info(
+        "WebSocket connection established",
+        extra={**log_context, "auth_latency_sec": round(time.perf_counter() - conn_start, 3)},
+    )
 
     try:
         while True:
+            # ── Receive message ───────────────────────────────────────────────
             data          = await websocket.receive_json()
+            req_start     = time.perf_counter()
             query         = data.get("query", "")
             conv_id       = data.get("conversation_id", str(uuid.uuid4()))
             execute       = data.get("execute", False)
             is_playground = data.get("is_playground", False)
 
+            req_context: Dict[str, Any] = {
+                **log_context,
+                "conversation_id":   conv_id,
+                "is_playground":     is_playground,
+                "execute_requested": execute,
+                "query_length":      len(query),
+            }
+            logger.info("Received chat query", extra=req_context)
+
             # ── Quota gate for anonymous playground users ──────────────────
             if is_playground and ws_anonymous:
                 try:
-                    profile = await store.get_user(oid=ws_uid) or {}
-                    if int(profile.get("playground_count", 0)) >= 20:
+                    profile     = await store.get_user(oid=ws_uid) or {}
+                    quota_count = int(profile.get("playground_count", 0))
+                    if quota_count >= 20:
+                        logger.warning(
+                            "Playground quota exceeded — request blocked",
+                            extra={**req_context, "playground_count": quota_count},
+                        )
                         await websocket.send_json({
-                            "type": "error",
-                            "content": "QUOTA_EXCEEDED",
+                            "type":            "error",
+                            "content":         "QUOTA_EXCEEDED",
                             "conversation_id": conv_id,
                         })
                         continue
-                except Exception:
-                    pass  # non-fatal
+                except Exception as qe:
+                    logger.error(
+                        f"Quota check failed: {qe}",
+                        extra=req_context,
+                        exc_info=True,
+                    )
 
             history = await store.get_history(conv_id)
+            req_context["history_length"] = len(history)
 
             user_msg = {
-                "role": "user",
-                "content": query,
+                "role":      "user",
+                "content":   query,
                 "timestamp": datetime.now().isoformat(),
             }
-
             await websocket.send_json({"type": "ack", "conversation_id": conv_id})
 
             try:
                 if is_playground:
                     # ── Playground path ──────────────────────────────────────
+                    llm_start               = time.perf_counter()
                     sql, results, row_count = await _run_playground(
                         agent, query, execute=execute, history=history
                     )
+                    req_context["llm_latency_sec"]      = round(time.perf_counter() - llm_start, 3)
+                    req_context["generated_sql_length"]  = len(sql) if sql else 0
+
                     await websocket.send_json({
-                        "type": "sql",
-                        "content": sql,
+                        "type":            "sql",
+                        "content":         sql,
                         "conversation_id": conv_id,
-                        "is_playground": True,
+                        "is_playground":   True,
                     })
                     if results is not None:
                         cols = list(results[0].keys()) if results else []
+                        req_context["result_row_count"] = row_count
                         await websocket.send_json({
-                            "type": "results",
-                            "content": results,
-                            "row_count": row_count,
-                            "columns": cols,
+                            "type":            "results",
+                            "content":         results,
+                            "row_count":       row_count,
+                            "columns":         cols,
                             "conversation_id": conv_id,
                         })
+
                 else:
                     # ── Production path ──────────────────────────────────────
-                    sql = await agent.generate_sql_async(query, "sql", history=history)
+                    llm_start = time.perf_counter()
+                    sql       = await agent.generate_sql_async(query, "sql", history=history)
+                    req_context["llm_latency_sec"]     = round(time.perf_counter() - llm_start, 3)
+                    req_context["generated_sql_length"] = len(sql) if sql else 0
+
                     await websocket.send_json({
-                        "type": "sql",
-                        "content": sql,
+                        "type":            "sql",
+                        "content":         sql,
                         "conversation_id": conv_id,
                     })
                     results   = None
                     row_count = None
                     if execute and sql:
-                        df = agent.run_sql(sql)
+                        exec_start = time.perf_counter()
+                        df         = agent.run_sql(sql)
+                        req_context["exec_latency_sec"] = round(time.perf_counter() - exec_start, 3)
                         if df is not None:
                             results   = _dataframe_to_json_safe(df)
                             row_count = len(df)
+                            req_context["result_row_count"] = row_count
                             await websocket.send_json({
-                                "type": "results",
-                                "content": results,
-                                "row_count": row_count,
-                                "columns": list(df.columns),
+                                "type":            "results",
+                                "content":         results,
+                                "row_count":       row_count,
+                                "columns":         list(df.columns),
                                 "conversation_id": conv_id,
                             })
 
                 assistant_msg = {
-                    "role": "assistant",
-                    "content": sql or "Could not generate SQL",
-                    "sql": sql,
-                    "results": results,
+                    "role":      "assistant",
+                    "content":   sql or "Could not generate SQL",
+                    "sql":       sql,
+                    "results":   results,
                     "timestamp": datetime.now().isoformat(),
                 }
-                updated = history + [user_msg, assistant_msg]
-                await store.upsert_history(conv_id, updated)
+                await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
 
                 # Increment quota counter after a successful playground response.
                 if is_playground and ws_uid:
@@ -967,23 +1204,45 @@ async def websocket_chat(websocket: WebSocket):
                         profile   = await store.get_user(oid=ws_uid) or {}
                         new_count = int(profile.get("playground_count", 0)) + 1
                         await store.patch_user(ws_uid, {"playground_count": new_count})
-                    except Exception:
-                        pass   # non-fatal
+                    except Exception as exc:
+                        logger.error(
+                            f"Failed to increment playground count: {exc}",
+                            extra=req_context,
+                        )
 
+                req_context["total_latency_sec"] = round(time.perf_counter() - req_start, 3)
+                logger.info("Chat query processed successfully", extra=req_context)
                 await websocket.send_json({"type": "done", "conversation_id": conv_id})
 
-            except Exception as e:
-                err_msg = str(e)
-                updated = history + [{"role": "assistant", "content": err_msg, "timestamp": datetime.now().isoformat()}]
-                await store.upsert_history(conv_id, updated)
+            except Exception as exc:
+                req_context["total_latency_sec"] = round(time.perf_counter() - req_start, 3)
+                logger.error(
+                    f"Error processing query: {exc}",
+                    extra=req_context,
+                    exc_info=True,   # full traceback forwarded to Application Insights
+                )
+                err_msg = str(exc)
+                await store.upsert_history(conv_id, history + [{
+                    "role":      "assistant",
+                    "content":   err_msg,
+                    "timestamp": datetime.now().isoformat(),
+                }])
                 await websocket.send_json({
-                    "type": "error",
-                    "content": err_msg,
+                    "type":            "error",
+                    "content":         err_msg,
                     "conversation_id": conv_id,
                 })
 
     except WebSocketDisconnect:
-        pass
+        log_context["session_duration_sec"] = round(time.perf_counter() - conn_start, 3)
+        logger.info("WebSocket client disconnected normally", extra=log_context)
+    except Exception as exc:
+        log_context["session_duration_sec"] = round(time.perf_counter() - conn_start, 3)
+        logger.error(
+            f"Unexpected WebSocket error: {exc}",
+            extra=log_context,
+            exc_info=True,
+        )
 
 
 # Serve static files and index

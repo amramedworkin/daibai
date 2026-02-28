@@ -94,7 +94,7 @@ show_main_menu() {
     print_submenu_option "6" "Redis Management" \
         "monitor, stats, Redis Insight setup"
     print_submenu_option "7" "Monitoring" \
-        "Redis connection info for Redis Insight"
+        "view logs, tail, search, errors, cleanup"
     print_submenu_option "8" "Firebase User Management" \
         "create, list, update, delete, claims, links, revoke"
     echo ""
@@ -719,11 +719,21 @@ handle_redis_menu() {
 # =============================================================================
 
 show_monitoring_menu() {
-    show_header "Monitoring"
-    echo -e "  ${DIM}Redis Insight and connection info${NC}"
+    local log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/daibai/logs"
+    show_header "Monitoring — Logs & Aspire Dashboard"
+    echo -e "  ${DIM}$log_dir/daibai.log${NC}"
+    echo -e "  ${DIM}10 MB max per file  |  midnight rollover  |  7 days retained${NC}"
     echo ""
-    print_action_option "1" "Show Redis Connection Info ${YELLOW}${DIM}(cache-info cheat sheet)${NC}"
-    print_action_option "2" "Test Redis Connection ${YELLOW}${DIM}(verify host, port, credentials)${NC}"
+    print_action_option "1" "Log File Info ${YELLOW}${DIM}(location, size, modified, rotated files)${NC}"
+    print_action_option "2" "Live Tail ${YELLOW}${DIM}(follow current log — Ctrl+C to stop)${NC}"
+    print_action_option "3" "View Log ${YELLOW}${DIM}(page with less, starts at end — q to quit)${NC}"
+    print_action_option "4" "Errors & Warnings ${YELLOW}${DIM}(filter [ERROR] and [WARNING] lines)${NC}"
+    print_action_option "5" "Today's Entries ${YELLOW}${DIM}(filter by today's date)${NC}"
+    print_action_option "6" "Search Log ${YELLOW}${DIM}(grep for a pattern)${NC}"
+    print_action_option "7" "Clean Rotated Files ${YELLOW}${DIM}(remove daibai.log.* backups)${NC}"
+    print_action_option "8" "${RED}Purge All Logs${NC} ${DIM}(delete every log file — irreversible)${NC}"
+    print_action_option "9" "Start Aspire Dashboard ${YELLOW}${DIM}(OTel, background — http://localhost:18888)${NC}"
+    print_action_option "10" "Stop Aspire Dashboard ${YELLOW}${DIM}(kill Docker container)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -737,15 +747,60 @@ handle_monitoring_menu() {
         case $choice in
             1)
                 clear
-                "$SCRIPT_DIR/cli.sh" cache-info
-                echo ""
+                "$SCRIPT_DIR/cli.sh" logs-info
                 echo "Press Enter to continue..."
                 read -r
                 ;;
             2)
                 clear
-                "$SCRIPT_DIR/cli.sh" cache-test
+                "$SCRIPT_DIR/cli.sh" logs-tail
                 echo ""
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            3)
+                # logs-view opens $PAGER directly; no pause needed
+                "$SCRIPT_DIR/cli.sh" logs-view
+                ;;
+            4)
+                clear
+                "$SCRIPT_DIR/cli.sh" logs-errors
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            5)
+                # logs-today opens $PAGER; no extra pause
+                "$SCRIPT_DIR/cli.sh" logs-today
+                ;;
+            6)
+                clear
+                echo -n "  Search pattern: "
+                read -r pattern
+                if [[ -n "$pattern" ]]; then
+                    "$SCRIPT_DIR/cli.sh" logs-search "$pattern"
+                fi
+                ;;
+            7)
+                clear
+                "$SCRIPT_DIR/cli.sh" logs-clean
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            8)
+                clear
+                "$SCRIPT_DIR/cli.sh" logs-purge
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            9)
+                clear
+                "$SCRIPT_DIR/cli.sh" dashboard
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            10)
+                clear
+                "$SCRIPT_DIR/cli.sh" dashboard-stop
                 echo "Press Enter to continue..."
                 read -r
                 ;;

@@ -281,6 +281,9 @@ async function checkPlaygroundQuota() {
     }
 }
 
+/** Timeout (ms) for playground reset — avoids indefinite hang if server is slow. */
+const PLAYGROUND_RESET_TIMEOUT_MS = 30000;
+
 /** Confirm handler — call POST /api/playground/reset with progress modal feedback. */
 async function executePlaygroundReset() {
     const confirmBtn = document.getElementById('sandboxConfirmBtn');
@@ -299,8 +302,15 @@ async function executePlaygroundReset() {
         app?._updateIndexingProgress?.(fakePct, 'Restoring database file…', null);
     }, 120);
 
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), PLAYGROUND_RESET_TIMEOUT_MS);
+
     try {
-        const res = await apiFetch('/api/playground/reset', { method: 'POST' });
+        const res = await apiFetch('/api/playground/reset', {
+            method:  'POST',
+            signal:  controller.signal,
+        });
+        clearTimeout(timeoutId);
         clearInterval(fakeTimer);
 
         if (res.ok) {
@@ -318,9 +328,13 @@ async function executePlaygroundReset() {
             console.error('[Playground] reset failed:', err);
         }
     } catch (e) {
+        clearTimeout(timeoutId);
         clearInterval(fakeTimer);
         app?._hideIndexingModal?.();
-        showSandboxStatusToast('error', `Reset error: ${e.message}`);
+        const msg = e.name === 'AbortError'
+            ? 'Reset timed out — server may be slow or unavailable. Try again.'
+            : `Reset error: ${e.message}`;
+        showSandboxStatusToast('error', msg);
         console.error('[Playground] reset error:', e);
     } finally {
         if (confirmBtn) {

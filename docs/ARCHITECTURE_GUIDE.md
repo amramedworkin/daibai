@@ -217,3 +217,52 @@ graph TB
 ## Readiness for Containerization
 
 All logical components, environment variables, and data flows are documented. The next step is to create the multi-stage Dockerfile and `docker-compose.yml` to bundle the Local Execution Environment into an immutable artifact, ready for Azure Container Apps migration.
+
+
+```mermaid
+graph TB
+    subgraph "Public Internet & Global Infrastructure"
+        direction TB
+        subgraph Azure_DNS ["Azure DNS Layer (daibaichat.com)"]
+            style Azure_DNS fill:#0078d4,stroke:#fff,color:#fff
+            SPF["TXT @ (SPF Record)"]
+            DKIM["CNAME (DKIM Records)"]
+            Ownership["TXT @ (Verification)"]
+        end
+
+        subgraph Firebase_Auth ["Firebase Backend (Auth & Email)"]
+            style Firebase_Auth fill:#f57c00,stroke:#fff,color:#fff
+            EmailSrv["Email Delivery Engine"]
+            SMTP["Custom SMTP Relay"]
+            AuthStore["User Auth Records"]
+        end
+    end
+
+    subgraph "Local Environment (Ubuntu 24.03)"
+        direction LR
+        subgraph Scripting_Layer ["Automation Layer"]
+            style Scripting_Layer fill:#2e7d32,stroke:#fff,color:#fff
+            BashCLI["cli.sh (Bash Interface)"]
+            PyScript["Python Logic (Requests/CDP)"]
+        end
+
+        subgraph Browser_Layer ["Browser Controller"]
+            style Browser_Layer fill:#1565c0,stroke:#fff,color:#fff
+            Chrome["Chrome Instance (--remote-debugging-port)"]
+            CDP["CDP Protocol (Port 9222)"]
+        end
+    end
+
+    %% Connections
+    BashCLI -->|Executes| PyScript
+    PyScript -->|HTTP GET/JSON| CDP
+    CDP -->|Controls Tabs| Chrome
+    
+    EmailSrv -->|Checks Trust| SPF
+    EmailSrv -->|Checks Trust| DKIM
+    Ownership -.->|One-time Handshake| AuthStore
+    
+    Chrome -->|User Action| AuthStore
+    AuthStore -->|Triggers| EmailSrv
+    EmailSrv -->|Inbound Email| UserInbox["User's Personal Email"]
+```

@@ -161,6 +161,9 @@ Commands (mirrors menu.sh):
     setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
 
   SUPPORT & UTILITIES (menu 4)
+    dashboard               Start Aspire Dashboard in background (Docker)
+                            Web UI: http://localhost:18888 | OTLP gRPC: localhost:4317
+    dashboard-stop          Stop the Aspire Dashboard container
     is-ready [--strict]      Check env components (Redis, Cosmos, DB, LLM). --strict = require all
     config-path             Show config file locations (● found ○ not found)
     config-edit             Edit daibai.yaml
@@ -183,6 +186,20 @@ Commands (mirrors menu.sh):
     test coverage          Run with coverage report
     test full              Run full suite including cloud (REDIS_URL, COSMOS_ENDPOINT for live tests)
     test-guardrails        Run SQL guardrail tests (30 mock + 8 live; live use daibai config or MYSQL_*)
+
+  LOGGING (menu 7)
+    logs-info               Log file location, size, last modified, rotated backups
+    logs-tail               Live tail of the active log (tail -f, Ctrl+C to stop)
+    logs-view               Page through the active log with less (starts at end)
+    logs-errors             Show only [ERROR] and [WARNING] lines (last 200)
+    logs-today              Filter entries from today's date
+    logs-search <pattern>   Grep the active log for a pattern (paged output)
+    logs-clean              Remove rotated backup files (daibai.log.*), keep active
+    logs-purge              Delete ALL log files including the active log
+
+    Log location: \$XDG_STATE_HOME/daibai/logs/daibai.log
+                  (default: ~/.local/state/daibai/logs/daibai.log)
+    Rotation    : 10 MB max per file | midnight rollover | 7 days retained
 
   META
     status                  Alias for chat-status
@@ -222,6 +239,14 @@ Examples:
     $(basename "$0") test gemini --live
     $(basename "$0") test coverage
     $(basename "$0") test-guardrails
+    $(basename "$0") logs-info
+    $(basename "$0") logs-tail
+    $(basename "$0") logs-errors
+    $(basename "$0") logs-today
+    $(basename "$0") logs-search "QUOTA_EXCEEDED"
+    $(basename "$0") logs-search "uid=abc123"
+    $(basename "$0") logs-clean
+    $(basename "$0") logs-purge
 
 EOF
 }
@@ -365,6 +390,72 @@ cmd_index() {
 # ============================================================================
 # SUPPORT & UTILITIES
 # ============================================================================
+
+_ASPIRE_CONTAINER_NAME="daibai-aspire-dashboard"
+
+cmd_dashboard() {
+    if ! command -v docker &>/dev/null; then
+        print_error "Docker is required to run the Aspire Dashboard."
+        echo "  Install Docker: https://docs.docker.com/get-docker/"
+        exit 1
+    fi
+
+    # Already running?
+    if docker ps -q -f "name=^${_ASPIRE_CONTAINER_NAME}$" 2>/dev/null | grep -q .; then
+        print_header "Aspire Dashboard — Already Running"
+        echo -e "  ${GREEN}Web UI:${NC}    http://localhost:18888"
+        echo -e "  ${GREEN}OTLP Port:${NC} localhost:4317"
+        echo ""
+        echo "  Run: $(basename "$0") dashboard-stop  to stop it."
+        echo ""
+        return 0
+    fi
+
+    print_header "Starting Aspire Dashboard (Background)"
+    echo -e "  ${GREEN}Web UI:${NC}    http://localhost:18888"
+    echo -e "  ${GREEN}OTLP Port:${NC} localhost:4317  (set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 in .env)"
+    echo -e "  ${DIM}Stop: $(basename "$0") dashboard-stop${NC}"
+    echo ""
+
+    # DataProtection keys: Aspire runs as app (UID 1654). Create host dir and chown
+    # so the container can write; bind mount is more reliable than a named volume.
+    local keydir="$HOME/.daibai/aspire-keys"
+    mkdir -p "$keydir"
+    docker run --rm -v "$keydir:/keys" alpine chown -R 1654:1654 /keys 2>/dev/null || true
+
+    docker run -d --rm --name "$_ASPIRE_CONTAINER_NAME" \
+        -p 18888:18888 \
+        -p 4317:18889 \
+        -p 18890:18890 \
+        -v "$keydir:/home/app/.aspnet/DataProtection-Keys" \
+        -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true \
+        -e Logging__LogLevel__Microsoft.AspNetCore.DataProtection=Error \
+        -e Logging__LogLevel__Microsoft.AspNetCore.DataProtection.KeyManagement=Error \
+        -e Logging__LogLevel__Microsoft.Extensions.DependencyInjection=Error \
+        mcr.microsoft.com/dotnet/aspire-dashboard:latest
+
+    if [[ $? -eq 0 ]]; then
+        echo ""
+        print_success "Dashboard started. Open http://localhost:18888"
+    else
+        print_error "Failed to start dashboard."
+        exit 1
+    fi
+}
+
+cmd_dashboard_stop() {
+    if ! command -v docker &>/dev/null; then
+        print_error "Docker is required."
+        exit 1
+    fi
+    print_header "Stopping Aspire Dashboard"
+    if docker ps -q -f "name=^${_ASPIRE_CONTAINER_NAME}$" 2>/dev/null | grep -q .; then
+        docker stop "$_ASPIRE_CONTAINER_NAME" 2>/dev/null && print_success "Dashboard stopped." || print_error "Failed to stop."
+    else
+        echo "  Dashboard is not running."
+    fi
+    echo ""
+}
 
 cmd_is_ready() {
     load_env
@@ -1097,6 +1188,225 @@ cmd_test() {
 }
 
 # ============================================================================
+# LOG COMMANDS
+# ============================================================================
+# Log location follows XDG Base Directory spec (same path as server.py).
+# $XDG_STATE_HOME defaults to ~/.local/state when unset.
+
+_log_dir() {
+    local xdg="${XDG_STATE_HOME:-$HOME/.local/state}"
+    echo "$xdg/daibai/logs"
+}
+
+_log_file() {
+    echo "$(_log_dir)/daibai.log"
+}
+
+cmd_logs_info() {
+    local log_dir log_file
+    log_dir="$(_log_dir)"
+    log_file="$(_log_file)"
+
+    print_header "DaiBai Log Files"
+    echo ""
+    echo "  Directory : $log_dir"
+    echo "  Rotation  : 10 MB max per file | midnight rollover | 7 days retained"
+    echo ""
+
+    if [[ ! -d "$log_dir" ]]; then
+        echo "  (log directory does not exist yet — server has not run)"
+        echo ""
+        return 0
+    fi
+
+    # Active log file
+    if [[ -f "$log_file" ]]; then
+        local size lines modified
+        size=$(du -sh "$log_file" 2>/dev/null | cut -f1)
+        lines=$(wc -l < "$log_file" 2>/dev/null || echo "?")
+        modified=$(stat -c "%y" "$log_file" 2>/dev/null | cut -d'.' -f1 \
+                || stat -f "%Sm" "$log_file" 2>/dev/null)
+        echo -e "  ${GREEN}●${NC} daibai.log"
+        printf "      %-12s %s\n" "Size:"     "$size"
+        printf "      %-12s %s\n" "Lines:"    "$lines"
+        printf "      %-12s %s\n" "Modified:" "$modified"
+        printf "      %-12s %s\n" "Path:"     "$log_file"
+    else
+        echo -e "  ${DIM}○ daibai.log (not yet created)${NC}"
+    fi
+
+    # Rotated backups
+    echo ""
+    echo "  Rotated backups:"
+    local found_any=false
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        found_any=true
+        local sz mod
+        sz=$(du -sh "$f" 2>/dev/null | cut -f1)
+        mod=$(stat -c "%y" "$f" 2>/dev/null | cut -d'.' -f1 \
+           || stat -f "%Sm" "$f" 2>/dev/null)
+        printf "    %-30s  [%s]  %s\n" "$(basename "$f")" "$sz" "$mod"
+    done < <(ls -t "$log_dir"/daibai.log.* 2>/dev/null)
+    $found_any || echo "    (none)"
+
+    echo ""
+    echo "  Total directory size: $(du -sh "$log_dir" 2>/dev/null | cut -f1)"
+    echo ""
+}
+
+cmd_logs_tail() {
+    local log_file
+    log_file="$(_log_file)"
+    if [[ ! -f "$log_file" ]]; then
+        print_error "Log file not found: $log_file"
+        echo "  Start the server first: ./scripts/cli.sh chat-start"
+        exit 1
+    fi
+    print_header "Live Log Tail — Ctrl+C to stop"
+    echo "  $log_file"
+    echo ""
+    tail -f "$log_file"
+}
+
+cmd_logs_view() {
+    local log_file
+    log_file="$(_log_file)"
+    if [[ ! -f "$log_file" ]]; then
+        print_error "Log file not found: $log_file"
+        echo "  Start the server first: ./scripts/cli.sh chat-start"
+        exit 1
+    fi
+    # +G = start at end; press g to go to top inside less
+    "${PAGER:-less}" +G "$log_file"
+}
+
+cmd_logs_errors() {
+    local log_file
+    log_file="$(_log_file)"
+    print_header "Errors and Warnings"
+    if [[ ! -f "$log_file" ]]; then
+        echo "  (log file not found — server has not run yet)"
+        return 0
+    fi
+    local count
+    count=$(grep -cE '\[(ERROR|WARNING)\]' "$log_file" 2>/dev/null || echo "0")
+    echo "  File  : $log_file"
+    echo "  Found : $count error/warning line(s)"
+    echo ""
+    grep -nE '\[(ERROR|WARNING)\]' "$log_file" 2>/dev/null | tail -200 \
+        || echo "  (none)"
+    echo ""
+}
+
+cmd_logs_today() {
+    local log_file
+    log_file="$(_log_file)"
+    print_header "Today's Log Entries"
+    if [[ ! -f "$log_file" ]]; then
+        echo "  (log file not found)"
+        return 0
+    fi
+    local today count
+    today=$(date '+%Y-%m-%d')
+    count=$(grep -c "^$today" "$log_file" 2>/dev/null || echo "0")
+    echo "  Date  : $today"
+    echo "  Lines : $count"
+    echo ""
+    grep "^$today" "$log_file" 2>/dev/null | "${PAGER:-less}" || true
+}
+
+cmd_logs_search() {
+    local pattern="${1:-}"
+    local log_file
+    log_file="$(_log_file)"
+    if [[ -z "$pattern" ]]; then
+        print_error "Usage: $(basename "$0") logs-search <pattern>"
+        exit 1
+    fi
+    if [[ ! -f "$log_file" ]]; then
+        print_error "Log file not found: $log_file"
+        exit 1
+    fi
+    print_header "Log Search: $pattern"
+    echo "  File: $log_file"
+    echo ""
+    local count
+    count=$(grep -c "$pattern" "$log_file" 2>/dev/null || echo "0")
+    echo "  Matches: $count"
+    echo ""
+    grep -n --color=auto "$pattern" "$log_file" 2>/dev/null | "${PAGER:-less}" -R \
+        || echo "  (no matches)"
+    echo ""
+}
+
+cmd_logs_clean() {
+    local log_dir
+    log_dir="$(_log_dir)"
+    print_header "Clean Rotated Log Files"
+
+    if [[ ! -d "$log_dir" ]]; then
+        echo "  Log directory does not exist: $log_dir"
+        return 0
+    fi
+
+    local files=()
+    while IFS= read -r f; do
+        [[ -n "$f" ]] && files+=("$f")
+    done < <(ls "$log_dir"/daibai.log.* 2>/dev/null)
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "  No rotated backup files to clean."
+        return 0
+    fi
+
+    local total_removed_size=0
+    echo "  Files to remove:"
+    for f in "${files[@]}"; do
+        local sz
+        sz=$(du -sh "$f" 2>/dev/null | cut -f1)
+        printf "    %-30s  [%s]\n" "$(basename "$f")" "$sz"
+    done
+    echo ""
+    echo -n "  Remove ${#files[@]} file(s)? [y/N] "
+    read -r confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        rm -f "$log_dir"/daibai.log.*
+        print_success "Rotated log files removed."
+    else
+        echo "  Cancelled."
+    fi
+    echo ""
+}
+
+cmd_logs_purge() {
+    local log_dir
+    log_dir="$(_log_dir)"
+    print_header "Purge ALL Log Files"
+
+    if [[ ! -d "$log_dir" ]]; then
+        echo "  Log directory does not exist: $log_dir"
+        return 0
+    fi
+
+    local total_size
+    total_size=$(du -sh "$log_dir" 2>/dev/null | cut -f1)
+    echo -e "  ${RED}This will delete ALL log files, including the active log.${NC}"
+    echo "  Directory : $log_dir"
+    echo "  Total size: $total_size"
+    echo ""
+    echo -n "  Type 'purge' to confirm, or Enter to cancel: "
+    read -r confirm
+    if [[ "$confirm" == "purge" ]]; then
+        rm -f "$log_dir"/daibai.log "$log_dir"/daibai.log.*
+        print_success "All log files removed."
+    else
+        echo "  Cancelled."
+    fi
+    echo ""
+}
+
+# ============================================================================
 # MAIN DISPATCHER
 # ============================================================================
 
@@ -1198,6 +1508,12 @@ main() {
         setup|install)
             cmd_setup
             ;;
+        dashboard)
+            cmd_dashboard
+            ;;
+        dashboard-stop)
+            cmd_dashboard_stop
+            ;;
         is-ready)
             cmd_is_ready "$@"
             ;;
@@ -1230,6 +1546,30 @@ main() {
             ;;
         status)
             cmd_chat_status "$@"
+            ;;
+        logs-info)
+            cmd_logs_info
+            ;;
+        logs-tail)
+            cmd_logs_tail
+            ;;
+        logs-view)
+            cmd_logs_view
+            ;;
+        logs-errors)
+            cmd_logs_errors
+            ;;
+        logs-today)
+            cmd_logs_today
+            ;;
+        logs-search)
+            cmd_logs_search "$@"
+            ;;
+        logs-clean)
+            cmd_logs_clean
+            ;;
+        logs-purge)
+            cmd_logs_purge
             ;;
         help|--help|-h|"")
             show_help
