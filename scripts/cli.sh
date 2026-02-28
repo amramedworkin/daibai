@@ -196,6 +196,7 @@ Commands (mirrors menu.sh):
     logs-search <pattern>   Grep the active log for a pattern (paged output)
     logs-clean              Remove rotated backup files (daibai.log.*), keep active
     logs-purge              Delete ALL log files including the active log
+    logs-rotate             Archive current log (gzip), truncate to start fresh
 
     Log location: \$XDG_STATE_HOME/daibai/logs/daibai.log
                   (default: ~/.local/state/daibai/logs/daibai.log)
@@ -247,6 +248,7 @@ Examples:
     $(basename "$0") logs-search "uid=abc123"
     $(basename "$0") logs-clean
     $(basename "$0") logs-purge
+    $(basename "$0") logs-rotate
 
 EOF
 }
@@ -1406,6 +1408,42 @@ cmd_logs_purge() {
     echo ""
 }
 
+cmd_logs_rotate() {
+    local log_dir log_file archive_ts archive_path
+    log_dir="$(_log_dir)"
+    log_file="$(_log_file)"
+
+    print_header "Rotate Log — Archive Current, Start Fresh"
+
+    if [[ ! -f "$log_file" ]]; then
+        echo "  Log file does not exist yet: $log_file"
+        echo "  Start the server to create it."
+        return 0
+    fi
+
+    archive_ts=$(date +%Y%m%d-%H%M%S)
+    archive_path="$log_dir/daibai-archive-$archive_ts.log"
+
+    echo "  Current log : $log_file"
+    echo "  Archive     : $archive_path.gz"
+    echo ""
+
+    cp "$log_file" "$archive_path" || { print_error "Failed to copy log"; exit 1; }
+    gzip -f "$archive_path" || { print_error "Failed to gzip archive"; exit 1; }
+    if truncate -s 0 "$log_file" 2>/dev/null; then
+        :
+    elif printf '' > "$log_file" 2>/dev/null; then
+        :
+    else
+        print_error "Could not clear active log — check permissions. Archive was created."
+    fi
+
+    local archived_sz
+    archived_sz=$(du -sh "${archive_path}.gz" 2>/dev/null | cut -f1)
+    print_success "Log archived to ${archive_path}.gz [${archived_sz}]. Active log cleared."
+    echo ""
+}
+
 # ============================================================================
 # MAIN DISPATCHER
 # ============================================================================
@@ -1570,6 +1608,9 @@ main() {
             ;;
         logs-purge)
             cmd_logs_purge
+            ;;
+        logs-rotate)
+            cmd_logs_rotate
             ;;
         help|--help|-h|"")
             show_help

@@ -43,7 +43,7 @@ try:
     if os.environ.get("ALLOW_KEYVAULT", "0") != "1":
         import daibai.core.config as _cfg
 
-        def _no_kv(vault_url: str):
+        def _no_kv(vault_url: str, secret_names=None, **kwargs):
             return {}
 
         _cfg._fetch_secrets_from_keyvault = _no_kv

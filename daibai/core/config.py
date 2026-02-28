@@ -9,6 +9,7 @@ Loads configuration from:
 Supports ${VAR} placeholder resolution from environment.
 """
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -108,24 +109,41 @@ _KEYVAULT_LLM_MAPPING = {
 }
 
 
-def _fetch_secrets_from_keyvault(vault_url: str) -> Dict[str, str]:
-    """Fetch secrets from Azure Key Vault. Returns dict of secret_name -> value."""
+def _fetch_secrets_from_keyvault(vault_url: str, secret_names: Optional[List[str]] = None) -> Dict[str, str]:
+    """
+    Fetch specified secrets from Azure Key Vault.
+    Only requests secrets in secret_names (avoids 404s for keys you don't use).
+    """
+    logger = logging.getLogger(__name__)
+    names = secret_names or []
+    if not names:
+        return {}
     try:
         from azure.identity import DefaultAzureCredential
         from azure.keyvault.secrets import SecretClient
+        from azure.core.exceptions import ResourceNotFoundError
 
         credential = DefaultAzureCredential()
         client = SecretClient(vault_url=vault_url, credential=credential)
         result = {}
-        for secret_name in _KEYVAULT_LLM_MAPPING:
+        not_found: List[str] = []
+        for secret_name in names:
             try:
                 secret = client.get_secret(secret_name)
                 if secret and secret.value:
                     result[secret_name] = secret.value
-            except Exception:
-                pass
+            except ResourceNotFoundError:
+                not_found.append(secret_name)
+            except Exception as e:
+                logger.debug("Key Vault %s: %s — %s", secret_name, type(e).__name__, e)
+        if not_found:
+            logger.info(
+                "Key Vault: %s not found (404) — create it or use .env",
+                ", ".join(not_found),
+            )
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("Key Vault fetch failed: %s — %s", type(e).__name__, e)
         return {}
 
 
@@ -290,13 +308,41 @@ def _parse_llm_config(name: str, data: Dict[str, Any]) -> LLMProviderConfig:
     )
 
 
+def _needed_keyvault_secrets(yaml_path: Optional[Path]) -> List[str]:
+    """
+    Determine which Key Vault secrets to fetch based on configured LLM providers.
+    Only fetches keys for provider types that appear in daibai.yaml.
+    """
+    if not yaml_path or not yaml_path.exists():
+        return []
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        providers = raw.get("llm", {}).get("providers", {})
+        if not isinstance(providers, dict):
+            return []
+        # provider_type from each provider (e.g. "gemini", "openai")
+        types_needed = set()
+        for p in providers.values():
+            if isinstance(p, dict) and p.get("type"):
+                types_needed.add(str(p["type"]).lower())
+        # Map provider_type -> Key Vault secret name; fetch only those we need
+        return [
+            kv_name
+            for kv_name, ptype in _KEYVAULT_LLM_MAPPING.items()
+            if ptype.lower() in types_needed
+        ]
+    except Exception:
+        return []
+
+
 def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = None) -> Config:
     """
     Load configuration from YAML, environment, and optionally Azure Key Vault.
     
-    When KEY_VAULT_URL is set, fetches LLM API keys (OPENAI-API-KEY, GEMINI-API-KEY, etc.)
-    from Azure Key Vault and maps them to provider configs. Falls back to .env/YAML if
-    Key Vault is unavailable.
+    When KEY_VAULT_URL is set, fetches only the LLM API keys required by providers
+    defined in daibai.yaml (e.g. GEMINI-API-KEY if a gemini provider is configured).
+    Does not fetch keys for providers you don't use.
     
     Args:
         config_path: Path to daibai.yaml (auto-detected if not provided)
@@ -323,12 +369,16 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
                 load_dotenv(loc)
                 break
 
-    # Fetch secrets from Azure Key Vault if configured
+    # Find YAML path before Key Vault fetch so we know which secrets we need
+    yaml_path = config_path or _find_config_file()
+
+    # Fetch only the secrets required by configured providers (avoids 404s for unused keys)
     keyvault_secrets: Dict[str, str] = {}
     vault_url = os.environ.get("KEY_VAULT_URL", "").strip()
     if vault_url:
-        keyvault_secrets = _fetch_secrets_from_keyvault(vault_url)
-        # Inject into env for ${VAR} resolution (e.g. OPENAI_API_KEY from OPENAI-API-KEY)
+        secret_names = _needed_keyvault_secrets(yaml_path)
+        keyvault_secrets = _fetch_secrets_from_keyvault(vault_url, secret_names=secret_names)
+        # Inject into env for ${VAR} resolution
         env_mapping = {
             "OPENAI-API-KEY": "OPENAI_API_KEY",
             "GEMINI-API-KEY": "GEMINI_API_KEY",
@@ -344,9 +394,6 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
         for kv_name, env_name in env_mapping.items():
             if kv_name in keyvault_secrets and not os.environ.get(env_name):
                 os.environ[env_name] = keyvault_secrets[kv_name]
-    
-    # Find and load YAML config
-    yaml_path = config_path or _find_config_file()
     
     if not yaml_path or not yaml_path.exists():
         # Return empty config if no file found

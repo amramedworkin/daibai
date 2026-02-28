@@ -76,6 +76,11 @@ def _setup_file_logging() -> Path:
 # stdout handler for local development
 logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
 
+# Suppress Azure SDK HTTP logging — 404s on missing Key Vault secrets are expected.
+# Config tries all 10 LLM secret names (OPENAI-API-KEY, GEMINI-API-KEY, etc.); only
+# the ones you've stored exist; the rest return 404 and are silently skipped.
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+
 # rolling file handler (XDG path, size + time rotation)
 _log_file_path = _setup_file_logging()
 

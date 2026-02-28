@@ -734,6 +734,7 @@ show_monitoring_menu() {
     print_action_option "8" "${RED}Purge All Logs${NC} ${DIM}(delete every log file — irreversible)${NC}"
     print_action_option "9" "Start Aspire Dashboard ${YELLOW}${DIM}(OTel, background — http://localhost:18888)${NC}"
     print_action_option "10" "Stop Aspire Dashboard ${YELLOW}${DIM}(kill Docker container)${NC}"
+    print_action_option "11" "Rotate Log ${YELLOW}${DIM}(gzip current, start fresh)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -801,6 +802,12 @@ handle_monitoring_menu() {
             10)
                 clear
                 "$SCRIPT_DIR/cli.sh" dashboard-stop
+                echo "Press Enter to continue..."
+                read -r
+                ;;
+            11)
+                clear
+                "$SCRIPT_DIR/cli.sh" logs-rotate
                 echo "Press Enter to continue..."
                 read -r
                 ;;
