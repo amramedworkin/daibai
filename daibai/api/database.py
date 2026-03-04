@@ -71,6 +71,8 @@ class CosmosStore:
 
     async def get_chat_history(self, session_id: str) -> list:
         """Fetch the document where id == session_id. Return messages list or [] if not found."""
+        if not session_id:
+            return []
         with tag_aiohttp_session(self._tag):
             client = await self._ensure_client()
             database = client.get_database_client(self._database_name)

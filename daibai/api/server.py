@@ -293,7 +293,19 @@ class COOPMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log incoming chat requests for visibility when debugging hangs."""
+    async def dispatch(self, request, call_next):
+        if request.url.path == "/api/query":
+            logger.info("[request] POST /api/query received")
+        elif request.url.path.startswith("/ws/"):
+            logger.info("[request] WebSocket upgrade %s", request.url.path)
+        response = await call_next(request)
+        return response
+
+
 app.add_middleware(COOPMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 # Global state
 _agent: Optional[DaiBaiAgent] = None
@@ -949,9 +961,23 @@ async def query(
     store: CosmosConversationStore = Depends(get_store),
 ):
     """Process a natural language query (production DB or Chinook playground)."""
-    agent   = get_agent()
     conv_id = request.conversation_id or str(uuid.uuid4())
     uid     = _user.get("uid", "")
+    logger.info(
+        "[request] REST /api/query | query=%r conv_id=%s uid=%s is_playground=%s",
+        (request.query[:80] + "…") if len(request.query) > 80 else request.query,
+        conv_id[:8] + "…" if len(conv_id) > 8 else conv_id,
+        uid[:8] + "…" if uid else "(anon)",
+        request.is_playground,
+    )
+
+    from daibai.core.instrumentation import init_tracker, track_start, track_underway, track_passed, track_failed
+
+    init_tracker("Chat request")
+    track_start("Chat request", f"query={request.query[:50]}…" if len(request.query) > 50 else f"query={request.query}")
+
+    agent = get_agent()
+    track_underway("Chat request", "get_agent done, loading history")
 
     # Sync agent to client's selected database when provided
     if request.database and request.database in (agent.config.list_databases() or []):
@@ -969,6 +995,7 @@ async def query(
             pass  # non-fatal — allow request if Cosmos is unreachable
 
     history = await store.get_history(conv_id)
+    track_underway("Chat request", f"history loaded ({len(history)} msgs)")
 
     user_msg = {
         "role": "user",
@@ -1003,6 +1030,7 @@ async def query(
                     "timestamp": datetime.now().isoformat(),
                 }
                 await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                track_passed("Chat request", "index interrogation (direct answer)")
                 return QueryResponse(
                     sql=None,
                     explanation=msg,
@@ -1070,6 +1098,7 @@ async def query(
                     extra={"error": str(exc), "uid": uid},
                 )
 
+        track_passed("Chat request", "success")
         return QueryResponse(
             sql=sql,
             explanation="Chinook playground query" if request.is_playground else "Generated SQL query",
@@ -1079,12 +1108,14 @@ async def query(
         )
 
     except (PlaygroundError, QueryTimeoutError) as e:
+        track_failed("Chat request", str(e))
         error_msg = str(e)
         updated = history + [user_msg, {"role": "assistant", "content": f"Playground error: {error_msg}", "timestamp": datetime.now().isoformat()}]
         await store.upsert_history(conv_id, updated)
         raise HTTPException(status_code=422, detail=error_msg)
 
     except Exception as e:
+        track_failed("Chat request", str(e))
         error_msg = str(e)
         updated = history + [user_msg, {"role": "assistant", "content": f"Error: {error_msg}", "timestamp": datetime.now().isoformat()}]
         await store.upsert_history(conv_id, updated)
@@ -1574,7 +1605,7 @@ async def websocket_chat(websocket: WebSocket):
             data          = await websocket.receive_json()
             req_start     = time.perf_counter()
             query         = data.get("query", "")
-            conv_id       = data.get("conversation_id", str(uuid.uuid4()))
+            conv_id       = data.get("conversation_id") or str(uuid.uuid4())
             execute       = data.get("execute", False)
             is_playground = data.get("is_playground", False)
             verbose       = data.get("verbose", False)
@@ -1595,7 +1626,13 @@ async def websocket_chat(websocket: WebSocket):
                 "execute_requested": execute,
                 "query_length":      len(query),
             }
-            logger.info("Received chat query", extra=req_context)
+            logger.info(
+                "[request] WS chat | query=%r conv_id=%s uid=%s",
+                (query[:80] + "…") if len(query) > 80 else query,
+                (conv_id[:8] + "…") if conv_id and len(conv_id) > 8 else conv_id or "(none)",
+                (ws_uid[:8] + "…") if ws_uid else "(anon)",
+                extra=req_context,
+            )
             await _send_debug("1. Received query")
 
             # ── Quota gate for anonymous playground users ──────────────────

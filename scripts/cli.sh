@@ -134,7 +134,8 @@ Commands by Category:
   ------------------------------------------------------------------------------------------
   AZURE & INFRASTRUCTURE
     my-ip            Show current public IP (curl ifconfig.me)
-    cosmos-role      Setup Cosmos RBAC         |  cosmos-allow-ip  Whitelist current IP
+    cosmos-role      Setup Cosmos RBAC         |  cosmos-role-sp   Cosmos RBAC for DaiBaiApp (from .env)
+    cosmos-allow-ip  Whitelist current IP
     redis-create     Create Azure Redis        |  keyvault-create  Create Key Vault
     sync-env         Sync Cosmos config        |  verify-azure-auth Verify secretless auth
     sp-create        Get/create DaiBaiApp SP, update AZURE_* in .env
@@ -154,6 +155,7 @@ Commands by Category:
     cache-info       Show connection info      |  cache-test       Test connection
     redis-list       List all Redis keys with size and TTL
     redis-delete     Delete Redis key (interactive or pass key)
+    redis-clear      Clear ALL Redis keys (--force to skip confirmation)
     redis-test       Add dummy key, list, delete, list (full cycle test)
   ------------------------------------------------------------------------------------------
   SYSTEM RESET (testing)
@@ -1165,6 +1167,82 @@ cmd_cosmos_role() {
     fi
 }
 
+cmd_cosmos_role_sp() {
+    # Assign "Cosmos DB Account Reader Role" to DaiBaiApp service principal (from .env)
+    print_header "Cosmos DB — Role Assignment for DaiBaiApp"
+
+    local client_id="${AZURE_CLIENT_ID:-}"
+    if [[ -z "$client_id" ]]; then
+        print_error "AZURE_CLIENT_ID not set in .env. Run: ./scripts/cli.sh sp-create"
+        exit 1
+    fi
+
+    local principal_id
+    principal_id=$(az ad sp show --id "$client_id" --query id -o tsv 2>/dev/null || true)
+    if [[ -z "$principal_id" ]]; then
+        print_error "Could not resolve service principal object ID for AZURE_CLIENT_ID=$client_id"
+        echo "  Ensure 'az login' and the app exists (./scripts/cli.sh sp-create)"
+        exit 1
+    fi
+    print_info "DaiBaiApp principal ID: $principal_id"
+
+    local sub="${AZURE_SUBSCRIPTION_ID:-}"
+    if [[ -z "$sub" ]]; then
+        sub=$(az account show --query id -o tsv 2>/dev/null || true)
+    fi
+    if [[ -z "$sub" ]]; then
+        print_error "Could not determine subscription. Set AZURE_SUBSCRIPTION_ID in .env or run 'az login'"
+        exit 1
+    fi
+    print_info "Subscription: $sub"
+
+    local account="${COSMOS_ACCOUNT:-${COSMOS_ACCOUNT_NAME:-}}"
+    local rg="${COSMOS_RESOURCE_GROUP:-}"
+
+    if [[ -z "$account" ]]; then
+        print_info "Looking up Cosmos DB account..."
+        account=$(az cosmosdb list --query "[0].name" -o tsv 2>/dev/null || true)
+    fi
+    if [[ -z "$rg" ]]; then
+        rg=$(az cosmosdb list --query "[0].resourceGroup" -o tsv 2>/dev/null || true)
+    fi
+    if [[ -z "$account" || -z "$rg" ]]; then
+        print_error "Could not determine Cosmos account or resource group."
+        echo "  Set COSMOS_ACCOUNT and COSMOS_RESOURCE_GROUP in .env, or ensure 'az login' with access to Cosmos."
+        exit 1
+    fi
+    print_info "Account: $account  |  Resource group: $rg"
+
+    local scope="/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.DocumentDB/databaseAccounts/$account"
+    print_info "Scope: $scope"
+    echo ""
+
+    if az role assignment create \
+        --assignee "$principal_id" \
+        --role "Cosmos DB Account Reader Role" \
+        --scope "$scope"; then
+        print_success "Cosmos DB Account Reader Role assigned to DaiBaiApp"
+    else
+        print_error "Azure RBAC role assignment failed (may already exist)"
+        exit 1
+    fi
+
+    # Cosmos DB SQL RBAC (built-in data plane role)
+    echo ""
+    print_info "Creating Cosmos DB SQL role assignment (scope=/)..."
+    if az cosmosdb sql role assignment create \
+        --account-name "$account" \
+        --resource-group "$rg" \
+        --scope "/" \
+        --principal-id "$principal_id" \
+        --role-definition-id "00000000-0000-0000-0000-000000000002"; then
+        print_success "Cosmos DB SQL role assignment created"
+    else
+        print_error "Cosmos DB SQL role assignment failed (may already exist)"
+        exit 1
+    fi
+}
+
 cmd_my_ip() {
     local ip
     ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || true)
@@ -1617,6 +1695,7 @@ _CLI_WILDCARD_CMDS=(
     "index:Semantic schema index"
     "my-ip:Show current public IP"
     "cosmos-role:Setup Cosmos RBAC"
+    "cosmos-role-sp:Cosmos RBAC for DaiBaiApp service principal"
     "cosmos-allow-ip:Whitelist current IP"
     "redis-create:Create Azure Redis"
     "keyvault-create:Create Key Vault"
@@ -1635,6 +1714,7 @@ _CLI_WILDCARD_CMDS=(
     "cache-stats:Show Redis stats"
     "redis-list:List all Redis keys with size and TTL"
     "redis-delete:Delete Redis key (interactive or pass key)"
+    "redis-clear:Clear ALL Redis keys (FLUSHDB)"
     "redis-test:Add dummy key, list, delete, list (full cycle test)"
     "cache-info:Show connection info"
     "cache-monitor:Live Redis monitor"
@@ -1777,6 +1857,10 @@ main() {
         cosmos-role)
             cmd_cosmos_role "$@"
             ;;
+        cosmos-role-sp)
+            load_env
+            cmd_cosmos_role_sp
+            ;;
         cosmos-allow-ip)
             cmd_cosmos_allow_ip
             ;;
@@ -1860,6 +1944,10 @@ main() {
         redis-delete)
             load_env
             exec "$(_resolve_python)" "$PROJECT_DIR/scripts/redis_delete.py" "$@"
+            ;;
+        redis-clear)
+            load_env
+            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/redis_clear.py" "$@"
             ;;
         redis-test)
             load_env
