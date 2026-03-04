@@ -28,10 +28,7 @@
             <div class="nav-center">
                 <div class="nav-dropdowns">
                     <div class="dropdown">
-                        <label>
-                            Database
-                            <span class="db-status-dot" id="dbStatusDot" title=""></span>
-                        </label>
+                        <label for="databaseSelect">Database</label>
                         <select id="databaseSelect">
                             <option value="">Loading...</option>
                         </select>
@@ -63,18 +60,13 @@
                         </label>
                     </div>
                 </div>
-                <!-- Shown when selected DB is not yet indexed for semantic search -->
-                <div class="db-index-nudge" id="dbIndexNudge" aria-live="polite">
-                    <i data-lucide="zap"></i>
-                    <span>Not indexed for AI search.</span>
-                    <button class="db-index-btn" id="dbIndexBtn">Index now</button>
-                </div>
             </div>
             
             <div class="nav-right">
                 <!-- Profile menu — always visible; dropdown adapts to auth state -->
                 <div class="user-identity" id="userIdentity">
                     <span class="user-display-name" id="userDisplayName" style="display:none"></span>
+                    <button type="button" class="nav-sign-in-prompt" id="navSignInPrompt" title="Sign in" style="display:none">Sign in</button>
                     <div class="profile-menu" id="profileMenu">
                         <button class="profile-avatar" id="profileAvatarBtn" aria-haspopup="true" aria-expanded="false" title="Account">
                             <!-- Guest: Lucide user-circle icon -->
@@ -201,7 +193,11 @@
                 </nav>
 
                 <div class="nav-footer">
-                    <button type="button" id="settingsBtn" class="sidebar-icon" title="Settings">
+                    <button type="button" id="sidebarSignInBtn" class="sidebar-icon sidebar-signin" title="Sign in to save history and access settings" style="display:none">
+                        <i data-lucide="log-in"></i>
+                        <span class="label">Sign In</span>
+                    </button>
+                    <button type="button" id="settingsBtn" class="sidebar-icon" title="Settings" style="display:none">
                         <i data-lucide="settings"></i>
                         <span class="label">Settings</span>
                     </button>
@@ -270,6 +266,9 @@
                                 rows="1"
                                 autofocus
                             ></textarea>
+                            <button class="stop-btn" id="stopBtn" type="button" title="Stop generating" style="display:none">
+                                <i data-lucide="square"></i>
+                            </button>
                             <button class="send-btn" id="sendBtn" disabled>
                                 <i data-lucide="send"></i>
                             </button>
@@ -296,6 +295,7 @@
                     <button class="settings-tab" data-tab="databases">Database Connections</button>
                     <button class="settings-tab" data-tab="data">Data & Privacy</button>
                     <button class="settings-tab" data-tab="preferences">Preferences</button>
+                    <button class="settings-tab" data-tab="health">System Health</button>
                 </div>
                 <div class="modal-body" id="settingsContent">
                     <!-- Content swapped via JS based on active tab -->
@@ -303,6 +303,19 @@
                 <div class="modal-footer">
                     <button class="btn-secondary" id="settingsCancel">Cancel</button>
                     <button class="btn-primary" id="settingsSave">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Check Results Modal -->
+        <div class="modal" id="healthResultsModal">
+            <div class="modal-content" style="max-width:480px">
+                <div class="modal-header">
+                    <h2>System Health</h2>
+                    <button class="modal-close" id="healthResultsModalClose">&times;</button>
+                </div>
+                <div class="modal-body" id="healthResultsContent">
+                    <!-- Populated by JS -->
                 </div>
             </div>
         </div>

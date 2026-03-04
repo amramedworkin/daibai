@@ -161,3 +161,40 @@ To verify your domain, add the following DNS records in your domain registrar.
 
 note:
 It can take up to 48 hours to verify your domain. Check back later to finish adding your custom domain.
+
+---
+
+## Troubleshooting: "Create account" shows instead of "Sign in" for existing users
+
+**Symptom:** When entering an existing user's email in the Sign In modal, FirebaseUI shows the "Create account" form (name + password) instead of the "Sign in" form (password only).
+
+**Cause:** Firebase's **email enumeration protection** (enabled by default for projects created after Sept 2023) prevents FirebaseUI from checking whether an email exists. Without that check, it defaults to the create-account flow.
+
+**Fix:** Disable email enumeration protection for your Firebase project.
+
+### Option 1: Firebase Console (easiest)
+
+1. Go to [Firebase Console → Authentication → Settings](https://console.firebase.google.com/project/_/authentication/settings)
+2. In **User account management** → **User actions**
+3. **Uncheck** "Email enumeration protection (recommended)"
+4. Click **Save**
+
+### Option 2: CLI (gcloud + curl)
+
+```bash
+./scripts/cli.sh firebase-disable-email-enum
+```
+
+Or manually:
+
+```bash
+PROJECT_ID="daibai-affb0"   # or your FIREBASE_PROJECT_ID
+ACCESS_TOKEN=$(gcloud auth print-access-token --project="$PROJECT_ID")
+curl -X PATCH -d '{"emailPrivacyConfig":{"enableImprovedEmailPrivacy":false}}' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Goog-User-Project: $PROJECT_ID" \
+  "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/config?updateMask=emailPrivacyConfig"
+```
+
+**Security note:** Disabling this allows attackers to discover which emails are registered. Use only if your app requires the sign-in/create-account flow to work correctly (e.g. FirebaseUI with email/password).

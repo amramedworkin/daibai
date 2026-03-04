@@ -107,148 +107,56 @@ DaiBai CLI - Non-Interactive Control Interface
 
 Usage: $(basename "$0") <command> [options]
 
-Commands (mirrors menu.sh):
+  Search:  $(basename "$0") search <term>   List commands matching <term>, pick one to run
+            $(basename "$0") '*cache'        Same (quote the asterisk: '*cache')
 
-  CHAT SERVICE (menu 1)
-    chat-start [--open] [--debug]  Start web server (kills existing first)
-                            --open  Also open browser after start
-                            --debug Enable fetch-models instrumentation (see log)
-    chat-stop               Stop web server (fully kill pid/sid)
-    chat-restart [--open]    Restart web server (stop then start)
-    chat-bounce              Restart web server and open browser (alias for chat-restart --open)
-    chat-status [--json]     Show running status (no wait)
-                            --json  Machine-readable output
-    chat-toggle             Toggle start/stop
-    server                  Run daibai-server in foreground (see logs, Ctrl+C to stop)
+Commands by Category:
 
-  INTERACTIVE CLI (menu 2)
-    cli-launch              Launch interactive daibai REPL (foreground)
-
-  COMMAND LINE (menu 3)
-    cli-query <query>       Single natural-language query
-    train [--database <name>]  Train schema (daibai-train)
-                            --database  Train specific database
-    index [target] [--force]  Semantic schema indexing (Redis vector store)
-                            target: playground (default) or a db name from daibai.yaml
-                            --force  Re-index even if refresh interval has not elapsed
-
-  AZURE
-    cosmos-role [--principal-id ID]  Set up Cosmos DB role for signed-in user
-                            Uses az ad signed-in-user show for principal-id if not given.
-                            Account: daibai-metadata, RG: daibai-rg (override via env)
-    cosmos-allow-ip          Whitelist your current public IP in the Cosmos DB firewall
-                            Auto-detects IP, preserves existing rules, applies the update
-    list-users               List all registered users from Cosmos DB (Firebase UIDs, emails, registration time)
-    wait-for-users           Poll Cosmos DB every 5 s until at least one user appears, then print the table
-    firebase-admin <cmd>     Firebase Authentication management (wraps scripts/firebase_admin_mgr.py)
-                             Commands: list | create | update | delete | delete-all | set-claims | links | revoke
-                             Example:  ./scripts/cli.sh firebase-admin list
-                             Example:  ./scripts/cli.sh firebase-admin create --email a@b.com --password secret --name "Alice"
-                             Example:  ./scripts/cli.sh firebase-admin set-claims <uid> '{"admin":true}'
-    test-db                  Validate Cosmos DB Read/Write/Delete (Golden Ticket health check)
-    test-cosmos              Cosmos DB E2E (CosmosStore lifecycle, requires COSMOS_ENDPOINT)
-    verify-azure-auth        Verify secretless Cosmos access (lists containers, no COSMOS_KEY)
-    redis-create             Create Azure Cache for Redis (RG + Basic C0, auto-writes REDIS_URL to .env)
-    keyvault-create          Create Azure Key Vault (RG + RBAC, auto-writes KEY_VAULT_URL to .env)
-    test-redis               Redis integration test (add/retrieve/delete keys, requires REDIS_URL)
-    test-cache-connection    CacheManager ping (mocked + live when REDIS_URL set)
-    cache-stats              Redis info stats and keyspace (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
-    cache-monitor            Redis live monitor (requires REDIS_URL or AZURE_REDIS_CONNECTION_STRING)
-    cache-info               Show parsed Redis connection info for Redis Insight
-    cache-test               Test Redis connection (host, port, username, password from .env)
-
-  SETUP (idempotent)
-    setup | install        Install deps (pip), create .env, check Azure CLI. Safe to run repeatedly.
-
-  SUPPORT & UTILITIES (menu 4)
-    dashboard               Start Aspire Dashboard in background (Docker)
-                            Web UI: http://localhost:18888 | OTLP gRPC: localhost:4317
-    dashboard-stop          Stop the Aspire Dashboard container
-    is-ready [--strict]      Check env components (Redis, Cosmos, DB, LLM). --strict = require all
-    config-path             Show config file locations (● found ○ not found)
-    config-edit             Edit daibai.yaml
-    docs [file]             List docs/ or cat specific file
-    docs-azure              Show Azure deployment guide (stdout, no pager)
-    env-check               Check .env files (variable names only)
-    env-edit                Edit .env file
-    env-clean [path]        Remove duplicate keys and malformed entries from .env
-    env-preferences         Show preferences path and content
-
-  TESTS (menu 5)
-    test [args]             Run unit tests (excludes cloud, ~1s). Pass-through args.
-    test run [path] [args]  Run tests (default: tests/). Args: -x, -k PATTERN, -q, etc.
-    test file <path>       Run specific test file (e.g. test_config.py)
-    test name <pattern>    Run tests matching -k pattern
-    test gemini [--live]   Run isolated Gemini get-models test
-                            --live  Use real API (requires GEMINI_API_KEY)
-    test list              List test files
-    test collect           List all test names (--collect-only)
-    test coverage          Run with coverage report
-    test full              Run full suite including cloud (REDIS_URL, COSMOS_ENDPOINT for live tests)
-    test-guardrails        Run SQL guardrail tests (30 mock + 8 live; live use daibai config or MYSQL_*)
-
-  LOGGING (menu 7)
-    logs-info               Log file location, size, last modified, rotated backups
-    logs-tail               Live tail of the active log (tail -f, Ctrl+C to stop)
-    logs-view               Page through the active log with less (starts at end)
-    logs-errors             Show only [ERROR] and [WARNING] lines (last 200)
-    logs-today              Filter entries from today's date
-    logs-search <pattern>   Grep the active log for a pattern (paged output)
-    logs-clean              Remove rotated backup files (daibai.log.*), keep active
-    logs-purge              Delete ALL log files including the active log
-    logs-rotate             Archive current log (gzip), truncate to start fresh
-
-    Log location: \$XDG_STATE_HOME/daibai/logs/daibai.log
-                  (default: ~/.local/state/daibai/logs/daibai.log)
-    Rotation    : 10 MB max per file | midnight rollover | 7 days retained
-
-  META
-    status                  Alias for chat-status
-    help                    Show this help
-
-Examples:
-    $(basename "$0") chat-status
-    $(basename "$0") chat-bounce
-    $(basename "$0") chat-start --open
-    $(basename "$0") server
-    $(basename "$0") cli-query "How many users are in the database?"
-    $(basename "$0") train --database suitecrm
-    $(basename "$0") index
-    $(basename "$0") index playground
-    $(basename "$0") index my_db --force
-    $(basename "$0") is-ready
-    $(basename "$0") config-path
-    $(basename "$0") cosmos-role
-    $(basename "$0") cosmos-role --principal-id <object-id>
-    $(basename "$0") list-users
-    $(basename "$0") test-db
-    $(basename "$0") test-cosmos
-    $(basename "$0") verify-azure-auth
-    $(basename "$0") redis-create
-    $(basename "$0") keyvault-create
-    $(basename "$0") test-redis
-    $(basename "$0") test-cache-connection
-    $(basename "$0") cache-stats
-    $(basename "$0") cache-monitor
-    $(basename "$0") cache-info
-    $(basename "$0") cache-test
-    $(basename "$0") test
-    $(basename "$0") test -x
-    $(basename "$0") test file test_config.py
-    $(basename "$0") test name provider
-    $(basename "$0") test gemini
-    $(basename "$0") test gemini --live
-    $(basename "$0") test coverage
-    $(basename "$0") test-guardrails
-    $(basename "$0") logs-info
-    $(basename "$0") logs-tail
-    $(basename "$0") logs-errors
-    $(basename "$0") logs-today
-    $(basename "$0") logs-search "QUOTA_EXCEEDED"
-    $(basename "$0") logs-search "uid=abc123"
-    $(basename "$0") logs-clean
-    $(basename "$0") logs-purge
-    $(basename "$0") logs-rotate
+  CHAT SERVICE & SERVER
+    chat-start       Start web server          |  chat-stop        Stop web server
+    chat-restart     Restart web server        |  chat-bounce      Restart & open UI
+    chat-bounce-ff   Restart & open in Firefox |  chat-bounce-ff-wipe  Wipe users, restart & open Firefox
+    chat-status      Show running status       |  chat-toggle      Toggle start/stop
+    server           Run foreground server     |  chrome           Chrome with remote-debug port 9222
+    chrome-dev       Chrome dev mode + localhost:8080
+  ------------------------------------------------------------------------------------------
+  LOGGING
+    log              Show logs                 |  rotate-log       Zip current log and start new
+    log-info         Where are logs
+  ------------------------------------------------------------------------------------------
+  CLI & AGENT
+    cli-launch       Interactive REPL          |  cli-query        Single natural language query
+    train            Train DB schema           |  index            Semantic schema index
+  ------------------------------------------------------------------------------------------
+  AZURE & INFRASTRUCTURE
+    cosmos-role      Setup Cosmos RBAC         |  cosmos-allow-ip  Whitelist current IP
+    redis-create     Create Azure Redis        |  keyvault-create  Create Key Vault
+    sync-env         Sync Cosmos config        |  verify-azure-auth Verify secretless auth
+  ------------------------------------------------------------------------------------------
+  USERS & AUTH
+    list-users       List Cosmos users         |  wait-for-users   Poll for users
+    integrate-user   Sync Firebase user → Cosmos DB (uid or email)
+    firebase-admin   Manage Firebase Auth
+    firebase-disable-email-enum  Fix sign-in showing create-account form
+  ------------------------------------------------------------------------------------------
+  CACHE & REDIS
+    cache-stats      Show Redis stats          |  cache-monitor    Live Redis monitor
+    cache-info       Show connection info      |  cache-test       Test connection
+  ------------------------------------------------------------------------------------------
+  SYSTEM RESET (testing)
+    system-reset     Clear Redis, indexes, Firebase, Cosmos, logs, ~/.daibai — fresh start
+  ------------------------------------------------------------------------------------------
+  CONFIG & ENVIRONMENT
+    setup/install    Install dependencies      |  is-ready         Check env components
+    env-check        Check .env variables      |  env-edit         Edit .env file
+    env-clean        Clean .env duplicates     |  env-preferences  Show user preferences
+    config-path      Show config locations     |  config-edit      Edit daibai.yaml
+  ------------------------------------------------------------------------------------------
+  DOCUMENTATION & TESTS
+    docs             View documentation        |  docs-azure       View Azure guide
+    test             Run unit test suite       |  test-db          Test DB validation
+    test-cosmos      Test Cosmos DB E2E        |  test-redis       Test Redis integration
+    test-guardrails  Test SQL guardrails       |  test-cache-connection Test CacheManager
 
 EOF
 }
@@ -294,6 +202,54 @@ cmd_chat_bounce() {
     if restart_chat_service; then
         open_chat_browser
     fi
+}
+
+cmd_chat_bounce_firefox() {
+    if restart_chat_service; then
+        open_chat_browser_firefox
+    fi
+}
+
+cmd_chat_bounce_ff_wipe() {
+    # Delete all Firebase + Cosmos users, then bounce chat and open Firefox
+    print_header "Wipe users + bounce chat (Firefox)"
+    load_env
+    local py
+    py="$(_resolve_python)"
+    "$py" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" delete-all --force
+    echo ""
+    if restart_chat_service; then
+        open_chat_browser_firefox
+    fi
+}
+
+cmd_chrome() {
+    local data_dir="${XDG_CONFIG_HOME:-$HOME/.config}/chrome-dev-profile"
+    mkdir -p "$data_dir"
+    local chrome_args=(--remote-debugging-port=9222 --user-data-dir="$data_dir" "$@")
+    if command -v google-chrome &>/dev/null; then
+        print_info "Opening Chrome with remote-debugging-port=9222 (background)"
+        google-chrome "${chrome_args[@]}" &>/dev/null &
+        disown 2>/dev/null || true
+    elif command -v google-chrome-stable &>/dev/null; then
+        print_info "Opening Chrome with remote-debugging-port=9222 (background)"
+        google-chrome-stable "${chrome_args[@]}" &>/dev/null &
+        disown 2>/dev/null || true
+    elif command -v chromium &>/dev/null; then
+        print_info "Opening Chromium with remote-debugging-port=9222 (background)"
+        chromium "${chrome_args[@]}" &>/dev/null &
+        disown 2>/dev/null || true
+    elif [[ "$(uname -s)" == "Darwin" ]] && [[ -d "/Applications/Google Chrome.app" ]]; then
+        print_info "Opening Chrome with remote-debugging-port=9222"
+        open -a "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir="$data_dir" "$@"
+    else
+        print_error "Chrome not found. Install google-chrome or chromium."
+        exit 1
+    fi
+}
+
+cmd_chrome_dev() {
+    cmd_chrome "http://localhost:8080"
 }
 
 cmd_chat_status() {
@@ -392,72 +348,6 @@ cmd_index() {
 # ============================================================================
 # SUPPORT & UTILITIES
 # ============================================================================
-
-_ASPIRE_CONTAINER_NAME="daibai-aspire-dashboard"
-
-cmd_dashboard() {
-    if ! command -v docker &>/dev/null; then
-        print_error "Docker is required to run the Aspire Dashboard."
-        echo "  Install Docker: https://docs.docker.com/get-docker/"
-        exit 1
-    fi
-
-    # Already running?
-    if docker ps -q -f "name=^${_ASPIRE_CONTAINER_NAME}$" 2>/dev/null | grep -q .; then
-        print_header "Aspire Dashboard — Already Running"
-        echo -e "  ${GREEN}Web UI:${NC}    http://localhost:18888"
-        echo -e "  ${GREEN}OTLP Port:${NC} localhost:4317"
-        echo ""
-        echo "  Run: $(basename "$0") dashboard-stop  to stop it."
-        echo ""
-        return 0
-    fi
-
-    print_header "Starting Aspire Dashboard (Background)"
-    echo -e "  ${GREEN}Web UI:${NC}    http://localhost:18888"
-    echo -e "  ${GREEN}OTLP Port:${NC} localhost:4317  (set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 in .env)"
-    echo -e "  ${DIM}Stop: $(basename "$0") dashboard-stop${NC}"
-    echo ""
-
-    # DataProtection keys: Aspire runs as app (UID 1654). Create host dir and chown
-    # so the container can write; bind mount is more reliable than a named volume.
-    local keydir="$HOME/.daibai/aspire-keys"
-    mkdir -p "$keydir"
-    docker run --rm -v "$keydir:/keys" alpine chown -R 1654:1654 /keys 2>/dev/null || true
-
-    docker run -d --rm --name "$_ASPIRE_CONTAINER_NAME" \
-        -p 18888:18888 \
-        -p 4317:18889 \
-        -p 18890:18890 \
-        -v "$keydir:/home/app/.aspnet/DataProtection-Keys" \
-        -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true \
-        -e Logging__LogLevel__Microsoft.AspNetCore.DataProtection=Error \
-        -e Logging__LogLevel__Microsoft.AspNetCore.DataProtection.KeyManagement=Error \
-        -e Logging__LogLevel__Microsoft.Extensions.DependencyInjection=Error \
-        mcr.microsoft.com/dotnet/aspire-dashboard:latest
-
-    if [[ $? -eq 0 ]]; then
-        echo ""
-        print_success "Dashboard started. Open http://localhost:18888"
-    else
-        print_error "Failed to start dashboard."
-        exit 1
-    fi
-}
-
-cmd_dashboard_stop() {
-    if ! command -v docker &>/dev/null; then
-        print_error "Docker is required."
-        exit 1
-    fi
-    print_header "Stopping Aspire Dashboard"
-    if docker ps -q -f "name=^${_ASPIRE_CONTAINER_NAME}$" 2>/dev/null | grep -q .; then
-        docker stop "$_ASPIRE_CONTAINER_NAME" 2>/dev/null && print_success "Dashboard stopped." || print_error "Failed to stop."
-    else
-        echo "  Dashboard is not running."
-    fi
-    echo ""
-}
 
 cmd_is_ready() {
     load_env
@@ -686,6 +576,43 @@ _resolve_python() {
     else
         command -v python3 python 2>/dev/null | head -1
     fi
+}
+
+cmd_firebase_disable_email_enum() {
+    load_env
+    local project_id="${FIREBASE_PROJECT_ID:-daibai-affb0}"
+    print_header "Disable Firebase email enumeration protection"
+    echo "  This fixes: Sign In showing 'Create account' for existing users."
+    echo "  Project: $project_id"
+    echo ""
+    if ! command -v gcloud &>/dev/null; then
+        print_error "gcloud CLI required. Run: https://cloud.google.com/sdk/docs/install"
+        echo ""
+        echo "  Or use Firebase Console: Authentication → Settings → User actions"
+        echo "  Uncheck 'Email enumeration protection' and Save."
+        exit 1
+    fi
+    local token
+    token=$(gcloud auth print-access-token --project="$project_id" 2>/dev/null) || {
+        print_error "Run: gcloud auth login"
+        exit 1
+    }
+    local resp
+    resp=$(curl -s -w "\n%{http_code}" -X PATCH \
+        -d '{"emailPrivacyConfig":{"enableImprovedEmailPrivacy":false}}' \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -H "X-Goog-User-Project: $project_id" \
+        "https://identitytoolkit.googleapis.com/admin/v2/projects/$project_id/config?updateMask=emailPrivacyConfig" 2>/dev/null)
+    local code="${resp##*$'\n'}"
+    if [[ "$code" == "200" ]]; then
+        print_success "Email enumeration protection disabled."
+        echo "  Existing users will now see the Sign In form (password) instead of Create account."
+    else
+        print_error "Request failed (HTTP $code)"
+        echo "${resp%$'\n'*}" | head -5
+    fi
+    echo ""
 }
 
 cmd_list_users() {
@@ -917,6 +844,13 @@ cmd_cache_info() {
     echo ""
     echo "Run './scripts/cli.sh cache-test' to verify connectivity before opening the Desktop App."
     echo ""
+}
+
+cmd_system_reset() {
+    load_env
+    local py
+    py="$(_resolve_python)"
+    exec "$py" "$PROJECT_DIR/scripts/system_reset.py" "$@"
 }
 
 cmd_cache_test() {
@@ -1192,12 +1126,10 @@ cmd_test() {
 # ============================================================================
 # LOG COMMANDS
 # ============================================================================
-# Log location follows XDG Base Directory spec (same path as server.py).
-# $XDG_STATE_HOME defaults to ~/.local/state when unset.
+# Log location: <project_root>/logs/ (same as server.py)
 
 _log_dir() {
-    local xdg="${XDG_STATE_HOME:-$HOME/.local/state}"
-    echo "$xdg/daibai/logs"
+    echo "$PROJECT_DIR/logs"
 }
 
 _log_file() {
@@ -1400,7 +1332,7 @@ cmd_logs_purge() {
     echo -n "  Type 'purge' to confirm, or Enter to cancel: "
     read -r confirm
     if [[ "$confirm" == "purge" ]]; then
-        rm -f "$log_dir"/daibai.log "$log_dir"/daibai.log.*
+        rm -f "$log_dir"/daibai.log "$log_dir"/daibai.log.* "$log_dir"/daibai-archive-*.*
         print_success "All log files removed."
     else
         echo "  Cancelled."
@@ -1445,12 +1377,129 @@ cmd_logs_rotate() {
 }
 
 # ============================================================================
+# WILDCARD SEARCH — cli.sh *<term> lists matching commands, prompt to run one
+# ============================================================================
+# Format: "command:Short description"
+
+_CLI_WILDCARD_CMDS=(
+    "chat-start:Start web server"
+    "chat-stop:Stop web server"
+    "chat-restart:Restart web server"
+    "chat-bounce:Restart and open UI"
+    "chat-bounce-ff:Restart and open in Firefox"
+    "chat-bounce-ff-wipe:Wipe all users, restart and open in Firefox"
+    "chat-status:Show running status"
+    "chat-toggle:Toggle start/stop"
+    "server:Run foreground server"
+    "chrome:Chrome with remote-debug port 9222"
+    "chrome-dev:Chrome dev mode with localhost:8080"
+    "cli-launch:Interactive REPL"
+    "cli-query:Single natural language query"
+    "train:Train DB schema"
+    "index:Semantic schema index"
+    "cosmos-role:Setup Cosmos RBAC"
+    "cosmos-allow-ip:Whitelist current IP"
+    "redis-create:Create Azure Redis"
+    "keyvault-create:Create Key Vault"
+    "sync-env:Sync Cosmos config"
+    "verify-azure-auth:Verify secretless auth"
+    "list-users:List Cosmos users"
+    "integrate-user:Sync Firebase user → Cosmos DB"
+    "firebase-disable-email-enum:Fix sign-in showing create-account"
+    "wait-for-users:Poll for users"
+    "firebase-admin:Manage Firebase Auth"
+    "cache-stats:Show Redis stats"
+    "cache-info:Show connection info"
+    "cache-monitor:Live Redis monitor"
+    "cache-test:Test connection"
+    "system-reset:Clear all state for fresh testing"
+    "setup:Install dependencies"
+    "install:Install dependencies"
+    "is-ready:Check env components"
+    "config-path:Show config locations"
+    "config-edit:Edit daibai.yaml"
+    "docs:View documentation"
+    "docs-azure:View Azure guide"
+    "env-check:Check .env variables"
+    "env-edit:Edit .env file"
+    "env-clean:Clean .env duplicates"
+    "env-preferences:Show user preferences"
+    "test:Run unit test suite"
+    "test-db:Test DB validation"
+    "test-cosmos:Test Cosmos DB E2E"
+    "test-redis:Test Redis integration"
+    "test-guardrails:Test SQL guardrails"
+    "test-cache-connection:Test CacheManager"
+    "logs-info:Log file location and size"
+    "logs-tail:Live tail log"
+    "logs-view:Page through log"
+    "logs-errors:Errors and warnings"
+    "logs-today:Today's entries"
+    "logs-search:Search log for pattern"
+    "logs-clean:Remove rotated backups"
+    "logs-purge:Delete all logs"
+    "logs-rotate:Archive and start fresh"
+    "log:Show logs"
+    "log-info:Where are logs"
+    "rotate-log:Zip current log and start new"
+)
+
+cmd_wildcard_search() {
+    local term="$1"
+    shift || true
+    term=$(echo "$term" | tr '[:upper:]' '[:lower:]')
+    local matches=()
+    local descs=()
+    local i
+    for entry in "${_CLI_WILDCARD_CMDS[@]}"; do
+        local cmd="${entry%%:*}"
+        local desc="${entry#*:}"
+        local cmd_lower
+        cmd_lower=$(echo "$cmd" | tr '[:upper:]' '[:lower:]')
+        if [[ -z "$term" || "$cmd_lower" == *"$term"* ]]; then
+            matches+=("$cmd")
+            descs+=("$desc")
+        fi
+    done
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        print_error "No commands matching '*$term'"
+        return 1
+    fi
+    echo ""
+    echo "Commands matching '*$term':"
+    echo ""
+    for i in "${!matches[@]}"; do
+        printf "  %d. %-24s - %s\n" $((i + 1)) "${matches[$i]}" "${descs[$i]}"
+    done
+    echo ""
+    echo -n "Select option (1-${#matches[@]}): "
+    read -r choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#matches[@]} ]]; then
+        local idx=$((choice - 1))
+        main "${matches[$idx]}" "$@"
+    fi
+}
+
+# ============================================================================
 # MAIN DISPATCHER
 # ============================================================================
 
 main() {
     local command="${1:-help}"
     shift || true
+
+    # Wildcard search: cli.sh *<term> (quote it) or cli.sh search <term>
+    if [[ "${command:0:1}" == '*' ]]; then
+        local term="${command#\*}"
+        cmd_wildcard_search "$term" "$@"
+        return
+    fi
+    if [[ "$command" == "search" ]]; then
+        local term="${1:-}"
+        shift || true
+        cmd_wildcard_search "$term" "$@"
+        return
+    fi
 
     case "$command" in
         chat-start)
@@ -1465,6 +1514,12 @@ main() {
         chat-bounce)
             cmd_chat_bounce
             ;;
+        chat-bounce-ff)
+            cmd_chat_bounce_firefox
+            ;;
+        chat-bounce-ff-wipe)
+            cmd_chat_bounce_ff_wipe
+            ;;
         chat-status)
             cmd_chat_status "$@"
             ;;
@@ -1473,6 +1528,12 @@ main() {
             ;;
         server)
             cmd_server "$@"
+            ;;
+        chrome)
+            cmd_chrome "$@"
+            ;;
+        chrome-dev)
+            cmd_chrome_dev
             ;;
         cli-launch)
             cmd_cli_launch
@@ -1510,6 +1571,19 @@ main() {
         list-users)
             cmd_list_users
             ;;
+        firebase-disable-email-enum)
+            cmd_firebase_disable_email_enum
+            ;;
+        integrate-user)
+            load_env
+            local id="${1:-}"
+            if [[ -z "$id" ]]; then
+                echo -n "Enter uid or email: "
+                read -r id
+                [[ -z "$id" ]] && { print_error "No uid or email supplied."; exit 1; }
+            fi
+            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" integrate "$id"
+            ;;
         wait-for-users)
             cmd_wait_for_users
             ;;
@@ -1543,14 +1617,11 @@ main() {
         cache-test)
             cmd_cache_test
             ;;
+        system-reset)
+            cmd_system_reset "$@"
+            ;;
         setup|install)
             cmd_setup
-            ;;
-        dashboard)
-            cmd_dashboard
-            ;;
-        dashboard-stop)
-            cmd_dashboard_stop
             ;;
         is-ready)
             cmd_is_ready "$@"
@@ -1610,6 +1681,15 @@ main() {
             cmd_logs_purge
             ;;
         logs-rotate)
+            cmd_logs_rotate
+            ;;
+        log)
+            cmd_logs_view
+            ;;
+        log-info)
+            cmd_logs_info
+            ;;
+        rotate-log)
             cmd_logs_rotate
             ;;
         help|--help|-h|"")

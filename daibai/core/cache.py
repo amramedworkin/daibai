@@ -53,7 +53,11 @@ class CacheManager:
         if not conn_str:
             return None
         import redis
-        self._client = redis.Redis.from_url(conn_str, decode_responses=True)
+        self._client = redis.Redis.from_url(
+            conn_str,
+            decode_responses=True,
+            socket_connect_timeout=5,
+        )
         return self._client
 
     def ping(self) -> bool:

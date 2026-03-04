@@ -1,17 +1,9 @@
 # Core dependencies - install with: pip install -r requirements.txt
 # For full app with GUI: pip install -e ".[gui]"
 # For semantic cache: pip install -e ".[cache]"
-# For Azure Monitor telemetry: pip install -e ".[observability]"
 pydantic>=2.0.0
 azure-cosmos>=4.7.0
 azure-identity>=1.15.0
 redis>=5.0.0
 sentence-transformers>=2.2.0
 torch>=2.0.0
-
-# Azure Monitor / OpenTelemetry (optional)
-# Activated automatically when APPLICATIONINSIGHTS_CONNECTION_STRING is set.
-# For local Aspire Dashboard: set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-azure-monitor-opentelemetry>=1.4.0
-opentelemetry-instrumentation-fastapi>=0.45b0
-opentelemetry-exporter-otlp>=1.22.0

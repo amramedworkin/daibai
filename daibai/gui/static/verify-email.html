@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<!--
+  Custom email verification page — prevents "expired link" from email auto-scanners.
+  Firebase must send links here: add your domain to Firebase Console → Authentication →
+  Authorized domains. Verification runs only when the user manually clicks the button.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Email - DaiBai</title>
+    <link rel="icon" type="image/png" href="/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            padding: 24px;
+        }
+        .card {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+        }
+        .logo { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; color: #38bdf8; }
+        h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 12px; }
+        p { margin: 0 0 24px; color: #94a3b8; font-size: 0.9rem; line-height: 1.5; }
+        .btn {
+            display: inline-block;
+            background: #38bdf8;
+            color: #0f172a;
+            font-weight: 600;
+            padding: 14px 28px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            font-family: inherit;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #7dd3fc; }
+        .btn:disabled { background: #64748b; cursor: not-allowed; }
+        .msg { margin-top: 20px; padding: 12px; border-radius: 8px; font-size: 0.9rem; display: none; }
+        .msg.success { display: block; background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+        .msg.error { display: block; background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .no-code { color: #f87171; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">DaiBai</div>
+        <h1>Verify your email</h1>
+        <p id="intro">Click the button below to verify your email address. This helps prevent automated scanners from consuming your verification link before you use it.</p>
+        <p id="noCodeMsg" class="no-code" style="display:none">No verification code found in the URL. Please use the link from your verification email.</p>
+        <button type="button" id="verifyBtn" class="btn" style="display:none">Click here to verify email</button>
+        <div id="resultMsg" class="msg" role="alert"></div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script>
+        (function() {
+            var oobCode = null;
+            var params = new URLSearchParams(window.location.search);
+            oobCode = params.get('oobCode') || params.get('oob_code');
+
+            var intro = document.getElementById('intro');
+            var noCodeMsg = document.getElementById('noCodeMsg');
+            var verifyBtn = document.getElementById('verifyBtn');
+            var resultMsg = document.getElementById('resultMsg');
+
+            if (!oobCode) {
+                console.warn('[AUTH] verify-email: no oobCode in URL');
+                intro.style.display = 'none';
+                noCodeMsg.style.display = 'block';
+                return;
+            }
+            console.log('[AUTH] verify-email: oobCode present, waiting for user click');
+            verifyBtn.style.display = 'inline-block';
+
+            verifyBtn.addEventListener('click', function onVerifyClick() {
+                verifyBtn.disabled = true;
+                verifyBtn.textContent = 'Verifying…';
+                resultMsg.className = 'msg';
+                resultMsg.textContent = '';
+                console.log('[AUTH] verify-email: user clicked verify, applying action code');
+
+                fetch('/api/auth-config')
+                    .then(function(r) { return r.json(); })
+                    .then(function(config) {
+                        if (!config.firebase_api_key) throw new Error('Firebase config not available');
+                        if (!window.firebase || !window.firebase.apps.length) {
+                            firebase.initializeApp({
+                                apiKey: config.firebase_api_key,
+                                authDomain: config.firebase_auth_domain,
+                                projectId: config.firebase_project_id,
+                                storageBucket: config.firebase_storage_bucket,
+                                messagingSenderId: config.firebase_messaging_sender_id,
+                                appId: config.firebase_app_id
+                            });
+                        }
+                        return firebase.auth().applyActionCode(oobCode);
+                    })
+                    .then(function() {
+                        console.log('[AUTH] verify-email: applyActionCode SUCCESS');
+                        resultMsg.className = 'msg success';
+                        resultMsg.textContent = 'Email verified successfully! You can now close this tab and return to the app.';
+                        verifyBtn.textContent = 'Verified';
+                    })
+                    .catch(function(err) {
+                        console.error('[AUTH] verify-email: applyActionCode FAILED', err);
+                        resultMsg.className = 'msg error';
+                        resultMsg.textContent = err && err.message ? err.message : String(err);
+                        verifyBtn.disabled = false;
+                        verifyBtn.textContent = 'Click here to verify email';
+                    });
+            });
+        })();
+    </script>
+</body>
+</html>

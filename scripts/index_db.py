@@ -71,6 +71,8 @@ from daibai.core.cache import CacheManager
 from daibai.core.config import get_redis_connection_string
 from daibai.core.schema import SchemaManager
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -189,8 +191,11 @@ def index_playground(schema_name: str = "playground", *, force: bool = False) ->
         shutil.copy2(_MASTER_DB, _PLAY_DB)
         print(f"  Created: {_PLAY_DB}")
 
+    logger.info("[index] playground: start (force=%s)", force)
+
     cache = _get_cache()
     if cache is None:
+        logger.warning("[index] playground: skipped — no cache")
         return 0
 
     sm = SchemaManager(
@@ -199,11 +204,13 @@ def index_playground(schema_name: str = "playground", *, force: bool = False) ->
         cache_manager=cache,
     )
 
-    return sm.index_schema(
+    n = sm.index_schema(
         schema_name=schema_name,
         force=force,
         progress_cb=_make_progress_cb(),
     )
+    logger.info("[index] playground: done — %d table(s)", n)
+    return n
 
 
 def index_named_db(db_name: str, *, force: bool = False) -> int:
@@ -220,19 +227,25 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         return 0
     except Exception as e:
         print(f"  ERROR: Could not load daibai.yaml — {e}", file=sys.stderr)
+        logger.warning("[index] %s: config load failed — %s", db_name, e)
         return 0
+
+    logger.info("[index] %s: start (force=%s)", db_name, force)
 
     cache = _get_cache()
     if cache is None:
+        logger.warning("[index] %s: skipped — no cache", db_name)
         return 0
 
     sm = SchemaManager(config=db_config, cache_manager=cache)
 
-    return sm.index_schema(
+    n = sm.index_schema(
         schema_name=db_name,
         force=force,
         progress_cb=_make_progress_cb(),
     )
+    logger.info("[index] %s: done — %d table(s)", db_name, n)
+    return n
 
 
 # ---------------------------------------------------------------------------

@@ -719,8 +719,8 @@ handle_redis_menu() {
 # =============================================================================
 
 show_monitoring_menu() {
-    local log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/daibai/logs"
-    show_header "Monitoring — Logs & Aspire Dashboard"
+    local log_dir="$PROJECT_DIR/logs"
+    show_header "Monitoring — Logs"
     echo -e "  ${DIM}$log_dir/daibai.log${NC}"
     echo -e "  ${DIM}10 MB max per file  |  midnight rollover  |  7 days retained${NC}"
     echo ""
@@ -732,9 +732,7 @@ show_monitoring_menu() {
     print_action_option "6" "Search Log ${YELLOW}${DIM}(grep for a pattern)${NC}"
     print_action_option "7" "Clean Rotated Files ${YELLOW}${DIM}(remove daibai.log.* backups)${NC}"
     print_action_option "8" "${RED}Purge All Logs${NC} ${DIM}(delete every log file — irreversible)${NC}"
-    print_action_option "9" "Start Aspire Dashboard ${YELLOW}${DIM}(OTel, background — http://localhost:18888)${NC}"
-    print_action_option "10" "Stop Aspire Dashboard ${YELLOW}${DIM}(kill Docker container)${NC}"
-    print_action_option "11" "Rotate Log ${YELLOW}${DIM}(gzip current, start fresh)${NC}"
+    print_action_option "9" "Rotate Log ${YELLOW}${DIM}(gzip current, start fresh)${NC}"
     echo ""
     print_action_option "0" "Back to Main Menu"
     echo ""
@@ -794,18 +792,6 @@ handle_monitoring_menu() {
                 read -r
                 ;;
             9)
-                clear
-                "$SCRIPT_DIR/cli.sh" dashboard
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            10)
-                clear
-                "$SCRIPT_DIR/cli.sh" dashboard-stop
-                echo "Press Enter to continue..."
-                read -r
-                ;;
-            11)
                 clear
                 "$SCRIPT_DIR/cli.sh" logs-rotate
                 echo "Press Enter to continue..."

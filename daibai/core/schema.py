@@ -9,6 +9,7 @@ Phase 3 Step 1: High-precision semantic schema indexing with discover_schema(),
 index_schema(), and search_schema_v1() using schema:v1:* Redis keys.
 """
 
+import hashlib
 import json
 import logging
 import time
@@ -49,8 +50,9 @@ SCHEMA_V1_INDEX_KEY = "schema:v1:index"
 SCHEMA_V1_LAST_INDEXED = "schema:v1:last_indexed"
 
 # Schema indexing status keys (suffixed with :{db} at runtime)
-SCHEMA_STATUS_IS_INDEXED    = "schema:status:is_indexed"
+SCHEMA_STATUS_IS_INDEXED      = "schema:status:is_indexed"
 SCHEMA_STATUS_LAST_INDEXED_AT = "schema:status:last_indexed_at"
+SCHEMA_STATUS_DDL_HASH        = "schema:status:ddl_hash"
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -383,8 +385,10 @@ class SchemaManager:
 
         redis = self._get_redis()
         if redis is None:
-            logger.warning("Schema indexing skipped: no Redis client")
+            logger.warning("[index] %s: skipped — no Redis client", db)
             return 0
+
+        logger.info("[index] %s: start (force=%s)", db, force)
 
         # Check refresh interval (skipped when force=True)
         if not force:
@@ -395,18 +399,23 @@ class SchemaManager:
                     last_ts = float(last_raw)
                     interval = get_schema_refresh_interval()
                     if time.time() - last_ts < interval:
-                        logger.debug(
-                            "Schema indexing skipped: SCHEMA_REFRESH_INTERVAL not elapsed"
-                        )
+                        logger.info("[index] %s: skipped — SCHEMA_REFRESH_INTERVAL not elapsed", db)
                         return 0
             except (ValueError, TypeError):
                 pass
 
         tables_ddl = self.discover_schema(schema_name)
         if not tables_ddl:
+            logger.info("[index] %s: no tables found", db)
             return 0
 
         total = len(tables_ddl)
+        logger.info("[index] %s: discovered %d table(s)", db, total)
+
+        # Compute DDL hash for change detection (sorted table names + DDL for consistency)
+        ddl_str = "\n".join(f"{t}:{ddl}" for t, ddl in sorted(tables_ddl.items()))
+        ddl_hash = hashlib.sha256(ddl_str.encode()).hexdigest()
+
         stored = 0
         # Rolling window of the last 5 per-table durations for ETA estimation.
         _recent_times: List[float] = []
@@ -417,9 +426,7 @@ class SchemaManager:
 
                 vector = self._get_embedding(ddl)
                 if vector is None:
-                    logger.critical(
-                        "Embedding model unavailable; schema indexing falling back to Lazy Discovery"
-                    )
+                    logger.critical("[index] %s: embedding model unavailable — falling back to Lazy Discovery", db)
                     return 0
 
                 ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{table}"
@@ -430,7 +437,7 @@ class SchemaManager:
                     redis.sadd(SCHEMA_V1_INDEX_KEY, table)
                     stored += 1
                 except Exception as e:
-                    logger.warning("Failed to store schema for table %s: %s", table, e)
+                    logger.warning("[index] %s: failed to store table %s — %s", db, table, e)
 
                 # ── Progress reporting ───────────────────────────────────────
                 elapsed = time.time() - t0
@@ -454,15 +461,15 @@ class SchemaManager:
                     redis.set(f"{SCHEMA_V1_LAST_INDEXED}:{db}",      str(time.time()), ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_IS_INDEXED}:{db}",     "1",              ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}", now_iso,          ex=ttl)
-                except Exception:
-                    pass
+                    redis.set(f"{SCHEMA_STATUS_DDL_HASH}:{db}",      ddl_hash,         ex=ttl)
+                    logger.info("[index] %s: complete — %d table(s), last_indexed_at=%s", db, stored, now_iso)
+                except Exception as e:
+                    logger.warning("[index] %s: failed to write status keys — %s", db, e)
+            else:
+                logger.info("[index] %s: complete — 0 tables stored", db)
 
         except Exception as e:
-            logger.critical(
-                "Schema indexing failed: %s; falling back to Lazy Discovery",
-                e,
-                exc_info=True,
-            )
+            logger.critical("[index] %s: failed — %s; falling back to Lazy Discovery", db, e, exc_info=True)
             return 0
 
         return stored

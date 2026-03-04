@@ -42,16 +42,15 @@ class _SizeAndTimeRotatingHandler(logging.handlers.TimedRotatingFileHandler):
 def _setup_file_logging() -> Path:
     """Attach a rolling file handler to the root logger.
 
-    Log directory follows the XDG Base Directory Specification:
-        $XDG_STATE_HOME/daibai/logs/   (default: ~/.local/state/daibai/logs/)
+    Log directory: <project_root>/logs/
 
     Files rotate at midnight or at 10 MB, whichever comes first.
     Seven days of history are retained, then older files are removed.
 
     Returns the resolved log file path so it can be included in startup logs.
     """
-    xdg_state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-    log_dir = xdg_state / "daibai" / "logs"
+    project_root = Path(__file__).resolve().parent.parent.parent
+    log_dir = project_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / "daibai.log"
@@ -80,64 +79,46 @@ logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
 # Config tries all 10 LLM secret names (OPENAI-API-KEY, GEMINI-API-KEY, etc.); only
 # the ones you've stored exist; the rest return 404 and are silently skipped.
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+# Suppress Cosmos SDK request/header logs — clogs logs with no value.
+logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
 
-# rolling file handler (XDG path, size + time rotation)
+# rolling file handler (project logs/ directory)
 _log_file_path = _setup_file_logging()
 
 logger = logging.getLogger("daibai.websocket")
 
-# ── OTel Telemetry Router ─────────────────────────────────────────────────────
-# Priority:
-#   1. APPLICATIONINSIGHTS_CONNECTION_STRING → Azure Monitor (production)
-#   2. OTEL_EXPORTER_OTLP_ENDPOINT           → Aspire Dashboard (local dev)
-#   3. Neither set                            → stdout + rolling file only
-#
-# All branches are gracefully skipped if the optional packages are absent so the
-# server always boots regardless of which observability extras are installed.
-_APPINSIGHTS_CONN = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip()
-_OTLP_ENDPOINT    = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
-
-if _APPINSIGHTS_CONN:
+# ── aiohttp session tracing (before Azure SDK imports) ───────────────────────
+# Log every ClientSession open/close to find unclosed sessions (Azure Cosmos, etc.)
+def _patch_aiohttp_session_tracing():
     try:
-        from azure.monitor.opentelemetry import configure_azure_monitor
-        configure_azure_monitor()
-        logger.info(
-            "Azure Monitor configured — telemetry forwarded to Application Insights",
-            extra={"connection_string_present": True},
-        )
+        import aiohttp
     except ImportError:
-        logger.warning(
-            "APPLICATIONINSIGHTS_CONNECTION_STRING is set but "
-            "azure-monitor-opentelemetry is not installed. "
-            "Run: pip install -e '.[observability]'"
-        )
+        return
+    if getattr(aiohttp.ClientSession, "_daibai_patched", False):
+        return
+    _original_init = aiohttp.ClientSession.__init__
+    _original_close = aiohttp.ClientSession.close
+    _session_ids = {"next": 0}
 
-elif _OTLP_ENDPOINT:
-    try:
-        from opentelemetry.sdk._logs import LoggerProvider, set_logger_provider  # type: ignore[import]
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor       # type: ignore[import]
-        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter  # type: ignore[import]
-        from opentelemetry.sdk._logs.logging import LoggingHandler               # type: ignore[import]
+    def _logged_init(self, *args, **kwargs):
+        _session_ids["next"] += 1
+        sid = _session_ids["next"]
+        self._daibai_sid = sid
+        logging.getLogger("daibai.aiohttp").info("[aiohttp] Session OPEN id=%s", sid)
+        _original_init(self, *args, **kwargs)
 
-        _logger_provider = LoggerProvider()
-        set_logger_provider(_logger_provider)
+    async def _logged_close(self):
+        sid = getattr(self, "_daibai_sid", "?")
+        logging.getLogger("daibai.aiohttp").info("[aiohttp] Session CLOSE id=%s", sid)
+        return await _original_close(self)
 
-        # insecure=True is required for plain HTTP/2 on localhost:4317
-        _otlp_exporter = OTLPLogExporter(insecure=True)
-        _logger_provider.add_log_record_processor(BatchLogRecordProcessor(_otlp_exporter))
+    aiohttp.ClientSession.__init__ = _logged_init
+    aiohttp.ClientSession.close = _logged_close
+    aiohttp.ClientSession._daibai_patched = True
 
-        # Bridge: standard Python logging calls → OTel → Aspire Dashboard
-        logging.getLogger().addHandler(LoggingHandler(logger_provider=_logger_provider))
 
-        logger.info(
-            "OTLP exporter configured — telemetry forwarded to Aspire Dashboard",
-            extra={"otlp_endpoint": _OTLP_ENDPOINT},
-        )
-    except ImportError:
-        logger.warning(
-            "OTEL_EXPORTER_OTLP_ENDPOINT is set but opentelemetry-exporter-otlp "
-            "is not installed. Run: pip install opentelemetry-exporter-otlp"
-        )
+_patch_aiohttp_session_tracing()
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends, Request
 from fastapi.staticfiles import StaticFiles
@@ -296,16 +277,6 @@ async def lifespan(app: FastAPI):
     STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Instrument FastAPI with OpenTelemetry so every HTTP request and
-    # WebSocket connection is automatically traced.  No-op when the
-    # package is absent (local dev without observability deps).
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-        FastAPIInstrumentor.instrument_app(app)
-        logger.info("FastAPI OpenTelemetry instrumentation enabled")
-    except ImportError:
-        pass  # observability package not installed — skip silently
-
     app.state.store = CosmosConversationStore()
     logger.info(
         "DaiBai server started",
@@ -365,6 +336,8 @@ class QueryRequest(BaseModel):
     conversation_id: Optional[str] = None
     execute: bool = False
     is_playground: bool = False
+    verbose: bool = False
+    database: Optional[str] = None  # Client's selected DB; syncs agent before processing
 
 
 class QueryResponse(BaseModel):
@@ -383,6 +356,9 @@ class SettingsResponse(BaseModel):
     current_database: Optional[str]
     current_llm: Optional[str]
     current_mode: str
+    # Index status for current_database — enables auto-index when not_indexed
+    is_indexed: Optional[bool] = None
+    last_indexed_at: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -459,7 +435,16 @@ async def auth_onboard(
     if token:
         try:
             claims = auth.verify_firebase_token(token)
-        except HTTPException:
+            logger.info(
+                "[AUTH] onboard: token verified uid=%s email=%s email_verified=%s name=%s body_display_name=%r",
+                claims.get("uid"),
+                claims.get("email"),
+                claims.get("email_verified"),
+                claims.get("name"),
+                body.display_name,
+            )
+        except HTTPException as e:
+            logger.warning("[AUTH] onboard: token verification failed — %s", e.detail)
             claims = {}
 
     uid = claims.get("uid") or claims.get("user_id") or claims.get("sub") or body.uid
@@ -491,13 +476,39 @@ async def auth_onboard(
         # fields, and upserts — so profile edits done outside onboarding survive.
         user_record = await store.patch_user(user_id=uid, fields=fields)
         # Stamp onboarded_at only if this is the first time we've seen the user.
-        if not user_record.get("onboarded_at"):
+        is_new_user = not user_record.get("onboarded_at")
+        if is_new_user:
             user_record["onboarded_at"] = datetime.now().isoformat()
             await store.upsert_user(user_record)
+
+        logger.info(
+            "[AUTH] login uid=%s email=%s display_name=%s new_user=%s",
+            uid, email, user_record.get("display_name") or "(none)", is_new_user,
+        )
+
+        # Log default database and index status
+        try:
+            config = get_config()
+            dbs = config.list_databases()
+            default_db = config.default_database or (dbs[0] if dbs else None)
+            if default_db:
+                redis_key = _normalize_db_id_for_redis(default_db)
+                status = _get_schema_index_status(redis_key)
+                logger.info(
+                    "[AUTH] login default_database=%s is_indexed=%s last_indexed_at=%s",
+                    default_db,
+                    status["is_indexed"],
+                    status.get("last_indexed_at") or "(unknown)",
+                )
+            else:
+                logger.info("[AUTH] login default_database=(none configured)")
+        except Exception as e:
+            logger.warning("[AUTH] login default_database check failed — %s", e)
     except Exception as e:
         logger.warning(
-            "Cosmos upsert skipped during onboarding",
-            extra={"error": str(e), "uid": fields.get("uid", "unknown")},
+            "[AUTH] onboard: Cosmos upsert failed — %s",
+            e,
+            extra={"uid": fields.get("uid", "unknown")},
         )
         user_record = fields
 
@@ -584,19 +595,49 @@ async def favicon():
 # API Endpoints (protected)
 @app.get("/api/settings", response_model=SettingsResponse)
 async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get current settings and available options."""
-    config = get_config()
-    agent = get_agent()
-    
-    return SettingsResponse(
-        databases=config.list_databases(),
-        llm_providers=config.list_llm_providers(),
-        llm_provider_configs=config.get_llm_provider_configs_for_ui(),
-        modes=["sql", "ddl", "crud"],
-        current_database=agent.current_database,
-        current_llm=agent.current_llm,
-        current_mode="sql"
-    )
+    """Get current settings and available options. Uses config only; does not create the agent."""
+    logger.info("[settings] GET before")
+    try:
+        config = get_config()
+        # Avoid get_agent() — it triggers heavy init (MySQL, Redis, embeddings).
+        # Use agent's current selection only if already created; else config defaults.
+        agent = _agent if _agent is not None else None
+        current_db = agent._current_db if agent else config.default_database
+        current_llm_val = agent._current_llm if agent else config.default_llm
+
+        databases = config.list_databases()
+        llm_providers = config.list_llm_providers()
+        llm_configs = config.get_llm_provider_configs_for_ui()
+
+        # Index status for current_database — triggers auto-index when not_indexed
+        is_indexed_val = None
+        last_indexed_at_val = None
+        if current_db:
+            try:
+                redis_key = _normalize_db_id_for_redis(current_db)
+                idx_status = _get_schema_index_status(redis_key)
+                is_indexed_val = idx_status["is_indexed"]
+                last_indexed_at_val = idx_status.get("last_indexed_at")
+
+        logger.info(
+            "[settings] GET after status=ok databases=%s llm_providers=%s current_database=%s current_llm=%s agent_loaded=%s is_indexed=%s",
+            databases, llm_providers, current_db, current_llm_val, agent is not None, is_indexed_val,
+        )
+
+        return SettingsResponse(
+            databases=databases,
+            llm_providers=llm_providers,
+            llm_provider_configs=llm_configs,
+            modes=["sql", "ddl", "crud"],
+            current_database=current_db,
+            current_llm=current_llm_val,
+            current_mode="sql",
+            is_indexed=is_indexed_val,
+            last_indexed_at=last_indexed_at_val,
+        )
+    except Exception as exc:
+        logger.exception("[settings] GET after status=error %s", exc)
+        raise
 
 
 @app.post("/api/settings")
@@ -625,6 +666,107 @@ async def test_llm_connection(body: Dict[str, Any] = Body(default={}), _user: Di
     """Test LLM provider connectivity. Returns success/error."""
     # TODO: Implement actual connectivity test per provider
     return {"success": True, "message": "Connection test not yet implemented"}
+
+
+# --- Component health checks for Settings > System Health ---
+
+async def _health_check_redis() -> Dict[str, Any]:
+    """Test Redis connectivity (cache, schema status, semantic search)."""
+    try:
+        from ..core.cache import CacheManager
+        cache = CacheManager()
+        if cache.ping():
+            logger.info("[health] redis: OK")
+            return {"ok": True, "message": "PING OK"}
+        logger.warning("[health] redis: ping failed (no connection string or unreachable)")
+        return {"ok": False, "message": "No connection string or ping failed"}
+    except Exception as e:
+        logger.exception("[health] redis: %s", e)
+        return {"ok": False, "message": str(e)}
+
+
+async def _health_check_llm() -> Dict[str, Any]:
+    """Test LLM provider with a trivial generate call."""
+    try:
+        agent = get_agent()
+        response = await asyncio.wait_for(
+            agent.generate_async("Say OK", {}),
+            timeout=15.0,
+        )
+        if response and (response.text or response.sql):
+            return {"ok": True, "message": "LLM responded"}
+        return {"ok": False, "message": "Empty response"}
+    except asyncio.TimeoutError:
+        return {"ok": False, "message": "Timeout after 15s"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+async def _health_check_pruning() -> Dict[str, Any]:
+    """Test schema pruning engine (Redis + embeddings)."""
+    try:
+        agent = get_agent()
+        db_name = agent._current_db
+        if not db_name and agent.config.databases:
+            db_name = next(iter(agent.config.databases.keys()), None)
+        if not db_name:
+            return {"ok": False, "message": "No database selected"}
+        sm = agent._get_schema_manager(db_name)
+        if not sm:
+            return {"ok": False, "message": "SchemaManager unavailable"}
+        ddl_list = sm.search_schema_v1(query="tables", schema_name=db_name, limit=1)
+        count = len(ddl_list) if ddl_list else 0
+        return {"ok": True, "message": f"OK ({count} table(s) in index)" if count else "Reachable (no tables indexed yet)"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+async def _health_check_database() -> Dict[str, Any]:
+    """Test database connection."""
+    try:
+        agent = get_agent()
+        db_name = agent._current_db
+        if not db_name and agent.config.databases:
+            db_name = next(iter(agent.config.databases.keys()), None)
+        if not db_name:
+            return {"ok": False, "message": "No database selected"}
+        df = agent.run_sql("SELECT 1 AS ok", db_name)
+        if df is not None and len(df) > 0:
+            return {"ok": True, "message": f"Connected to {db_name}"}
+        return {"ok": False, "message": "Query returned empty"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+async def _health_check_embeddings() -> Dict[str, Any]:
+    """Test embedding model (sentence-transformers)."""
+    try:
+        from ..core.cache import CacheManager
+        cache = CacheManager()
+        vec = cache.get_embedding("test")
+        if vec and len(vec) > 0:
+            return {"ok": True, "message": f"OK ({len(vec)}-dim vectors)"}
+        return {"ok": False, "message": "Model unavailable or returned empty vector"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+_HEALTH_HANDLERS_ASYNC = {
+    "redis": _health_check_redis,
+    "llm": _health_check_llm,
+    "embeddings": _health_check_embeddings,
+    "pruning": _health_check_pruning,
+    "database": _health_check_database,
+}
+
+
+async def _health_check_cosmos(store: CosmosConversationStore) -> Dict[str, Any]:
+    """Test Cosmos DB (conversation store)."""
+    try:
+        _ = await store.get_history("health-check-test")
+        return {"ok": True, "message": "Connected"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
 
 
 # --- Model discovery (delegated to model_discovery module) ---
@@ -753,6 +895,10 @@ async def query(
     conv_id = request.conversation_id or str(uuid.uuid4())
     uid     = _user.get("uid", "")
 
+    # Sync agent to client's selected database when provided
+    if request.database and request.database in (agent.config.list_databases() or []):
+        agent.switch_database(request.database)
+
     # ── Quota gate: anonymous users are limited to 20 playground queries ───────
     if request.is_playground and _is_anonymous_user(_user):
         try:
@@ -773,14 +919,69 @@ async def query(
     }
 
     try:
+        # Index interrogation: answer schema-status questions directly
+        if _is_index_interrogation_query(request.query):
+            db_id = "chinook_playground" if request.is_playground else get_agent()._current_db
+            if db_id:
+                status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
+                ddl_changed = None
+                if status.get("is_indexed") and status.get("ddl_hash"):
+                    current_hash = _compute_ddl_hash_for_db(db_id)
+                    if current_hash is not None:
+                        ddl_changed = current_hash != status["ddl_hash"]
+                if status["is_indexed"]:
+                    msg = f"The schema was last indexed at {status.get('last_indexed_at', 'unknown')} (UTC)."
+                    if ddl_changed is True:
+                        msg += " **The DDL has changed since then** — consider re-indexing for accurate semantic search."
+                    elif ddl_changed is False:
+                        msg += " The DDL has not changed since the last index."
+                else:
+                    logger.info("[index] artifact: REST query returned 'not indexed' (db=%s, index_interrogation)", db_id)
+                    msg = "The database is not yet indexed. It will be indexed automatically when you select it."
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": msg,
+                    "sql": None,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                return QueryResponse(
+                    sql=None,
+                    explanation=msg,
+                    results=None,
+                    row_count=None,
+                    conversation_id=conv_id,
+                )
+
         if request.is_playground:
+            db_id = "chinook_playground"
+            status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
+            if not status["is_indexed"]:
+                logger.info("[index] REST query: forcing index before execution (db=%s, playground)", db_id)
+                await _trigger_index_background(db_id)
+
             # ── Playground path: Chinook system prompt + SQLite execution ──────
             sql, results, row_count = await _run_playground(
                 agent, request.query, execute=request.execute, history=history
             )
         else:
+            db_id = agent._current_db
+            if db_id:
+                status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
+                if not status["is_indexed"]:
+                    logger.info("[index] REST query: forcing index before execution (db=%s, production)", db_id)
+                    await _trigger_index_background(db_id)
+
             # ── Production path: user's configured database ───────────────────
-            sql = await agent.generate_sql_async(request.query, "sql", history=history)
+            sql = None
+            try:
+                sql = await asyncio.wait_for(
+                    agent.generate_sql_async(request.query, "sql", history=history),
+                    timeout=_PLAYGROUND_LLM_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
+                sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
             results   = None
             row_count = None
             if request.execute and sql:
@@ -900,6 +1101,125 @@ async def get_tables(_user: Dict[str, Any] = Depends(get_current_user)):
 
 # ── Schema status & real-time indexing progress ────────────────────────────
 
+async def _trigger_index_background(db_id: str) -> None:
+    """Start schema indexing in background. Non-blocking; logs errors."""
+    redis_key_id = _normalize_db_id_for_redis(db_id)
+    logger.info("[index] background: start db_id=%s", db_id)
+    try:
+        if redis_key_id == "playground":
+            root = Path(__file__).resolve().parent.parent.parent
+            import sys
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from scripts.index_db import index_playground
+            await asyncio.to_thread(index_playground, "playground", force=True)
+            logger.info("[index] background: done db_id=%s", db_id)
+        else:
+            agent = get_agent()
+            sm = agent._get_schema_manager(db_id)
+            if sm:
+                await asyncio.to_thread(sm.index_schema, schema_name=db_id, force=True)
+                logger.info("[index] background: done db_id=%s", db_id)
+            else:
+                logger.warning("[index] background: skipped db_id=%s — no schema manager", db_id)
+    except Exception as e:
+        logger.warning("[index] background: failed db_id=%s — %s", db_id, e, extra={"db_id": db_id})
+
+
+def _normalize_db_id_for_redis(db_id: str) -> str:
+    """Map frontend db_id to Redis key suffix (e.g. chinook_playground → playground)."""
+    if db_id in ("chinook_playground", "playground"):
+        return "playground"
+    return db_id
+
+
+def _get_schema_index_status(redis_key_id: str) -> dict:
+    """Read schema index status from Redis. redis_key_id is the normalized DB id.
+    Uses short timeouts to avoid blocking; on Redis failure, returns is_indexed=True
+    so queries can proceed with full schema fallback.
+    """
+    from ..core.config import get_redis_connection_string
+    from ..core.schema import (
+        SCHEMA_STATUS_IS_INDEXED,
+        SCHEMA_STATUS_LAST_INDEXED_AT,
+        SCHEMA_STATUS_DDL_HASH,
+    )
+
+    is_indexed = False
+    last_indexed_at = None
+    ddl_hash = None
+
+    conn_str = get_redis_connection_string()
+    if conn_str:
+        try:
+            import redis
+            redis_client = redis.Redis.from_url(
+                conn_str,
+                decode_responses=True,
+                socket_connect_timeout=3,
+                socket_timeout=5,
+            )
+            raw = redis_client.get(f"{SCHEMA_STATUS_IS_INDEXED}:{redis_key_id}")
+            is_indexed = raw == "1"
+            raw_at = redis_client.get(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{redis_key_id}")
+            last_indexed_at = raw_at if raw_at else None
+            raw_hash = redis_client.get(f"{SCHEMA_STATUS_DDL_HASH}:{redis_key_id}")
+            ddl_hash = raw_hash if raw_hash else None
+        except Exception as e:
+            logger.warning("Schema index status check failed (Redis timeout/unreachable), allowing query: %s", e)
+            is_indexed = True  # Allow query through; agent uses full schema fallback
+
+    if not is_indexed:
+        logger.info("[index] status: db=%s not_indexed (last_indexed_at=%s)", redis_key_id, last_indexed_at)
+
+    return {
+        "is_indexed": is_indexed,
+        "last_indexed_at": last_indexed_at,
+        "ddl_hash": ddl_hash,
+    }
+
+
+def _compute_ddl_hash_for_db(db_id: str) -> str | None:
+    """Compute current schema DDL hash for change detection. Playground: None (format differs)."""
+    import hashlib
+    redis_key_id = _normalize_db_id_for_redis(db_id)
+    if redis_key_id == "playground":
+        return None  # Playground hash requires index_db's SchemaManager; skip for now
+    agent = get_agent()
+    sm = agent._get_schema_manager(db_id)
+    if not sm:
+        return None
+    try:
+        tables_ddl = sm.discover_schema(db_id)
+        if not tables_ddl:
+            return None
+        ddl_str = "\n".join(f"{t}:{ddl}" for t, ddl in sorted(tables_ddl.items()))
+        return hashlib.sha256(ddl_str.encode()).hexdigest()
+    except Exception:
+        return None
+
+
+def _is_index_interrogation_query(query: str) -> bool:
+    """True if the user is asking about schema index status."""
+    q = query.strip().lower()
+    patterns = [
+        "when was the last time you were indexed",
+        "when was the schema indexed",
+        "when did you last index",
+        "when was i indexed",
+        "has the ddl changed since you were indexed",
+        "has the ddl changed since index",
+        "is the database indexed",
+        "is the schema indexed",
+        "index status",
+        "schema index status",
+        "when were you indexed",
+        "last indexed",
+        "indexed when",
+    ]
+    return any(p in q for p in patterns)
+
+
 @app.get("/api/schema/status/{db_id}")
 async def schema_index_status(
     db_id: str,
@@ -908,31 +1228,22 @@ async def schema_index_status(
     """
     Return the schema-indexing status for a database connection.
 
-    Reads two Redis keys written by SchemaManager.index_schema():
-      schema:status:is_indexed:{db_id}      → "1" when indexed, absent/other = false
-      schema:status:last_indexed_at:{db_id} → ISO-8601 UTC timestamp of last run
+    Maps chinook_playground → playground for Redis keys.
+    Includes ddl_changed when current schema hash can be computed.
     """
-    from ..core.cache import CacheManager
-    from ..core.schema import SCHEMA_STATUS_IS_INDEXED, SCHEMA_STATUS_LAST_INDEXED_AT
-
-    cache = CacheManager()
-    redis = cache._get_client()
-    is_indexed     = False
-    last_indexed_at = None
-
-    if redis:
-        try:
-            raw = redis.get(f"{SCHEMA_STATUS_IS_INDEXED}:{db_id}")
-            is_indexed = raw == "1"
-            raw_at = redis.get(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db_id}")
-            last_indexed_at = raw_at or None
-        except Exception:
-            pass
+    redis_key_id = _normalize_db_id_for_redis(db_id)
+    status = _get_schema_index_status(redis_key_id)
+    ddl_changed = None
+    if status.get("is_indexed") and status.get("ddl_hash"):
+        current_hash = _compute_ddl_hash_for_db(db_id)
+        if current_hash is not None:
+            ddl_changed = current_hash != status["ddl_hash"]
 
     return {
-        "db_id":           db_id,
-        "is_indexed":      is_indexed,
-        "last_indexed_at": last_indexed_at,
+        "db_id": db_id,
+        "is_indexed": status["is_indexed"],
+        "last_indexed_at": status["last_indexed_at"],
+        "ddl_changed": ddl_changed,
     }
 
 
@@ -962,63 +1273,76 @@ async def ws_schema_progress(websocket: WebSocket):
     await websocket.accept()
 
     agent     = get_agent()
-    target_db = db_arg or agent._current_db
-
-    if not target_db:
+    raw_db    = db_arg or agent._current_db or ""
+    target_db = _normalize_db_id_for_redis(raw_db)
+    logger.info("[index] ws_schema_progress: connected db=%s", target_db or "(none)")
+    if not raw_db:
         await websocket.send_json({"type": "error", "message": "No database selected"})
         await websocket.close()
         return
 
-    sm = agent._get_schema_manager(target_db)
-    if sm is None:
-        await websocket.send_json({
-            "type": "error",
-            "message": f"Schema manager unavailable for '{target_db}' (Redis not configured?)",
-        })
-        await websocket.close()
-        return
+    # Playground uses index_db.index_playground (SQLite); others use SchemaManager.
+    is_playground = target_db == "playground"
+    if is_playground:
 
-    loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
-    queue: asyncio.Queue            = asyncio.Queue()
+        def _run_index_playground() -> int:
+            import sys
+            root = Path(__file__).resolve().parent.parent.parent
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from scripts.index_db import index_playground
+            return index_playground("playground", force=True)
 
-    def _progress_cb(pct: float, status: str, eta: float) -> None:
-        """Called from the worker thread; routes updates into the async queue."""
-        asyncio.run_coroutine_threadsafe(
-            queue.put({
-                "type":   "progress",
-                "pct":    round(pct, 1),
-                "status": status,
-                "eta":    round(eta, 1),
-            }),
-            loop,
+        await websocket.send_json({"type": "progress", "pct": 0, "status": "Indexing playground schema…", "eta": 15})
+        index_task = asyncio.ensure_future(asyncio.to_thread(_run_index_playground))
+    else:
+        sm = agent._get_schema_manager(target_db)
+        if sm is None:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Schema manager unavailable for '{target_db}' (Redis not configured?)",
+            })
+            await websocket.close()
+            return
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def _progress_cb(pct: float, status: str, eta: float) -> None:
+            asyncio.run_coroutine_threadsafe(
+                queue.put({"type": "progress", "pct": round(pct, 1), "status": status, "eta": round(eta, 1)}),
+                loop,
+            )
+
+        index_task = asyncio.ensure_future(
+            asyncio.to_thread(sm.index_schema, schema_name=target_db, force=True, progress_cb=_progress_cb)
         )
 
-    # Run the blocking index_schema inside a thread pool so the event loop stays free.
-    index_task: asyncio.Future = asyncio.ensure_future(
-        asyncio.to_thread(sm.index_schema, schema_name=target_db, force=True, progress_cb=_progress_cb)
-    )
-
     try:
-        # Drain the queue until the indexing task finishes.
-        while True:
-            try:
-                msg = await asyncio.wait_for(queue.get(), timeout=0.25)
-                await websocket.send_json(msg)
-            except asyncio.TimeoutError:
-                if index_task.done():
-                    break
-
-        # Flush any messages that arrived between the last poll and task completion.
-        while not queue.empty():
-            await websocket.send_json(queue.get_nowait())
+        if not is_playground:
+            # Drain the progress queue until the indexing task finishes.
+            while True:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=0.25)
+                    await websocket.send_json(msg)
+                except asyncio.TimeoutError:
+                    if index_task.done():
+                        break
+            while not queue.empty():
+                await websocket.send_json(queue.get_nowait())
+        else:
+            await index_task
 
         if index_task.exception():
+            err = str(index_task.exception())
+            logger.warning("[index] ws_schema_progress: error db=%s — %s", target_db, err)
             await websocket.send_json({
                 "type":    "error",
-                "message": str(index_task.exception()),
+                "message": err,
             })
         else:
             n = index_task.result()
+            logger.info("[index] ws_schema_progress: done db=%s — %d table(s)", target_db, n)
             await websocket.send_json({
                 "type":   "done",
                 "pct":    100,
@@ -1074,6 +1398,26 @@ async def websocket_chat(websocket: WebSocket):
     agent        = get_agent()
     store        = websocket.app.state.store
 
+    # ── Notify client if current database needs indexing (auto-kickoff with dialog) ──
+    config = get_config()
+    current_db = agent._current_db if agent else config.default_database
+    if current_db and not ws_anonymous:
+        try:
+            redis_key = _normalize_db_id_for_redis(current_db)
+            idx_status = _get_schema_index_status(redis_key)
+            if not idx_status["is_indexed"]:
+                logger.info("[index] ws connect: db=%s not_indexed — sending init for auto-index", current_db)
+                await websocket.send_json({
+                    "type": "init",
+                    "index_status": {
+                        "database": current_db,
+                        "is_indexed": False,
+                        "last_indexed_at": idx_status.get("last_indexed_at"),
+                    },
+                })
+        except Exception as e:
+            logger.warning("[index] ws connect: could not send index_status — %s", e)
+
     # Enrich context with identity fields; auth_provider surfaces in KQL instantly.
     log_context.update({
         "uid":           ws_uid,
@@ -1094,6 +1438,16 @@ async def websocket_chat(websocket: WebSocket):
             conv_id       = data.get("conversation_id", str(uuid.uuid4()))
             execute       = data.get("execute", False)
             is_playground = data.get("is_playground", False)
+            verbose       = data.get("verbose", False)
+            db_from_client = data.get("database") or None
+
+            # Sync agent to client's selected database when provided
+            if db_from_client and db_from_client in (agent.config.list_databases() or []):
+                agent.switch_database(db_from_client)
+
+            async def _send_debug(msg: str) -> None:
+                if verbose:
+                    await websocket.send_json({"type": "debug", "content": msg, "conversation_id": conv_id})
 
             req_context: Dict[str, Any] = {
                 **log_context,
@@ -1103,6 +1457,7 @@ async def websocket_chat(websocket: WebSocket):
                 "query_length":      len(query),
             }
             logger.info("Received chat query", extra=req_context)
+            await _send_debug("1. Received query")
 
             # ── Quota gate for anonymous playground users ──────────────────
             if is_playground and ws_anonymous:
@@ -1126,9 +1481,11 @@ async def websocket_chat(websocket: WebSocket):
                         extra=req_context,
                         exc_info=True,
                     )
+            await _send_debug("2. Quota check passed")
 
             history = await store.get_history(conv_id)
             req_context["history_length"] = len(history)
+            await _send_debug(f"3. Loaded history ({len(history)} messages)")
 
             user_msg = {
                 "role":      "user",
@@ -1136,16 +1493,67 @@ async def websocket_chat(websocket: WebSocket):
                 "timestamp": datetime.now().isoformat(),
             }
             await websocket.send_json({"type": "ack", "conversation_id": conv_id})
+            await _send_debug("4. Sent ack to client")
 
             try:
+                # ── Index interrogation: answer schema-status questions directly ──
+                if _is_index_interrogation_query(query):
+                    await _send_debug("5. Index interrogation detected — answering directly")
+                    db_id = "chinook_playground" if is_playground else agent._current_db
+                    if db_id:
+                        status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
+                        ddl_changed = None
+                        if status.get("is_indexed") and status.get("ddl_hash"):
+                            current_hash = _compute_ddl_hash_for_db(db_id)
+                            if current_hash is not None:
+                                ddl_changed = current_hash != status["ddl_hash"]
+                        if status["is_indexed"]:
+                            msg = f"The schema was last indexed at {status.get('last_indexed_at', 'unknown')} (UTC)."
+                            if ddl_changed is True:
+                                msg += " **The DDL has changed since then** — consider re-indexing for accurate semantic search."
+                            elif ddl_changed is False:
+                                msg += " The DDL has not changed since the last index."
+                        else:
+                            logger.info("[index] artifact: WS chat returned 'not indexed' (db=%s, index_interrogation)", db_id)
+                            msg = "The database is not yet indexed. It will be indexed automatically when you select it."
+                        await websocket.send_json({
+                            "type": "message",
+                            "content": msg,
+                            "conversation_id": conv_id,
+                        })
+                        assistant_msg = {
+                            "role": "assistant",
+                            "content": msg,
+                            "sql": None,
+                            "results": None,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                        await websocket.send_json({"type": "done", "conversation_id": conv_id})
+                        continue
+
                 if is_playground:
+                    await _send_debug("5. Playground path: starting")
+                    db_id = "chinook_playground"
+                    status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
+                    if not status["is_indexed"]:
+                        logger.info("[index] WS chat: forcing index before execution (db=%s, playground)", db_id)
+                        await websocket.send_json({
+                            "type": "message",
+                            "content": "Indexing database for AI search — one moment…",
+                            "conversation_id": conv_id,
+                        })
+                        await _trigger_index_background(db_id)
+
                     # ── Playground path ──────────────────────────────────────
+                    await _send_debug("6. Playground: generating SQL via LLM...")
                     llm_start               = time.perf_counter()
                     sql, results, row_count = await _run_playground(
                         agent, query, execute=execute, history=history
                     )
                     req_context["llm_latency_sec"]      = round(time.perf_counter() - llm_start, 3)
                     req_context["generated_sql_length"]  = len(sql) if sql else 0
+                    await _send_debug(f"7. Playground: SQL generated ({len(sql or '')} chars)")
 
                     await websocket.send_json({
                         "type":            "sql",
@@ -1153,6 +1561,8 @@ async def websocket_chat(websocket: WebSocket):
                         "conversation_id": conv_id,
                         "is_playground":   True,
                     })
+                    if execute and sql:
+                        await _send_debug("8. Playground: executing SQL...")
                     if results is not None:
                         cols = list(results[0].keys()) if results else []
                         req_context["result_row_count"] = row_count
@@ -1165,11 +1575,33 @@ async def websocket_chat(websocket: WebSocket):
                         })
 
                 else:
+                    await _send_debug("5. Production path: starting")
+                    db_id = agent._current_db
+                    if db_id:
+                        status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
+                        if not status["is_indexed"]:
+                            logger.info("[index] WS chat: forcing index before execution (db=%s, production)", db_id)
+                            await websocket.send_json({
+                                "type": "message",
+                                "content": "Indexing database for AI search — one moment…",
+                                "conversation_id": conv_id,
+                            })
+                            await _trigger_index_background(db_id)
+
                     # ── Production path ──────────────────────────────────────
+                    await _send_debug("6. Production: generating SQL via agent (schema pruning + LLM)...")
                     llm_start = time.perf_counter()
-                    sql       = await agent.generate_sql_async(query, "sql", history=history)
+                    try:
+                        sql = await asyncio.wait_for(
+                            agent.generate_sql_async(query, "sql", history=history),
+                            timeout=_PLAYGROUND_LLM_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
+                        sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
                     req_context["llm_latency_sec"]     = round(time.perf_counter() - llm_start, 3)
                     req_context["generated_sql_length"] = len(sql) if sql else 0
+                    await _send_debug(f"7. Production: SQL generated ({len(sql or '')} chars)")
 
                     await websocket.send_json({
                         "type":            "sql",
@@ -1179,6 +1611,7 @@ async def websocket_chat(websocket: WebSocket):
                     results   = None
                     row_count = None
                     if execute and sql:
+                        await _send_debug("8. Production: executing SQL...")
                         exec_start = time.perf_counter()
                         df         = agent.run_sql(sql)
                         req_context["exec_latency_sec"] = round(time.perf_counter() - exec_start, 3)
@@ -1194,6 +1627,7 @@ async def websocket_chat(websocket: WebSocket):
                                 "conversation_id": conv_id,
                             })
 
+                await _send_debug("9. Saving conversation to Cosmos...")
                 assistant_msg = {
                     "role":      "assistant",
                     "content":   sql or "Could not generate SQL",
@@ -1217,6 +1651,7 @@ async def websocket_chat(websocket: WebSocket):
 
                 req_context["total_latency_sec"] = round(time.perf_counter() - req_start, 3)
                 logger.info("Chat query processed successfully", extra=req_context)
+                await _send_debug("10. Done")
                 await websocket.send_json({"type": "done", "conversation_id": conv_id})
 
             except Exception as exc:
@@ -1250,6 +1685,39 @@ async def websocket_chat(websocket: WebSocket):
         )
 
 
+@app.get("/api/health/ping")
+async def api_health_ping():
+    """Simple connectivity check; no auth required."""
+    return {"status": "ok"}
+
+
+@app.get("/api/health")
+async def api_health_check(
+    components: Optional[str] = None,
+    _user: Dict[str, Any] = Depends(get_current_user),
+    store: CosmosConversationStore = Depends(get_store),
+):
+    """
+    Test system components. ?components=redis,llm,pruning,database,cosmos
+    Omit to test all. Returns { component: { ok, message } }.
+    """
+    all_components = list(_HEALTH_HANDLERS_ASYNC.keys()) + ["cosmos"]
+    requested = (
+        [c.strip().lower() for c in components.split(",") if c.strip()]
+        if components
+        else all_components
+    )
+    result = {}
+    for comp in requested:
+        if comp == "cosmos":
+            result[comp] = await _health_check_cosmos(store)
+        elif comp in _HEALTH_HANDLERS_ASYNC:
+            result[comp] = await _HEALTH_HANDLERS_ASYNC[comp]()
+        else:
+            result[comp] = {"ok": False, "message": f"Unknown component: {comp}"}
+    return result
+
+
 # Serve static files and index
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -1258,6 +1726,15 @@ async def index():
     if index_path.exists():
         return FileResponse(index_path)
     return HTMLResponse("<h1>DaiBai GUI</h1><p>Static files not found.</p>")
+
+
+@app.get("/verify-email", response_class=HTMLResponse, include_in_schema=False)
+async def verify_email_page():
+    """Serve the custom email verification page (manual button to apply oobCode)."""
+    path = STATIC_DIR / "verify-email.html"
+    if path.exists():
+        return FileResponse(path)
+    return HTMLResponse("<h1>Not found</h1><p>Verify email page not found.</p>", status_code=404)
 
 
 # Mount static files

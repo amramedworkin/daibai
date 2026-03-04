@@ -43,24 +43,35 @@ const _uiConfig = {
             const u         = authResult.user;
             const isNew     = authResult.additionalUserInfo?.isNewUser;
             const providerId = authResult.additionalUserInfo?.providerId;
-            console.log('[AUTH] Sign-in success:', u.email || u.uid,
-                        '| provider:', providerId,
-                        '| new user:', isNew,
-                        '| emailVerified:', u.emailVerified);
+            console.log('[AUTH] signInSuccessWithAuthResult:', {
+                uid: u.uid,
+                email: u.email,
+                emailVerified: u.emailVerified,
+                displayName: u.displayName || '(empty)',
+                providerId,
+                isNewUser: isNew,
+            });
 
             // For brand-new email/password registrations, send the verification
             // email immediately so the user receives it before they can do anything.
             // onAuthStateChanged will block the app until they click the link.
             if (isNew && providerId === 'password') {
-                u.sendEmailVerification()
+                const actionUrl = `${window.location.origin}/verify-email`;
+                u.sendEmailVerification({ url: actionUrl, handleCodeInApp: true })
                     .then(() => console.log('[AUTH] Verification email sent to', u.email))
                     .catch(e  => console.warn('[AUTH] sendEmailVerification failed:', e.message));
             }
 
+            // For existing email/password users, reload to ensure emailVerified is fresh
+            // (e.g. user verified in another tab, then signed in here).
             document.getElementById('authModal')?.classList.remove('active');
+            // Update UI immediately; onAuthStateChanged may run async. For unverified
+            // email users, onAuthStateChanged will correct the UI shortly.
+            _currentUser = u;
+            updateAuthButtons();
             return false; // must be false — prevents FirebaseUI from redirecting
         },
-        uiShown: () => console.log('[AUTH] FirebaseUI widget rendered'),
+        uiShown: () => console.log('[AUTH] FirebaseUI widget rendered (sign-in/sign-up form visible)'),
     },
     tosUrl: null,
     privacyPolicyUrl: null,
@@ -73,6 +84,7 @@ function isAuthenticated() { return !!_currentUser; }
 
 /** Open the sign-in modal and render the FirebaseUI widget. */
 function signIn() {
+    console.log('[AUTH] signIn: opening auth modal');
     document.getElementById('authModal')?.classList.add('active');
     _ui.start('#firebaseui-auth-container', _uiConfig);
 }
@@ -93,7 +105,15 @@ async function signOut() {
  */
 function _requiresEmailVerification(user) {
     const isEmailPassword = user.providerData.some(p => p.providerId === 'password');
-    return isEmailPassword && !user.emailVerified;
+    const requires = isEmailPassword && !user.emailVerified;
+    console.log('[AUTH] _requiresEmailVerification:', {
+        uid: user.uid,
+        email: user.email,
+        isEmailPassword,
+        emailVerified: user.emailVerified,
+        result: requires,
+    });
+    return requires;
 }
 
 /** Show the blocking verification modal and populate the email address. */
@@ -122,7 +142,8 @@ async function resendVerificationEmail() {
     if (btn) btn.disabled = true;
     if (status) { status.textContent = 'Sending…'; status.className = 'verification-status loading'; }
     try {
-        await user.sendEmailVerification();
+        const actionUrl = `${window.location.origin}/verify-email`;
+        await user.sendEmailVerification({ url: actionUrl, handleCodeInApp: true });
         if (status) { status.textContent = 'Sent! Check your inbox (and spam folder).'; status.className = 'verification-status success'; }
     } catch (e) {
         console.error('[AUTH] resendVerificationEmail:', e);
@@ -147,8 +168,10 @@ async function checkEmailVerified() {
     if (status) { status.textContent = 'Checking…'; status.className = 'verification-status loading'; }
 
     try {
+        console.log('[AUTH] checkEmailVerified: reloading user', user.uid, 'current emailVerified:', user.emailVerified);
         await user.reload();
         const refreshed = firebase.auth().currentUser;
+        console.log('[AUTH] checkEmailVerified: after reload', refreshed?.uid, 'emailVerified:', refreshed?.emailVerified);
 
         if (refreshed?.emailVerified) {
             if (status) { status.textContent = 'Verified! Loading your workspace…'; status.className = 'verification-status success'; }
@@ -367,11 +390,30 @@ function hideAuthGate()  { /* no-op */ }
 
 function updateAuthButtons() {
     const hasAccount = isAuthenticated();
+    const isAnonymous = !!(_currentUser?.isAnonymous);
     const el         = (id) => document.getElementById(id);
 
-    // Avatar: Lucide icon (guest) vs green-gradient initials (authenticated)
-    if (el('avatarIcon'))     el('avatarIcon').style.display     = hasAccount ? 'none' : '';
-    if (el('avatarInitials')) el('avatarInitials').style.display = hasAccount ? '' : 'none';
+    // Avatar: guest icon (circle-user) | anonymous icon (ghost) | initials (authenticated)
+    const avatarIcon = el('avatarIcon');
+    const avatarInitials = el('avatarInitials');
+    if (avatarIcon && avatarInitials) {
+        if (!hasAccount) {
+            avatarIcon.style.display = '';
+            avatarIcon.setAttribute('data-lucide', 'circle-user');
+            avatarIcon.title = 'Sign in';
+            avatarInitials.style.display = 'none';
+        } else if (isAnonymous) {
+            avatarIcon.style.display = '';
+            avatarIcon.setAttribute('data-lucide', 'ghost');
+            avatarIcon.title = 'Anonymous (Playground guest)';
+            avatarInitials.style.display = 'none';
+        } else {
+            avatarIcon.style.display = 'none';
+            avatarInitials.style.display = '';
+            avatarInitials.title = '';
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
 
     // Display name next to avatar: only when signed in
     if (el('userDisplayName')) el('userDisplayName').style.display = hasAccount ? '' : 'none';
@@ -380,6 +422,9 @@ function updateAuthButtons() {
     if (el('profileGuestItems'))    el('profileGuestItems').style.display    = hasAccount ? 'none' : '';
     if (el('profileAuthItems'))     el('profileAuthItems').style.display     = hasAccount ? '' : 'none';
     if (el('dropdownSignOut'))      el('dropdownSignOut').style.display      = hasAccount ? '' : 'none';
+    if (el('sidebarSignInBtn'))     el('sidebarSignInBtn').style.display     = hasAccount ? 'none' : '';
+    if (el('settingsBtn'))          el('settingsBtn').style.display         = hasAccount ? '' : 'none';
+    if (el('navSignInPrompt'))      el('navSignInPrompt').style.display     = hasAccount ? 'none' : '';
     if (el('profileDropdownHeader'))el('profileDropdownHeader').style.display= hasAccount ? '' : 'none';
     if (el('profileHeaderDivider')) el('profileHeaderDivider').style.display = hasAccount ? '' : 'none';
 
@@ -392,7 +437,8 @@ function updateAuthButtons() {
             ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
             : displayName.slice(0, 2).toUpperCase();
 
-        if (el('userDisplayName')) el('userDisplayName').textContent = displayName;
+        const greet = displayName ? `Hello, ${displayName}` : '';
+        if (el('userDisplayName')) el('userDisplayName').textContent = greet;
         if (el('avatarInitials'))  el('avatarInitials').textContent  = initials;
         if (el('avatarLg'))        el('avatarLg').textContent        = initials;
         if (el('profileName'))     el('profileName').textContent     = displayName;
@@ -431,7 +477,13 @@ async function apiFetch(url, options = {}) {
  */
 async function onboardUser(user) {
     try {
-        const idToken = await user.getIdToken();
+        const idToken = await user.getIdToken(true); // true = force refresh so backend gets latest email_verified claim
+        console.log('[AUTH] onboardUser: calling /api/auth/onboard', {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName || '(empty)',
+            emailVerified: user.emailVerified,
+        });
         const res = await fetch('/api/auth/onboard', {
             method: 'POST',
             headers: {
@@ -446,12 +498,13 @@ async function onboardUser(user) {
         });
         if (res.ok) {
             const data = await res.json();
-            console.log('[AUTH] Onboarding complete:', data);
+            console.log('[AUTH] onboardUser: success', data);
         } else {
-            console.warn('[AUTH] Onboarding non-OK:', res.status);
+            const errBody = await res.text();
+            console.warn('[AUTH] onboardUser: non-OK', res.status, errBody);
         }
     } catch (e) {
-        console.error('[AUTH] Onboarding error:', e);
+        console.error('[AUTH] onboardUser: error', e);
     }
 }
 
@@ -685,6 +738,7 @@ class DaiBaiApp {
     constructor() {
         this.conversationId = null;
         this.ws = null;
+        this._wsReconnectTimer = null;
         this.isLoading = false;
         this.lastGeneratedSql = null;
         this.resultsCache = {};  // resultsId -> results for Export CSV
@@ -710,7 +764,7 @@ class DaiBaiApp {
         // Authenticated: load full feature set.
         await this.loadSettings();
         await this.loadConversations();
-        this.connectWebSocket();
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
     }
     
     enterGuestMode() {
@@ -752,7 +806,7 @@ class DaiBaiApp {
         // Load the full feature set.
         await this.loadSettings();
         await this.loadConversations();
-        this.connectWebSocket();
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
 
         console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
@@ -804,6 +858,9 @@ class DaiBaiApp {
                 this.sendBtn.disabled = false;
             }
 
+            // Auto-index playground if needed
+            this.ensureDatabaseIndexed('chinook_playground');
+
         } else {
             // ── Unlock and restore the nav dropdowns ─────────────────────
             this.databaseSelect.disabled = false;
@@ -820,57 +877,46 @@ class DaiBaiApp {
                 if (this._savedLlmValue) this.llmSelect.value         = this._savedLlmValue;
             });
 
-            // Hide the index nudge (the restored DB may already be indexed).
-            this._hideIndexNudge();
         }
 
         console.log('[Playground] _isPlaygroundActive =', active);
     }
 
-    // ── Schema Index Status ────────────────────────────────────────────────
+    // ── Schema Index: Auto-index when not indexed, disable inputs until done ──
 
-    /** Update the status dot next to the Database label.
-     * @param {'unknown'|'indexed'|'not-indexed'|'indexing'} state */
-    _updateDbStatusDot(state) {
-        const dot = document.getElementById('dbStatusDot');
-        if (!dot) return;
-        dot.classList.remove('status-green', 'status-red', 'status-pulse');
-        switch (state) {
-            case 'indexed':
-                dot.classList.add('status-green');
-                dot.title = 'Indexed for AI search';
-                break;
-            case 'not-indexed':
-                dot.classList.add('status-red');
-                dot.title = 'Not indexed — click "Index now" to enable AI search';
-                break;
-            case 'indexing':
-                dot.classList.add('status-pulse');
-                dot.title = 'Indexing in progress…';
-                break;
-            default:
-                dot.title = '';
-        }
-    }
-
-    /** Show the "Not indexed" nudge bar below the nav dropdowns. */
-    _showIndexNudge() {
-        const el = document.getElementById('dbIndexNudge');
-        if (el) el.style.display = 'flex';
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-    }
-
-    /** Hide the "Not indexed" nudge bar. */
-    _hideIndexNudge() {
-        const el = document.getElementById('dbIndexNudge');
-        if (el) el.style.display = 'none';
+    /** Disable or re-enable all interactive inputs (during indexing). */
+    _setInputsEnabledForIndexing(enabled) {
+        const disabled = !enabled;
+        const els = [
+            this.promptInput,
+            this.sendBtn,
+            this.databaseSelect,
+            this.llmSelect,
+            this.modeSelect,
+            this.newChatBtn,
+            this.executeCheckbox,
+            this.attachBtn,
+            this.settingsBtn,
+            document.getElementById('queryChinookBtn'),
+            document.getElementById('schemaBtn'),
+        ];
+        els.forEach(el => {
+            if (el) {
+                el.disabled = disabled;
+                if (el === this.promptInput) {
+                    el.placeholder = disabled ? 'Indexing database…' : (_isPlaygroundActive ? 'Ask me about the Chinook database…' : 'Ask me about your database…');
+                }
+            }
+        });
+        this.updateSendButton();
     }
 
     /** Open the indexing progress modal for the given database. */
     _showIndexingModal(dbId) {
         const modal = document.getElementById('indexingModal');
+        const label = document.getElementById('indexingDbLabel');
         if (!modal) return;
-        // Reset to initial state.
+        if (label) label.textContent = dbId || 'Preparing…';
         this._updateIndexingProgress(0, `Vectorizing "${dbId}"…`, null);
         document.getElementById('indexingStatusLine').textContent = 'Starting…';
         modal.classList.add('active');
@@ -879,6 +925,7 @@ class DaiBaiApp {
 
     /** Close the indexing progress modal. */
     _hideIndexingModal() {
+        console.log('[DaiBai UI] artifact: indexingModal closed');
         document.getElementById('indexingModal')?.classList.remove('active');
     }
 
@@ -889,6 +936,7 @@ class DaiBaiApp {
      * @param {number|null} eta Seconds remaining (null = not yet known)
      */
     _updateIndexingProgress(pct, status, eta) {
+        if (pct <= 0 || pct >= 99.5) console.log('[DaiBai UI] artifact: indexingProgress pct=', Math.round(pct), 'status=', status);
         const bar    = document.getElementById('indexingBar');
         const pctEl  = document.getElementById('indexingPct');
         const etaEl  = document.getElementById('indexingEta');
@@ -916,87 +964,76 @@ class DaiBaiApp {
     }
 
     /**
-     * Call GET /api/schema/status/{dbId}.  Updates the dot and shows/hides the nudge.
-     * Safe to call in guest mode — silently no-ops.
+     * Ensure the database is indexed. If not, auto-index and disable all inputs until done.
+     * Called on load, database change, and when entering playground.
+     * Guarded against concurrent indexing (e.g. from loadSettings + ws init).
      */
-    async checkDbIndexStatus(dbId) {
-        if (!dbId || !isAuthenticated()) {
-            this._updateDbStatusDot('unknown');
-            this._hideIndexNudge();
-            return;
-        }
-        this._updateDbStatusDot('unknown');
+    async ensureDatabaseIndexed(dbId) {
+        if (!dbId || !isAuthenticated()) return;
+        if (this._indexingInProgress) return; // avoid concurrent index runs
+        this._indexingInProgress = true;
         try {
             const res  = await apiFetch(`/api/schema/status/${encodeURIComponent(dbId)}`);
             const data = await res.json();
-            if (data.is_indexed) {
-                this._updateDbStatusDot('indexed');
-                this._hideIndexNudge();
-                console.log(`[Schema] "${dbId}" indexed at ${data.last_indexed_at}`);
-            } else {
-                this._updateDbStatusDot('not-indexed');
-                this._showIndexNudge();
-                console.log(`[Schema] "${dbId}" not yet indexed`);
+            if (data.is_indexed) return;
+            console.log('[DaiBai UI] db=', dbId, 'not indexed — auto-indexing');
+            this._setInputsEnabledForIndexing(false);
+            try {
+                await this._runSchemaIndexing(dbId);
+            } finally {
+                this._setInputsEnabledForIndexing(true);
             }
         } catch (e) {
-            if (!e.guestMode) console.warn('[Schema] Status check failed:', e);
+            if (!e.guestMode) console.warn('[Schema] Index check failed:', e);
+        } finally {
+            this._indexingInProgress = false;
         }
     }
 
     /**
-     * Open /ws/schema-progress and stream indexing progress into the modal.
-     * Automatically closes the modal and updates the status dot on completion.
+     * Run schema indexing via WebSocket. Disables inputs at start; onComplete re-enables.
      */
-    async startSchemaIndexing(dbId) {
+    async _runSchemaIndexing(dbId) {
         if (!dbId) return;
         let token;
         try { token = await getApiToken(); }
-        catch (e) { console.error('[Schema] Cannot start indexing — not authenticated'); return; }
+        catch (e) { console.error('[Schema] Cannot index — not authenticated'); return; }
 
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${proto}//${location.host}/ws/schema-progress`
                     + `?token=${encodeURIComponent(token)}&db=${encodeURIComponent(dbId)}`;
 
         this._showIndexingModal(dbId);
-        this._updateDbStatusDot('indexing');
-        this._hideIndexNudge();
 
-        const ws = new WebSocket(wsUrl);
+        return new Promise((resolve, reject) => {
+            const ws = new WebSocket(wsUrl);
 
-        ws.onopen = () => console.log(`[Schema] WS open for "${dbId}"`);
-
-        ws.onmessage = ({ data }) => {
-            let msg;
-            try { msg = JSON.parse(data); } catch { return; }
-
-            if (msg.type === 'progress') {
-                this._updateIndexingProgress(msg.pct, msg.status, msg.eta);
-
-            } else if (msg.type === 'done') {
-                this._updateIndexingProgress(100, msg.status, 0);
-                // Show completed state briefly, then close modal.
-                setTimeout(() => {
+            ws.onmessage = ({ data }) => {
+                let msg;
+                try { msg = JSON.parse(data); } catch { return; }
+                if (msg.type === 'progress') {
+                    this._updateIndexingProgress(msg.pct, msg.status, msg.eta);
+                } else if (msg.type === 'done') {
+                    this._updateIndexingProgress(100, msg.status, 0);
+                    setTimeout(() => {
+                        this._hideIndexingModal();
+                        resolve();
+                    }, 1400);
+                } else if (msg.type === 'error') {
                     this._hideIndexingModal();
-                    this._updateDbStatusDot('indexed');
-                }, 1400);
+                    showSandboxStatusToast('error', `Indexing failed: ${msg.message}`);
+                    resolve(); // still re-enable inputs
+                }
+            };
 
-            } else if (msg.type === 'error') {
-                console.error('[Schema] Indexing error:', msg.message);
+            ws.onerror = () => {
                 this._hideIndexingModal();
-                this._updateDbStatusDot('not-indexed');
-                this._showIndexNudge();
-                showSandboxStatusToast('error', `Indexing failed: ${msg.message}`);
-            }
-        };
+                showSandboxStatusToast('error', 'Indexing connection failed');
+                resolve();
+            };
 
-        ws.onerror = (e) => {
-            console.error('[Schema] WS error', e);
-            this._hideIndexingModal();
-            this._updateDbStatusDot('not-indexed');
-            this._showIndexNudge();
-        };
-
-        ws.onclose = () => console.log(`[Schema] WS closed for "${dbId}"`);
+            ws.onclose = () => resolve();
+        });
     }
 
     loadPreferences() {
@@ -1010,6 +1047,12 @@ class DaiBaiApp {
         
         // Execute checkbox
         this.executeCheckbox.checked = prefs.autoExecute === true;
+
+        // Verbose mode (console logging)
+        this.verboseMode = prefs.verbose === true;
+
+        // Click logging (default: true) — log every click to console for debugging lag
+        this.logClicks = prefs.logClicks !== false;
         
         // Sidebar state
         if (prefs.sidebarCollapsed) {
@@ -1018,15 +1061,19 @@ class DaiBaiApp {
     }
     
     savePreferences() {
+        const existing = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
         const prefs = {
             autoCopy: this.autoCopyCheckbox.checked,
             autoCsv: this.autoCsvCheckbox.checked,
             autoExecute: this.executeCheckbox.checked,
+            verbose: existing.verbose ?? this.verboseMode ?? false,
+            logClicks: existing.logClicks !== false ? true : false,
             sidebarCollapsed: this.sidebar.classList.contains('collapsed'),
             database: this.databaseSelect.value,
             llm: this.llmSelect.value,
             mode: this.modeSelect.value
         };
+        this.verboseMode = prefs.verbose;
         localStorage.setItem('daibai_preferences', JSON.stringify(prefs));
     }
     
@@ -1151,6 +1198,7 @@ class DaiBaiApp {
         this.welcomeMessage = document.getElementById('welcomeMessage');
         this.promptInput = document.getElementById('promptInput');
         this.sendBtn = document.getElementById('sendBtn');
+        this.stopBtn = document.getElementById('stopBtn');
         this.executeCheckbox = document.getElementById('executeCheckbox');
         this.attachBtn = document.getElementById('attachBtn');
         this.fileInput = document.getElementById('fileInput');
@@ -1168,12 +1216,7 @@ class DaiBaiApp {
         this.databaseSelect.addEventListener('change', () => {
             this.updateSettings();
             this.savePreferences();
-            this.checkDbIndexStatus(this.databaseSelect.value);
-        });
-
-        // Schema index nudge — "Index now" button
-        document.getElementById('dbIndexBtn')?.addEventListener('click', () => {
-            this.startSchemaIndexing(this.databaseSelect.value);
+            this.ensureDatabaseIndexed(this.databaseSelect.value);
         });
         this.llmSelect.addEventListener('change', () => {
             this.updateSettings();
@@ -1275,6 +1318,7 @@ class DaiBaiApp {
         });
         
         this.sendBtn.addEventListener('click', () => this.sendMessage());
+        if (this.stopBtn) this.stopBtn.addEventListener('click', () => this.stopRequest());
         
         if (this.attachBtn && this.fileInput) {
             this.attachBtn.addEventListener('click', () => this.fileInput.click());
@@ -1298,7 +1342,14 @@ class DaiBaiApp {
     }
     
     updateSendButton() {
-        this.sendBtn.disabled = !this.promptInput.value.trim() || this.isLoading;
+        const loading = this.isLoading;
+        if (this.sendBtn) {
+            this.sendBtn.disabled = !this.promptInput.value.trim() || loading;
+            this.sendBtn.style.display = loading ? 'none' : 'flex';
+        }
+        if (this.stopBtn) {
+            this.stopBtn.style.display = loading ? 'flex' : 'none';
+        }
     }
     
     async loadSettings() {
@@ -1313,8 +1364,8 @@ class DaiBaiApp {
             this.databaseSelect.innerHTML = settings.databases
                 .map(db => `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`)
                 .join('');
-            // Check indexing status for the freshly-selected database.
-            this.checkDbIndexStatus(this.databaseSelect.value);
+            // Auto-index if the freshly-selected database is not indexed.
+            this.ensureDatabaseIndexed(this.databaseSelect.value);
 
             // Populate LLM dropdown
             const savedLlm = prefs.llm && settings.llm_providers.includes(prefs.llm)
@@ -1443,6 +1494,27 @@ class DaiBaiApp {
     }
     
     async connectWebSocket() {
+        // Avoid duplicate connections: if already open or connecting, skip
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return Promise.resolve();
+        }
+        // Clean up previous socket before creating new one (prevents orphan handlers)
+        if (this.ws) {
+            this.ws.onclose = null;
+            this.ws.onerror = null;
+            this.ws.onmessage = null;
+            try { this.ws.close(); } catch (_) {}
+            this.ws = null;
+        }
+        // Debounce reconnects: don't stack multiple reconnect timeouts
+        if (this._wsReconnectTimer) {
+            clearTimeout(this._wsReconnectTimer);
+            this._wsReconnectTimer = null;
+        }
+
+        this._wsReconnectCount = (this._wsReconnectCount || 0) + 1;
+        const attempt = this._wsReconnectCount;
+
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         let token;
         try {
@@ -1457,13 +1529,14 @@ class DaiBaiApp {
         // so callers that need the connection ready can await this method.
         return new Promise((resolve, reject) => {
             const onOpen = () => {
-                console.log('WebSocket connected');
+                this._wsReconnectCount = 0; // reset on success
+                console.log('[DaiBai] WebSocket connected');
                 this.ws.removeEventListener('open', onOpen);
                 this.ws.removeEventListener('error', onError);
                 resolve();
             };
             const onError = (e) => {
-                console.error('WebSocket error:', e);
+                if (attempt <= 2) console.warn('[DaiBai] WebSocket connection failed — server may be offline');
                 this.ws.removeEventListener('open', onOpen);
                 this.ws.removeEventListener('error', onError);
                 reject(e);
@@ -1477,18 +1550,42 @@ class DaiBaiApp {
             };
 
             this.ws.onclose = () => {
-                console.log('WebSocket disconnected, reconnecting...');
-                setTimeout(() => this.connectWebSocket(), 3000);
+                this.ws = null;
+                // Show toast on 3rd+ failure; cap at 30s between retries to reduce spam
+                const delay = Math.min(3000 * Math.min(attempt, 10), 30000);
+                if (attempt >= 3 && attempt <= 4) {
+                    showSandboxStatusToast('error', 'Server offline — retrying… Make sure the DaiBai server is running.');
+                }
+                if (attempt <= 3 || attempt % 5 === 0) {
+                    console.warn(`[DaiBai] WebSocket disconnected (attempt ${attempt}), reconnecting in ${delay/1000}s…`);
+                }
+                this._wsReconnectTimer = setTimeout(() => this.connectWebSocket().catch(() => {}), delay);
             };
 
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
+            this.ws.onerror = () => {}; // avoid duplicate logs; onError handler logs
         });
     }
     
     handleWebSocketMessage(data) {
+        if (this._ignoreWebSocketMessages) return;
+        const verbose = this.verboseMode ?? JSON.parse(localStorage.getItem('daibai_preferences') || '{}').verbose;
+        if (verbose && data.type === 'debug') {
+            console.log('[DaiBai verbose]', data.content);
+            return;
+        }
+        if (verbose && data.type !== 'debug') {
+            console.log('[DaiBai verbose] WS received:', data.type, data);
+        }
         switch (data.type) {
+            case 'init':
+                // Server notifies when current db is not_indexed — auto-kickoff index + dialog
+                const idx = data.index_status;
+                if (idx && idx.database && idx.is_indexed === false && isAuthenticated() && !this._indexingInProgress) {
+                    console.log('[DaiBai UI] ws init: db=', idx.database, 'not indexed — auto-indexing');
+                    this.ensureDatabaseIndexed(idx.database);
+                }
+                break;
+
             case 'ack':
                 this.conversationId = data.conversation_id;
                 break;
@@ -1530,6 +1627,20 @@ class DaiBaiApp {
                 }
                 break;
 
+            case 'message':
+                // Index interrogation or other non-SQL responses
+                this.removeLoadingIndicator();
+                const infoMsg = {
+                    role: 'assistant',
+                    content: data.content,
+                    sql: null,
+                    timestamp: new Date().toISOString(),
+                };
+                this.sessionMessages.push(infoMsg);
+                this.renderMessage(infoMsg, this.sessionMessages.length - 1);
+                this.updatePromptsList(this.sessionMessages);
+                break;
+
             case 'error':
                 this.removeLoadingIndicator();
                 if (data.content === 'QUOTA_EXCEEDED') {
@@ -1550,6 +1661,32 @@ class DaiBaiApp {
         }
     }
     
+    stopRequest() {
+        if (!this.isLoading) return;
+        this._ignoreWebSocketMessages = true;
+        if (this._abortController) this._abortController.abort();
+        this._resetAfterStop();
+    }
+
+    _resetAfterStop() {
+        const query = this._pendingQuery || '';
+        if (this.sessionMessages.length > 0 && this.sessionMessages[this.sessionMessages.length - 1].role === 'user') {
+            const lastIdx = this.sessionMessages.length - 1;
+            const toRemove = this.messagesContainer.querySelector(`[data-msg-index="${lastIdx}"]`);
+            if (toRemove) toRemove.remove();
+            this.sessionMessages.pop();
+        }
+        this.removeLoadingIndicator();
+        this.isLoading = false;
+        this._pendingQuery = null;
+        this._abortController = null;
+        this.promptInput.value = query;
+        this.autoResizeTextarea();
+        this.updateSendButton();
+        this.updatePromptsList(this.sessionMessages);
+        this.promptInput.focus();
+    }
+
     async sendMessage() {
         // In playground mode, anonymous users are allowed (they signed in silently).
         // Re-check quota on every send so we block mid-session when limit is reached.
@@ -1566,6 +1703,9 @@ class DaiBaiApp {
         const query = this.promptInput.value.trim();
         if (!query || this.isLoading) return;
         
+        this._ignoreWebSocketMessages = false;
+        this._pendingQuery = query;
+        this._abortController = new AbortController();
         this.isLoading = true;
         this.updateSendButton();
         
@@ -1588,14 +1728,18 @@ class DaiBaiApp {
         
         // Send via WebSocket
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
+            const verbose = this.verboseMode ?? JSON.parse(localStorage.getItem('daibai_preferences') || '{}').verbose;
+            const payload = {
                 query: query,
                 conversation_id: this.conversationId,
                 execute: this.executeCheckbox.checked,
                 is_playground: _isPlaygroundActive,
-            }));
+                verbose: !!verbose,
+                database: this.databaseSelect?.value || null,
+            };
+            if (verbose) console.log('[DaiBai verbose] WS sending:', { type: 'query', ...payload });
+            this.ws.send(JSON.stringify(payload));
         } else {
-            // Fallback to REST API
             await this.sendMessageRest(query);
         }
         
@@ -1603,7 +1747,11 @@ class DaiBaiApp {
     }
     
     async sendMessageRest(query) {
+        const verbose = this.verboseMode ?? JSON.parse(localStorage.getItem('daibai_preferences') || '{}').verbose;
         try {
+            if (verbose) {
+                console.log('[DaiBai verbose] REST fallback: sending query', { query, conversationId: this.conversationId, execute: this.executeCheckbox.checked });
+            }
             const response = await apiFetch('/api/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1612,7 +1760,10 @@ class DaiBaiApp {
                     conversation_id: this.conversationId,
                     execute: this.executeCheckbox.checked,
                     is_playground: _isPlaygroundActive,
-                })
+                    verbose: !!verbose,
+                    database: this.databaseSelect?.value || null,
+                }),
+                signal: this._abortController?.signal,
             });
 
             // Handle quota-exceeded response from server.
@@ -1642,6 +1793,10 @@ class DaiBaiApp {
             await this.loadConversations();
         } catch (error) {
             this.removeLoadingIndicator();
+            if (error.name === 'AbortError') {
+                this._resetAfterStop();
+                return;
+            }
             this.renderErrorMessage(error.message);
         } finally {
             this.isLoading = false;
@@ -1701,6 +1856,10 @@ class DaiBaiApp {
                 </div>
             `;
         } else {
+            const sqlBlock = msg.sql != null ? this.renderSqlBlock(msg.sql) : null;
+            const textBlock = !sqlBlock && msg.content
+                ? `<div class="message-text">${this.escapeHtml(msg.content).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}</div>`
+                : (sqlBlock || this.renderSqlBlock(msg.content));
             messageEl.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
                 <div class="message-content">
@@ -1708,7 +1867,7 @@ class DaiBaiApp {
                         <span class="message-role">${roleName}</span>
                         <span class="message-time">${time}</span>
                     </div>
-                    ${this.renderSqlBlock(msg.sql || msg.content)}
+                    ${textBlock}
                     ${msg.results ? this.renderResults(msg.results) : ''}
                 </div>
             `;
@@ -1950,13 +2109,22 @@ class DaiBaiApp {
 
     async showSettings() {
         if (!this.settingsModal) return;
+        if (!isAuthenticated()) {
+            this.closeSettings();
+            signIn();
+            return;
+        }
         this.settingsActiveTab = this.settingsActiveTab || 'account';
+
+        // Show modal immediately so user sees a response — don't block on API.
+        this.settingsModal.classList.add('active');
+        this.settingsContent.innerHTML = '<div class="settings-loading">Loading settings…</div>';
+
         try {
             this.settingsState = await this.loadSettingsState();
         } catch (e) {
             this.settingsState = {};
         }
-        this.settingsModal.classList.add('active');
         this.renderSettingsContent(this.settingsActiveTab);
         this.settingsModal.querySelectorAll('.settings-tab').forEach(t => {
             t.classList.toggle('active', t.dataset.tab === this.settingsActiveTab);
@@ -2021,6 +2189,9 @@ class DaiBaiApp {
                 break;
             case 'preferences':
                 content.innerHTML = this.renderPreferencesTab();
+                break;
+            case 'health':
+                content.innerHTML = this.renderHealthTab();
                 break;
             default:
                 content.innerHTML = '';
@@ -2211,6 +2382,7 @@ class DaiBaiApp {
 
     renderPreferencesTab() {
         const prefs = this.settingsState?.preferences || {};
+        const savedPrefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
         return `
             <div class="settings-group">
                 <div class="settings-group-title">Appearance</div>
@@ -2233,6 +2405,41 @@ class DaiBaiApp {
                     <span class="hint">When unchecked, output is raw data only</span>
                 </div>
             </div>
+            <div class="settings-group">
+                <div class="settings-group-title">Debugging</div>
+                <div class="settings-toggle">
+                    <label>Verbose mode</label>
+                    <input type="checkbox" id="settingsVerbose" ${(savedPrefs.verbose === true) ? 'checked' : ''}>
+                </div>
+                <div class="settings-field" style="margin-top:8px">
+                    <span class="hint">Log every chat engine step to the browser console (F12 → Console). Use when troubleshooting slow or stuck queries.</span>
+                </div>
+                <div class="settings-toggle" style="margin-top:12px">
+                    <label>Log clicks to console</label>
+                    <input type="checkbox" id="settingsLogClicks" ${(savedPrefs.logClicks !== false) ? 'checked' : ''}>
+                </div>
+                <div class="settings-field" style="margin-top:8px">
+                    <span class="hint">Log every click (chat, settings, playground, sign in, user menu, etc.) to the console. Helps diagnose UI lag (default: on).</span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderHealthTab() {
+        return `
+            <div class="settings-group">
+                <div class="settings-group-title">Component Tests</div>
+                <p class="hint" style="margin-bottom:12px">Test each component to diagnose connection issues (e.g. stuck "Thinking...").</p>
+                <div class="health-buttons" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                    <button type="button" class="btn-secondary health-test-btn" data-component="redis">Test Redis</button>
+                    <button type="button" class="btn-secondary health-test-btn" data-component="llm">Test LLM</button>
+                    <button type="button" class="btn-secondary health-test-btn" data-component="embeddings">Test Embeddings</button>
+                    <button type="button" class="btn-secondary health-test-btn" data-component="pruning">Test Pruning</button>
+                    <button type="button" class="btn-secondary health-test-btn" data-component="database">Test Database</button>
+                    <button type="button" class="btn-secondary health-test-btn" data-component="cosmos">Test Cosmos</button>
+                </div>
+                <button type="button" class="btn-primary" id="healthTestAllBtn">Test All</button>
+            </div>
         `;
     }
 
@@ -2247,6 +2454,15 @@ class DaiBaiApp {
     }
 
     bindSettingsDynamicHandlers() {
+        document.querySelectorAll('.health-test-btn').forEach(btn => {
+            btn.onclick = () => this.runHealthCheck(btn.dataset.component);
+        });
+        const healthTestAllBtn = document.getElementById('healthTestAllBtn');
+        if (healthTestAllBtn) healthTestAllBtn.onclick = () => this.runHealthCheck(null);
+        const healthModalClose = document.getElementById('healthResultsModalClose');
+        if (healthModalClose) healthModalClose.onclick = () => this.closeHealthModal();
+        const healthModal = document.getElementById('healthResultsModal');
+        if (healthModal) healthModal.onclick = (e) => { if (e.target === healthModal) this.closeHealthModal(); };
         const testBtn = document.getElementById('settingsLLMTest');
         if (testBtn) {
             testBtn.onclick = () => this.testLLMConnection();
@@ -2319,6 +2535,56 @@ class DaiBaiApp {
     openStripePortal() {
         // TODO: Fetch Stripe portal URL from backend when implemented
         window.open('#', '_blank');
+    }
+
+    async runHealthCheck(component) {
+        const modal = document.getElementById('healthResultsModal');
+        const content = document.getElementById('healthResultsContent');
+        const btns = document.querySelectorAll('.health-test-btn, #healthTestAllBtn');
+        btns.forEach(b => { b.disabled = true; });
+        if (content) content.innerHTML = '<p class="hint">Testing...</p>';
+        if (modal) modal.classList.add('active');
+        try {
+            const url = component ? `/api/health?components=${encodeURIComponent(component)}` : '/api/health';
+            const res = await apiFetch(url);
+            if (!res.ok) {
+                const text = await res.text();
+                this.showHealthResults({ error: `HTTP ${res.status}: ${res.statusText}. ${text.slice(0, 100)}` });
+                return;
+            }
+            const data = await res.json();
+            this.showHealthResults(data);
+        } catch (e) {
+            this.showHealthResults({ error: e.message || String(e) });
+        } finally {
+            btns.forEach(b => { b.disabled = false; });
+        }
+    }
+
+    showHealthResults(data) {
+        const modal = document.getElementById('healthResultsModal');
+        const content = document.getElementById('healthResultsContent');
+        if (!content) return;
+        if (data.error) {
+            content.innerHTML = `<p class="hint" style="color:var(--error)">${this.escapeHtml(data.error)}</p>`;
+        } else {
+            const items = Object.entries(data).filter(([k]) => k !== 'error').map(([name, r]) => {
+                if (typeof r !== 'object' || r === null) return '';
+                const ok = r.ok;
+                const msg = r.message || (ok ? 'OK' : 'Failed');
+                const icon = ok ? '✓' : '✗';
+                const cls = ok ? 'health-ok' : 'health-fail';
+                return `<div class="health-result-item ${cls}"><span class="health-icon">${icon}</span><span class="health-name">${this.escapeHtml(name)}</span><span class="health-msg">${this.escapeHtml(msg)}</span></div>`;
+            }).filter(Boolean);
+            content.innerHTML = items.length ? `<div class="health-results">${items.join('')}</div>` : `<p class="hint">No results</p>`;
+        }
+        if (modal) modal.classList.add('active');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    closeHealthModal() {
+        const modal = document.getElementById('healthResultsModal');
+        if (modal) modal.classList.remove('active');
     }
 
     async testLLMConnection() {
@@ -2430,7 +2696,9 @@ class DaiBaiApp {
         };
         const preferences = {
             theme: getVal('settingsTheme') || 'system',
-            auto_charts: document.getElementById('settingsAutoCharts')?.checked ?? false
+            auto_charts: document.getElementById('settingsAutoCharts')?.checked ?? false,
+            verbose: document.getElementById('settingsVerbose')?.checked ?? false,
+            logClicks: document.getElementById('settingsLogClicks')?.checked !== false
         };
         return { account, llm, llm_providers, databases, data_privacy, preferences };
     }
@@ -2452,6 +2720,12 @@ class DaiBaiApp {
                     }),
                     selected_llm_provider: payload.llm?.provider || this.settingsState?.selected_llm_provider
                 };
+                this.verboseMode = payload.preferences?.verbose ?? false;
+                this.logClicks = payload.preferences?.logClicks !== false;
+                const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
+                prefs.verbose = this.verboseMode;
+                prefs.logClicks = this.logClicks;
+                localStorage.setItem('daibai_preferences', JSON.stringify(prefs));
                 this.closeSettings();
                 await this.loadSettings();
             } else {
@@ -2479,7 +2753,49 @@ class DaiBaiApp {
     }
 }
 
+// ── Click action logger (for debugging lag) ─────────────────────────────────
+// Logs every click to console when enabled. Configurable via Settings → Preferences.
+// Default: ON. Set logClicks: false in daibai_preferences to disable.
+function _describeClickTarget(el) {
+    if (!el || !el.getAttribute) return 'unknown';
+    // For nested clicks (e.g. text inside button), use the nearest actionable ancestor
+    const target = el.closest?.('button, a, [role="button"], [role="menuitem"], [onclick], select, input[type="checkbox"], .example-prompt, .nav-item-header, .nav-subitem, .profile-dropdown-item, .settings-tab') || el;
+    const id = target.id;
+    const data = target.dataset || {};
+    const label = target.getAttribute('aria-label') || target.getAttribute('title');
+    let text = '';
+    if (target.textContent) {
+        text = target.textContent.replace(/\s+/g, ' ').trim().slice(0, 50);
+        if (target.textContent.length > 50) text += '…';
+    }
+    // Prefer human-readable identifiers
+    if (data.prompt) return `example prompt: "${String(data.prompt).slice(0, 40)}…"`;
+    if (label) return label;
+    if (id) {
+        const friendly = id.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
+        return friendly;
+    }
+    if (text) return `"${text}"`;
+    const role = target.getAttribute('role');
+    const tag = target.tagName?.toLowerCase();
+    const cls = (target.className && typeof target.className === 'string') ? target.className.split(/\s+/).find(c => c && !c.startsWith('nav-') && !c.startsWith('modal')) : '';
+    return cls || role || tag || 'element';
+}
+
+function _logClickAction(e) {
+    const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
+    const logClicks = prefs.logClicks !== false; // default true
+    if (!logClicks) return;
+    const el = e.target;
+    const desc = _describeClickTarget(el);
+    const t = performance.now();
+    console.log(`[DaiBai click] ${desc} (target: ${el.tagName}${el.id ? '#' + el.id : ''}) @ ${t.toFixed(0)}ms`);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Capture-phase click logger — runs before any other handlers
+    document.addEventListener('click', _logClickAction, true);
+
     // Replace all <i data-lucide="..."> elements with inline SVGs.
     if (typeof lucide !== 'undefined') {
         lucide.createIcons();
@@ -2507,12 +2823,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Guest: Sign In dropdown item.
-    document.getElementById('dropdownSignIn')?.addEventListener('click', () => {
+    // Guest: Sign In (sidebar + dropdown)
+    const openSignIn = () => {
         document.getElementById('profileDropdown')?.classList.remove('open');
         document.getElementById('profileAvatarBtn')?.setAttribute('aria-expanded', 'false');
         signIn();
-    });
+    };
+    document.getElementById('dropdownSignIn')?.addEventListener('click', openSignIn);
+    document.getElementById('sidebarSignInBtn')?.addEventListener('click', openSignIn);
+    document.getElementById('navSignInPrompt')?.addEventListener('click', openSignIn);
 
     // Helper: close the profile dropdown
     const closeProfileDropdown = () => {
@@ -2578,41 +2897,64 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn      = document.getElementById('queryChinookBtn');
         const turningOn = !btn.classList.contains('active');
 
+        const showPlaygroundLoading = () => {
+            btn.disabled = true;
+            btn.classList.add('loading');
+            const orig = btn.innerHTML;
+            btn.dataset.origHtml = orig;
+            btn.innerHTML = `<span class="nav-subitem-loading"><span class="loading-dots"><span></span><span></span><span></span></span><span class="loading-label">Anonymous sign‑in…</span></span>`;
+        };
+        const hidePlaygroundLoading = () => {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+            if (btn.dataset.origHtml) {
+                btn.innerHTML = btn.dataset.origHtml;
+                delete btn.dataset.origHtml;
+            }
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        };
+
         if (turningOn) {
-            // Ensure a Firebase session exists (anonymous is fine for guests).
-            if (!_currentUser) {
-                try {
+            showPlaygroundLoading();
+            window.app?.showLoadingIndicator?.('Anonymous sign‑in…');
+            try {
+                // Ensure a Firebase session exists (anonymous is fine for guests).
+                if (!_currentUser) {
                     console.log('[Playground] No session — signing in anonymously…');
                     const cred = await firebase.auth().signInAnonymously();
                     _currentUser = cred.user;
                     console.log('[Playground] Anonymous UID:', cred.user.uid);
-                } catch (e) {
-                    console.error('[Playground] Anonymous sign-in failed:', e);
-                    showSandboxStatusToast('error', 'Could not start a guest session — please sign in.');
-                    return;
                 }
-            }
 
-            // Check quota for anonymous (guest) users.
-            if (_currentUser.isAnonymous) {
-                const count = await checkPlaygroundQuota();
-                console.log(`[Playground] Guest quota: ${count}/20`);
-                if (count >= 20) {
-                    showQuotaModal();
-                    return;   // do not activate playground mode
+                // Check quota for anonymous (guest) users.
+                if (_currentUser.isAnonymous) {
+                    const count = await checkPlaygroundQuota();
+                    console.log(`[Playground] Guest quota: ${count}/20`);
+                    if (count >= 20) {
+                        showQuotaModal();
+                        window.app?.removeLoadingIndicator?.();
+                        return;
+                    }
                 }
-            }
 
-            // Anonymous users skip exitGuestMode() so they never get a WebSocket.
-            // Open one now so playground messages stream instead of falling back to
-            // the slow blocking REST endpoint.
-            if (window.app && (!window.app.ws || window.app.ws.readyState !== WebSocket.OPEN)) {
-                console.log('[Playground] Opening WebSocket for anonymous session…');
-                try {
-                    await window.app.connectWebSocket();
-                } catch (e) {
-                    console.warn('[Playground] WebSocket failed to open — will use REST fallback:', e);
+                // Anonymous users skip exitGuestMode() so they never get a WebSocket.
+                // Open one now so playground messages stream instead of falling back to
+                // the slow blocking REST endpoint.
+                if (window.app && (!window.app.ws || window.app.ws.readyState !== WebSocket.OPEN)) {
+                    console.log('[Playground] Opening WebSocket for anonymous session…');
+                    try {
+                        await window.app.connectWebSocket();
+                    } catch (e) {
+                        console.warn('[Playground] WebSocket failed to open — will use REST fallback:', e);
+                    }
                 }
+            } catch (e) {
+                console.error('[Playground] Anonymous sign-in failed:', e);
+                showSandboxStatusToast('error', 'Could not start a guest session — please sign in.');
+                return;
+            } finally {
+                window.app?.removeLoadingIndicator?.();
+                hidePlaygroundLoading();
             }
         }
 
@@ -2652,36 +2994,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // onAuthStateChanged is the single source of truth for session state.
     firebase.auth().onAuthStateChanged(async (user) => {
+        try {
         const wasGuest = !_currentUser;
 
         if (user && !user.isAnonymous) {
-            console.group('[AUTH] Session event');
-            console.log('  uid          :', user.uid);
-            console.log('  email        :', user.email || '(none)');
-            console.log('  emailVerified:', user.emailVerified);
-            console.log('  displayName  :', user.displayName || '(not set)');
-            console.log('  provider     :', user.providerData.map(p => p.providerId).join(', '));
-            console.log('  token exp    :', user.stsTokenManager?.expirationTime
-                ? new Date(user.stsTokenManager.expirationTime).toLocaleString()
-                : 'unknown');
-            console.groupEnd();
+            let effectiveUser = user;
+            const isEmailPassword = user.providerData.some(p => p.providerId === 'password');
+            console.log('[AUTH] onAuthStateChanged:', {
+                uid: user.uid,
+                email: user.email || '(none)',
+                emailVerified: user.emailVerified,
+                displayName: user.displayName || '(not set)',
+                providers: user.providerData.map(p => p.providerId).join(', '),
+                isEmailPassword,
+            });
+
+            // For email/password users, reload to get fresh emailVerified (session may have
+            // been restored from localStorage after the user verified in another tab).
+            if (isEmailPassword) {
+                try {
+                    await user.reload();
+                    effectiveUser = firebase.auth().currentUser;
+                    console.log('[AUTH] onAuthStateChanged: after reload emailVerified=', effectiveUser?.emailVerified);
+                } catch (e) {
+                    console.warn('[AUTH] onAuthStateChanged reload failed:', e);
+                }
+            }
 
             // Block email/password users who have not yet clicked the verification link.
             // _pendingVerificationUser keeps the Firebase session alive so reload() and
             // sendEmailVerification() work from the modal — we just don't grant app access.
-            if (_requiresEmailVerification(user)) {
-                console.log('[AUTH] Email not verified — blocking access, showing verification modal');
-                _pendingVerificationUser = user;
+            if (_requiresEmailVerification(effectiveUser)) {
+                console.warn('[AUTH] BLOCKING: email not verified — showing verification modal');
+                _pendingVerificationUser = effectiveUser;
                 _currentUser = null;   // app stays in guest mode
                 document.getElementById('authModal')?.classList.remove('active');
-                _showVerificationModal(user.email);
-                updateAuthButtons();
-                return;                // skip onboarding and exitGuestMode
+                _showVerificationModal(effectiveUser.email);
+                return;                // skip onboarding and exitGuestMode (finally runs updateAuthButtons)
             }
 
             // Verified (or OAuth) user — grant full access.
-            _currentUser = user;
-            await onboardUser(user);
+            console.log('[AUTH] GRANTING: verified/OAuth user — onboarding');
+            _currentUser = effectiveUser;
+            await onboardUser(effectiveUser);
             if (wasGuest && window.app) {
                 window.app.guestMode = false;
                 await window.app.exitGuestMode();
@@ -2699,8 +3054,9 @@ document.addEventListener('DOMContentLoaded', () => {
             console.groupEnd();
             _currentUser = null;
         }
-
-        updateAuthButtons();
+        } finally {
+            updateAuthButtons();
+        }
     });
 
     window.app = new DaiBaiApp();

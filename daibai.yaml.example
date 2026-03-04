@@ -111,5 +111,6 @@ databases:
 
 # Optional settings
 clipboard: true
-exports_dir: ~/.daibai/exports
-memory_dir: ~/.daibai/memory
+# Paths support ~ for home directory (e.g. ~/.daibai/exports)
+# exports_dir: ~/.daibai/exports
+# memory_dir: ~/.daibai/memory

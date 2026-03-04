@@ -105,13 +105,6 @@ cache = [
     "sentence-transformers>=2.2.0",
     "torch>=2.0.0",
 ]
-# Azure Monitor / OpenTelemetry — enables Application Insights when
-# APPLICATIONINSIGHTS_CONNECTION_STRING is set in the environment.
-observability = [
-    "azure-monitor-opentelemetry>=1.4.0",
-    "opentelemetry-instrumentation-fastapi>=0.45b0",
-]
-
 [project.scripts]
 daibai = "daibai.cli.chat:main"
 daibai-train = "daibai.training.trainer:main"

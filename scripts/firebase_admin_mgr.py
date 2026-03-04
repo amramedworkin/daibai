@@ -14,6 +14,7 @@ Commands:
     update <uid> [--email E] [--name N] [--password P] [--phone PH]
     delete <uid>                  Delete from Firebase AND remove Cosmos profile
     delete-all                    Global wipe: Firebase Auth + Users + Conversations
+    integrate <uid|email>         Ensure Firebase user has Cosmos DB profile
     set-claims <uid> <json>       Apply custom claims JSON to a Firebase user
     links <uid> reset|verify      Generate a password-reset or email-verify link
     revoke <uid>                  Revoke all refresh tokens for a Firebase user
@@ -187,29 +188,61 @@ def _cosmos_warn(label):
 # User display helpers
 # ---------------------------------------------------------------------------
 
-def _fmt_user(u, cosmos_ok: bool | None = None) -> str:
-    name     = u.display_name or DIM + "(no name)" + NC
-    verified = f"{GREEN}✔ verified{NC}" if u.email_verified else f"{YELLOW}✗ unverified{NC}"
-    phone    = f"  📞 {u.phone_number}" if u.phone_number else ""
-    claims   = f"  claims={u.custom_claims}" if u.custom_claims else ""
-    if cosmos_ok is True:
-        sync = f"  {GREEN}[Cosmos ✔]{NC}"
-    elif cosmos_ok is False:
-        sync = f"  {RED}[Cosmos ✘ MISSING]{NC}"
+def _fmt_user(u, cosmos_doc: dict | None = None) -> str:
+    """Format a user with Firebase and Cosmos DB fields in separate sections."""
+    meta = u.user_metadata
+    created_ts = _ts(meta.creation_timestamp) if meta else " —"
+    last_signin_ts = _ts(getattr(meta, "last_sign_in_timestamp", None)) if meta else " —"
+
+    # Firebase section
+    fb_lines = [
+        f"  {BOLD}{u.uid}{NC}  {GREEN}[Firebase]{NC}",
+        f"    uid:           {u.uid}",
+        f"    email:         {u.email or '(none)'}",
+        f"    email_verified:{u.email_verified}",
+        f"    display_name:  {u.display_name or '(none)'}",
+        f"    phone_number:  {u.phone_number or '(none)'}",
+        f"    photo_url:     {u.photo_url or '(none)'}",
+        f"    disabled:      {u.disabled}",
+        f"    providers:     {_fmt_providers(u)}",
+        f"    created:       {created_ts}",
+        f"    last_sign_in:  {last_signin_ts}",
+    ]
+    if u.custom_claims:
+        fb_lines.append(f"    custom_claims: {u.custom_claims}")
+
+    # Cosmos section
+    if cosmos_doc is not None:
+        cosmos_lines = [
+            f"  {CYAN}[Cosmos DB]{NC}",
+        ]
+        # Show all Cosmos fields (sort for consistent ordering)
+        for k in sorted(cosmos_doc.keys()):
+            v = cosmos_doc[k]
+            if v is None or v == "":
+                display = "(none)"
+            elif isinstance(v, (dict, list)):
+                display = json.dumps(v) if v else "(empty)"
+            else:
+                display = str(v)
+            cosmos_lines.append(f"    {k}: {display}")
+        return "\n".join(fb_lines + cosmos_lines) + "\n"
     else:
-        sync = ""
-    return (
-        f"  {BOLD}{u.uid}{NC}{sync}\n"
-        f"    email:  {u.email or '(none)'}  {verified}\n"
-        f"    name:   {name}{phone}\n"
-        f"    created:{_ts(u.user_metadata.creation_timestamp)}{claims}\n"
-    )
+        cosmos_lines = [f"  {RED}[Cosmos DB — no record]{NC}"]
+        return "\n".join(fb_lines + cosmos_lines) + "\n"
 
 def _ts(ms) -> str:
     if not ms:
         return " —"
     dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
     return " " + dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _fmt_providers(u) -> str:
+    """Return comma-separated provider IDs (e.g. password, google.com)."""
+    if not u.provider_data:
+        return "(none)"
+    return ", ".join(p.provider_id for p in u.provider_data)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +252,7 @@ def _ts(ms) -> str:
 def cmd_list(args):
     import firebase_admin.auth as fb_auth
     store = _make_cosmos_store()
-    _header("Firebase Users  (with Cosmos DB sync status)")
+    _header("Firebase + Cosmos DB Users  (fields by source)")
 
     # Collect Firebase users (synchronous SDK)
     all_fb_users = []
@@ -228,21 +261,24 @@ def cmd_list(args):
         all_fb_users.extend(page.users)
         page = page.get_next_page()
 
-    # Single async call — session opened and closed inside _cosmos_run
-    cosmos_uids: set = set()
+    # Fetch full Cosmos docs for uid -> doc mapping
+    cosmos_by_uid: dict = {}
     if store.is_configured:
         try:
             cosmos_docs = _cosmos_run(store, _cosmos_list_users(store))
-            cosmos_uids = {d.get("id") or d.get("uid") for d in cosmos_docs}
+            for d in cosmos_docs:
+                uid = d.get("id") or d.get("uid")
+                if uid:
+                    cosmos_by_uid[uid] = d
         except Exception as e:
             _warn(f"Could not reach Cosmos DB: {e}")
 
     for u in all_fb_users:
-        cosmos_ok = (u.uid in cosmos_uids) if store.is_configured else None
-        print(_fmt_user(u, cosmos_ok=cosmos_ok))
+        cosmos_doc = cosmos_by_uid.get(u.uid) if store.is_configured else None
+        print(_fmt_user(u, cosmos_doc=cosmos_doc))
 
     _sep()
-    _info(f"Total: {BOLD}{len(all_fb_users)}{NC} Firebase user(s)  |  Cosmos records: {len(cosmos_uids)}")
+    _info(f"Total: {BOLD}{len(all_fb_users)}{NC} Firebase user(s)  |  Cosmos records: {len(cosmos_by_uid)}")
     print()
 
 
@@ -404,7 +440,7 @@ def cmd_delete(args):
     print()
 
 
-def cmd_delete_all(_args):
+def cmd_delete_all(args):
     import firebase_admin.auth as fb_auth
 
     store = _make_cosmos_store()
@@ -413,10 +449,11 @@ def cmd_delete_all(_args):
     _warn("This will TRUNCATE the Cosmos DB Users AND Conversations containers.")
     _warn("This action CANNOT be undone.")
     print()
-    confirm = input(f"  {RED}Type 'YES' to confirm:{NC} ").strip()
-    if confirm != "YES":
-        _info("Cancelled — nothing deleted.")
-        return
+    if not getattr(args, "force", False):
+        confirm = input(f"  {RED}Type 'YES' to confirm:{NC} ").strip()
+        if confirm != "YES":
+            _info("Cancelled — nothing deleted.")
+            return
 
     # 1. Collect Firebase UIDs
     fb_uids = []
@@ -505,6 +542,62 @@ def cmd_links(args):
     print(f"  {CYAN}{link}{NC}")
     print()
     _warn("This link is single-use and expires after one hour.")
+    print()
+
+
+def cmd_integrate(args):
+    """
+    Ensure a Firebase user has a Cosmos DB profile.
+    Accepts uid or email; creates the Cosmos profile if missing.
+    """
+    import firebase_admin.auth as fb_auth
+
+    store = _make_cosmos_store()
+    identifier = (args.uid_or_email or "").strip()
+    if not identifier:
+        _die("Usage: firebase-admin integrate <uid | email>")
+
+    # Resolve to Firebase user
+    if "@" in identifier:
+        try:
+            u = fb_auth.get_user_by_email(identifier)
+        except Exception as e:
+            if "not found" in str(e).lower() or "no user" in str(e).lower():
+                _die(f"No Firebase user found with email {identifier!r}")
+            raise
+    else:
+        try:
+            u = fb_auth.get_user(identifier)
+        except fb_auth.UserNotFoundError:
+            _die(f"No Firebase user found with uid {identifier!r}")
+
+    _header(f"Integrate Firebase ↔ Cosmos  ({u.email or u.uid})")
+
+    if not store.is_configured:
+        _die("COSMOS_ENDPOINT not set — cannot create Cosmos profile.")
+
+    # Check Cosmos
+    cosmos_doc = _cosmos_run(store, _cosmos_get_user(store, u.uid))
+
+    if cosmos_doc:
+        _ok("Cosmos profile exists — both sources below")
+        print()
+        print(_fmt_user(u, cosmos_doc=cosmos_doc))
+        return
+
+    # Create Cosmos profile from Firebase data
+    try:
+        _cosmos_run(store, _cosmos_create_profile(
+            store,
+            uid          = u.uid,
+            email        = u.email or "",
+            display_name = u.display_name or "",
+            phone        = u.phone_number or "",
+        ))
+        _cosmos_ok(f"Created Cosmos profile for {u.email or u.uid}")
+    except Exception as e:
+        _cosmos_warn(f"Failed to create Cosmos profile: {e}")
+        sys.exit(1)
     print()
 
 
@@ -689,7 +782,8 @@ def build_parser() -> argparse.ArgumentParser:
     dl = sub.add_parser("delete", help="Delete from Firebase AND Cosmos DB")
     dl.add_argument("uid")
 
-    sub.add_parser("delete-all", help="Global wipe: Firebase Auth + Cosmos Users + Conversations")
+    da = sub.add_parser("delete-all", help="Global wipe: Firebase Auth + Cosmos Users + Conversations")
+    da.add_argument("--force", "-f", action="store_true", help="Non-interactive: skip confirmation prompt")
 
     sc = sub.add_parser("set-claims", help="Set custom claims JSON on a Firebase user")
     sc.add_argument("uid")
@@ -701,6 +795,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     rv = sub.add_parser("revoke", help="Revoke all refresh tokens for a Firebase user")
     rv.add_argument("uid")
+
+    integ = sub.add_parser("integrate",
+        help="Ensure Firebase user has a Cosmos DB profile (create if missing)")
+    integ.add_argument("uid_or_email", help="Firebase UID or email address")
 
     sc2 = sub.add_parser("sync-check",
         help="Cross-check Firebase ↔ Cosmos DB and optionally repair discrepancies")
@@ -723,6 +821,7 @@ DISPATCH = {
     "set-claims":  cmd_set_claims,
     "links":       cmd_links,
     "revoke":      cmd_revoke,
+    "integrate":   cmd_integrate,
     "sync-check":  cmd_sync_check,
 }
 

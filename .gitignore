@@ -3,12 +3,8 @@
 # =============================================================================
 # Rule of thumb: commit SOURCE files; never commit BUILD OUTPUTS.
 #
-# SOURCE files we always want in git:
-#   Dockerfile, .dockerignore, docker-compose.yml, docker-compose.*.yml
-#   requirements.txt, pyproject.toml, .env.example, scripts/*, docs/*, etc.
-#
 # BUILD OUTPUTS we never want in git:
-#   Python dist/build/, Docker image tarballs, coverage reports, logs, etc.
+#   Python dist/build/, coverage reports, logs, etc.
 # =============================================================================
 
 # =============================================================================
@@ -50,37 +46,6 @@ ENV/
 env/
 
 # =============================================================================
-# DOCKER — keep source files, exclude build outputs
-# =============================================================================
-# KEEP (committed to git — these are configuration/source):
-#   Dockerfile
-#   .dockerignore
-#   docker-compose.yml
-#   docker-compose.<env>.yml
-#
-# EXCLUDE (build outputs and machine-local overrides):
-
-# Machine-specific compose overrides
-docker-compose.override.yml
-
-# Docker daemon state and credential helpers written to the project dir
-.docker/
-
-# Docker BuildKit / buildx local cache and state
-.buildx/
-**/.buildx/
-
-# Image archives — produced by `docker save` or `docker export`
-# e.g. `docker save myapp:latest > myapp.tar`
-*.tar
-*.tar.gz
-*.image.tar
-
-# Bind-mount volume data directories (if created locally)
-docker-volumes/
-.dockervolume/
-
-# =============================================================================
 # TESTING & COVERAGE REPORTS
 # =============================================================================
 .pytest_cache/
@@ -120,11 +85,15 @@ config/secrets/
 exports/
 
 # =============================================================================
-# LOGS
+# LOGS — project logs/ directory (daibai.log, rotated backups, gzipped archives)
 # =============================================================================
-*.log
 logs/
 log/
+*.log
+*.log.*
+*.log.gz
+daibai-archive-*.log
+daibai-archive-*.log.gz
 
 # =============================================================================
 # DOCS BUILD OUTPUT
@@ -139,6 +108,8 @@ _build/     # Sphinx
 # =============================================================================
 .daibai/
 chats/
+# Literal ~ dir created when path expansion fails (should go to $HOME/.daibai)
+/~
 
 # =============================================================================
 # IDE & EDITOR

@@ -431,9 +431,21 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
     default_database = db_section.get("default") or (list(databases.keys())[0] if databases else None)
     default_llm = config_data.get("llm", {}).get("default") or (list(llm_providers.keys())[0] if llm_providers else None)
     
-    # Parse paths
-    exports_dir = Path(config_data.get("exports_dir", Path.home() / ".daibai" / "exports"))
-    memory_dir = Path(config_data.get("memory_dir", Path.home() / ".daibai" / "memory"))
+    # Parse paths (expanduser so "~" in YAML resolves to home directory).
+    # Use Path.home() explicitly for ~/... to avoid creating project/~ when expanduser
+    # fails (e.g. HOME unset in some container/daemon contexts).
+    def _resolve_path(val, default: Path) -> Path:
+        if val is None:
+            return default
+        s = str(val).strip()
+        if s.startswith("~/"):
+            return Path.home() / s[2:].replace("/", os.sep)
+        if s == "~":
+            return Path.home()
+        return Path(val).expanduser()
+
+    exports_dir = _resolve_path(config_data.get("exports_dir"), Path.home() / ".daibai" / "exports")
+    memory_dir = _resolve_path(config_data.get("memory_dir"), Path.home() / ".daibai" / "memory")
     
     return Config(
         databases=databases,
@@ -470,11 +482,19 @@ def get_redis_connection_string() -> Optional[str]:
             load_dotenv(loc)
             break
 
-    return (
+    conn = (
         os.environ.get("AZURE_REDIS_CONNECTION_STRING", "").strip()
         or os.environ.get("REDIS_URL", "").strip()
         or None
     )
+    if not conn:
+        return None
+    # Azure Cache for Redis (rediss://) requires ssl_cert_reqs=none to avoid
+    # CERTIFICATE_VERIFY_FAILED with managed certs
+    if conn.lower().startswith("rediss://") and "ssl_cert_reqs" not in conn:
+        sep = "&" if "?" in conn else "?"
+        conn = f"{conn}{sep}ssl_cert_reqs=none"
+    return conn
 
 
 
