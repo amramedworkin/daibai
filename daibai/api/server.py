@@ -618,6 +618,8 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
                 idx_status = _get_schema_index_status(redis_key)
                 is_indexed_val = idx_status["is_indexed"]
                 last_indexed_at_val = idx_status.get("last_indexed_at")
+            except Exception:
+                pass  # leave as None; don't break settings response
 
         logger.info(
             "[settings] GET after status=ok databases=%s llm_providers=%s current_database=%s current_llm=%s agent_loaded=%s is_indexed=%s",
