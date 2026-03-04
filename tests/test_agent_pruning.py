@@ -22,7 +22,7 @@ import pytest
 from daibai.core.agent import DaiBaiAgent
 from daibai.core.config import Config, DatabaseConfig
 from daibai.core.guardrails import SecurityViolation
-from daibai.core.schema import SchemaManager, SCHEMA_V1_DDL_PREFIX, SCHEMA_V1_INDEX_KEY, SCHEMA_V1_TEXT_PREFIX
+from daibai.core.schema import SchemaManager, SCHEMA_V1_DDL_PREFIX, SCHEMA_V1_INDEX_PREFIX, SCHEMA_V1_TEXT_PREFIX
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +324,12 @@ def test_pruned_context_respects_schema_vector_limit():
         def smembers(self, name):
             return self._sets.get(name, set())
 
+        def exists(self, *keys):
+            return sum(1 for k in keys if k in self._storage or k in self._sets)
+
+        def expire(self, key, seconds):
+            pass
+
     redis = MockRedis()
     # Same vector for all - search returns first N by limit
     vec = [0.1] * 128
@@ -333,7 +339,7 @@ def test_pruned_context_respects_schema_vector_limit():
         embed_fn=lambda t: vec,
     )
     sm.index_schema("bigdb", force=True)
-    result = sm.search_schema_v1("any query", limit=limit)
+    result = sm.search_schema_v1("any query", schema_name="bigdb", limit=limit)
     assert len(result) <= limit
 
 
@@ -426,17 +432,20 @@ def test_agent_pruning_live_redis():
         count = manager.index_schema("testdb", force=True)
         assert count == 10
 
-        result = manager.search_schema_v1("Show me total revenue", limit=5, threshold=0.2)
+        result = manager.search_schema_v1(
+            "Show me total revenue", schema_name="testdb", limit=5, threshold=0.2
+        )
         assert len(result) >= 1
         ddl_text = "\n".join(result)
         assert "financial_records" in ddl_text or "sales_summary" in ddl_text or "revenue" in ddl_text
     finally:
         client = cache._get_client()
         if client:
+            index_key = f"{SCHEMA_V1_INDEX_PREFIX}testdb"
             for table in _MOCK_METADATA_10.keys():
-                client.delete(f"{SCHEMA_V1_DDL_PREFIX}{table}")
-                client.delete(f"{SCHEMA_V1_TEXT_PREFIX}{table}")
-                client.srem(SCHEMA_V1_INDEX_KEY, table)
+                client.delete(f"{SCHEMA_V1_DDL_PREFIX}testdb:{table}")
+                client.delete(f"{SCHEMA_V1_TEXT_PREFIX}testdb:{table}")
+                client.srem(index_key, table)
 
 
 @pytest.mark.cloud

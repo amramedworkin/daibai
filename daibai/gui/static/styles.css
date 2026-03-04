@@ -437,6 +437,86 @@ body {
     color: var(--accent);
 }
 
+.profile-dropdown-group {
+    padding: 0;
+}
+
+.profile-dropdown-group-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.profile-dropdown-group-label .lucide {
+    width: 14px;
+    height: 14px;
+}
+
+/* ── Test Database Modal ──────────────────────────────────────────────────── */
+
+.test-database-modal-content {
+    max-width: 420px;
+}
+
+.test-database-form .form-group {
+    margin-bottom: 16px;
+}
+
+.test-database-form .form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.test-database-form .form-group input,
+.test-database-form .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+}
+
+.test-database-form .form-group input:read-only,
+.test-database-form .form-group select {
+    cursor: default;
+}
+
+.test-database-form .form-group input::placeholder {
+    color: var(--text-muted);
+}
+
+.test-database-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.test-database-result {
+    font-size: 13px;
+    font-family: var(--font-mono);
+}
+
+.test-database-result.success {
+    color: var(--accent);
+}
+
+.test-database-result.error {
+    color: var(--error);
+}
+
 /* ── Lucide icon defaults ───────────────────────────────────────────────── */
 /* All <i data-lucide> elements are replaced by <svg> at runtime.           */
 

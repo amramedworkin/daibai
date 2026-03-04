@@ -37,6 +37,56 @@ def _sanitize_redis_url(url: Optional[str]) -> str:
     return url
 
 
+def _sanitize_db_password(pwd: Optional[str]) -> str:
+    """Mask password for safe logging."""
+    if not pwd:
+        return "(empty)"
+    return "***"
+
+
+def _log_index_connection(
+    db: str,
+    config: Optional[DatabaseConfig] = None,
+    is_playground: bool = False,
+) -> None:
+    """Log full database connection details at index start (passwords masked)."""
+    try:
+        from .config import get_redis_connection_string
+        redis_target = _sanitize_redis_url(get_redis_connection_string())
+    except Exception:
+        redis_target = "(unknown)"
+    if is_playground:
+        logger.info(
+            "[index] connection: db=%s | type=SQLite | source=data/playground.db | "
+            "library=sqlite3 | redis_target=%s",
+            db, redis_target,
+        )
+        return
+    if not config:
+        logger.info(
+            "[index] connection: db=%s | type=unknown | no config | redis_target=%s",
+            db, redis_target,
+        )
+        return
+    endpoint = f"{config.host}:{config.port}"
+    url_safe = f"mysql://{config.user}:{_sanitize_db_password(config.password)}@{endpoint}/{config.database}"
+    if config.ssl:
+        url_safe += "?ssl=true"
+    logger.info(
+        "[index] connection: db=%s | type=MySQL | host=%s | port=%s | database=%s | "
+        "user=%s | password=%s | ssl=%s | url=%s | redis_target=%s",
+        db,
+        config.host,
+        config.port,
+        config.database,
+        config.user,
+        _sanitize_db_password(config.password),
+        config.ssl,
+        url_safe,
+        redis_target,
+    )
+
+
 # Standard MySQL information_schema query for columns
 _SCHEMA_QUERY = """
 SELECT
@@ -59,10 +109,11 @@ SCHEMA_VECTOR_PREFIX = "schema:"
 SCHEMA_INDEX_KEY = "schema:index"
 
 # Phase 3 Step 1: High-precision semantic schema index (v1)
+# All keys are namespaced by db_name to avoid collision across databases.
 SCHEMA_V1_PREFIX = "schema:v1:"
-SCHEMA_V1_DDL_PREFIX = "schema:v1:ddl:"
-SCHEMA_V1_TEXT_PREFIX = "schema:v1:text:"
-SCHEMA_V1_INDEX_KEY = "schema:v1:index"
+SCHEMA_V1_DDL_PREFIX = "schema:v1:ddl:"  # full key: schema:v1:ddl:{db}:{table}
+SCHEMA_V1_TEXT_PREFIX = "schema:v1:text:"  # full key: schema:v1:text:{db}:{table}
+SCHEMA_V1_INDEX_PREFIX = "schema:v1:index:"  # full key: schema:v1:index:{db} (Redis SET)
 SCHEMA_V1_LAST_INDEXED = "schema:v1:last_indexed"
 
 # Schema indexing status keys (suffixed with :{db} at runtime)
@@ -109,6 +160,10 @@ def index_all_startup(
     databases = list(config.databases.keys()) + ["playground"]
     total_dbs = len(databases)
     total_tables = 0
+    logger.info(
+        "[index] startup: indexing %d database(s): %s",
+        total_dbs, ", ".join(databases),
+    )
 
     for i, db_name in enumerate(databases):
         sm = get_schema_manager(db_name)
@@ -424,8 +479,8 @@ class SchemaManager:
         """
         Index schema into Redis using v1 key format for semantic search.
 
-        For each table: generates embedding, stores vector in schema:v1:ddl:{table},
-        raw DDL in schema:v1:text:{table}, and adds table to schema:v1:index.
+        For each table: generates embedding, stores vector in schema:v1:ddl:{db}:{table},
+        raw DDL in schema:v1:text:{db}:{table}, and adds table to schema:v1:index:{db}.
 
         Guardrails:
         - If EmbeddingEngine is unavailable, logs CRITICAL and returns 0 (Lazy Discovery mode).
@@ -447,6 +502,12 @@ class SchemaManager:
         if not db:
             raise ValueError("schema_name or config.database required")
 
+        _log_index_connection(
+            db,
+            config=self._config,
+            is_playground=self._execute_fn is not None,
+        )
+
         redis = self._get_redis()
         if redis is None:
             logger.warning("[index] %s: skipped — no Redis client", db)
@@ -465,14 +526,17 @@ class SchemaManager:
                     track_passed(f"Schema Indexing: {db}", "No tables to evergreen.")
                     return 0
                 evergreen_count = 0
+                index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
                 for table in tables_ddl:
-                    ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
-                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+                    ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{db}:{table}"
+                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{table}"
                     if redis.exists(ddl_key):
                         redis.expire(ddl_key, 86400)
                         evergreen_count += 1
                     if redis.exists(text_key):
                         redis.expire(text_key, 86400)
+                if redis.exists(index_key):
+                    redis.expire(index_key, 86400)
                 for status_key in [
                     f"{SCHEMA_STATUS_IS_INDEXED}:{db}",
                     f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}",
@@ -565,13 +629,14 @@ class SchemaManager:
                     )
                     return 0
 
-                ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{table}"
-                text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+                ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{db}:{table}"
+                text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{table}"
+                index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
                 try:
                     vector_json = json.dumps(vector)
                     redis.set(ddl_key, vector_json, ex=ttl)
                     redis.set(text_key, ddl, ex=ttl)
-                    redis.sadd(SCHEMA_V1_INDEX_KEY, table)
+                    redis.sadd(index_key, table)
                     stored += 1
                     bytes_written += len(vector_json.encode("utf-8")) + len(ddl.encode("utf-8"))
                 except Exception as e:
@@ -606,7 +671,7 @@ class SchemaManager:
                     except Exception:
                         redis_loc = "(unknown)"
                     size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written < 1024 * 1024 else f"{bytes_written / (1024 * 1024):.2f}MB"
-                    key_names = f"{SCHEMA_V1_DDL_PREFIX}*, {SCHEMA_V1_TEXT_PREFIX}*, {SCHEMA_V1_INDEX_KEY}, schema:status:*"
+                    key_names = f"{SCHEMA_V1_DDL_PREFIX}{db}:*, {SCHEMA_V1_TEXT_PREFIX}{db}:*, {SCHEMA_V1_INDEX_PREFIX}{db}, schema:status:*"
                     logger.info(
                         "[index] %s: complete — loaded to redis=%s keyed by %s | "
                         "tables=%d size=%s last_indexed_at=%s",
@@ -644,18 +709,22 @@ class SchemaManager:
         """
         Semantic search over v1-indexed schema.
 
-        Vectorizes the query, compares against stored schema:v1:ddl:* vectors,
-        and returns the top N matching DDL strings from schema:v1:text:*.
+        Vectorizes the query, compares against stored schema:v1:ddl:{db}:* vectors,
+        and returns the top N matching DDL strings from schema:v1:text:{db}:*.
 
         Args:
             query: Natural language question (e.g. "How much money did we make?").
-            schema_name: Unused for v1 (all tables in index); kept for API consistency.
+            schema_name: Database/schema to search. Required for namespaced lookup.
             limit: Max tables to return (default from SCHEMA_VECTOR_LIMIT).
             threshold: Minimum cosine similarity.
 
         Returns:
             List of DDL strings for the most relevant tables.
         """
+        db = schema_name or (self._config.database if self._config else None)
+        if not db:
+            return []
+
         query_vector = self._get_embedding(query)
         if query_vector is None:
             return []
@@ -665,8 +734,9 @@ class SchemaManager:
             return []
 
         limit = limit or get_schema_vector_limit()
+        index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
         try:
-            raw_names = list(redis.smembers(SCHEMA_V1_INDEX_KEY)) or []
+            raw_names = list(redis.smembers(index_key)) or []
             table_names = [
                 t.decode("utf-8") if isinstance(t, bytes) else t for t in raw_names
             ]
@@ -675,8 +745,8 @@ class SchemaManager:
 
         scored: List[Tuple[float, str]] = []
         for table in table_names:
-            ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
-            text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+            ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{db}:{table}"
+            text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{table}"
             raw_vector = redis.get(ddl_key)
             raw_ddl = redis.get(text_key)
             if not raw_vector or not raw_ddl:

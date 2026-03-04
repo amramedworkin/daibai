@@ -16,7 +16,7 @@ from daibai.core.schema import (
     SchemaManager,
     SCHEMA_V1_DDL_PREFIX,
     SCHEMA_V1_TEXT_PREFIX,
-    SCHEMA_V1_INDEX_KEY,
+    SCHEMA_V1_INDEX_PREFIX,
 )
 
 
@@ -127,6 +127,21 @@ def mock_redis_v1():
         def smembers(self, name):
             return self._sets.get(name, set())
 
+        def exists(self, *keys):
+            count = 0
+            for k in keys:
+                if k in self._storage or k in self._sets:
+                    count += 1
+            return count
+
+        def expire(self, key, seconds):
+            pass  # no-op for mock
+
+        def srem(self, name, *members):
+            if name in self._sets:
+                for m in members:
+                    self._sets[name].discard(m)
+
     return MockRedis()
 
 
@@ -216,16 +231,17 @@ def test_discover_schema_ddl_contains_column_types(schema_manager_indexing):
 
 def test_index_schema_stores_keys_in_redis(schema_manager_indexing, mock_redis_v1):
     """
-    index_schema() stores schema:v1:ddl:{table} and schema:v1:text:{table} in Redis.
+    index_schema() stores schema:v1:ddl:{db}:{table} and schema:v1:text:{db}:{table} in Redis.
     Verify both tables have ddl and text keys.
     """
     count = schema_manager_indexing.index_schema("testdb", force=True)
 
     assert count == 2
 
+    index_key = f"{SCHEMA_V1_INDEX_PREFIX}testdb"
     for table in ["financial_records", "weather_data"]:
-        ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
-        text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+        ddl_key = f"{SCHEMA_V1_DDL_PREFIX}testdb:{table}"
+        text_key = f"{SCHEMA_V1_TEXT_PREFIX}testdb:{table}"
 
         raw_vector = mock_redis_v1.get(ddl_key)
         assert raw_vector is not None
@@ -237,15 +253,15 @@ def test_index_schema_stores_keys_in_redis(schema_manager_indexing, mock_redis_v
         assert raw_ddl is not None
         assert table in raw_ddl or "Table:" in raw_ddl
 
-    assert "financial_records" in mock_redis_v1.smembers(SCHEMA_V1_INDEX_KEY)
-    assert "weather_data" in mock_redis_v1.smembers(SCHEMA_V1_INDEX_KEY)
+    assert "financial_records" in mock_redis_v1.smembers(index_key)
+    assert "weather_data" in mock_redis_v1.smembers(index_key)
 
 
 def test_index_schema_stores_vector_as_json_array(schema_manager_indexing, mock_redis_v1):
-    """Vector stored in schema:v1:ddl:{table} is valid JSON array of floats."""
+    """Vector stored in schema:v1:ddl:{db}:{table} is valid JSON array of floats."""
     schema_manager_indexing.index_schema("testdb", force=True)
 
-    raw = mock_redis_v1.get(f"{SCHEMA_V1_DDL_PREFIX}financial_records")
+    raw = mock_redis_v1.get(f"{SCHEMA_V1_DDL_PREFIX}testdb:financial_records")
     vector = json.loads(raw)
     assert all(isinstance(x, (int, float)) for x in vector)
 
@@ -264,7 +280,7 @@ def test_semantic_search_money_returns_financial_records_top(
     """
     schema_manager_indexing.index_schema("testdb", force=True)
     result = schema_manager_indexing.search_schema_v1(
-        "How much money did we make?", limit=5
+        "How much money did we make?", schema_name="testdb", limit=5
     )
 
     assert len(result) >= 1
@@ -278,7 +294,7 @@ def test_semantic_search_revenue_returns_financial_records(schema_manager_indexi
     """Query about 'Revenue' returns financial_records (Invoices-like table)."""
     schema_manager_indexing.index_schema("testdb", force=True)
     result = schema_manager_indexing.search_schema_v1(
-        "What is our total revenue for 2023?", limit=3
+        "What is our total revenue for 2023?", schema_name="testdb", limit=3
     )
 
     assert len(result) >= 1
@@ -291,7 +307,7 @@ def test_semantic_search_weather_returns_weather_data(schema_manager_indexing):
     """Query about weather returns weather_data, excludes financial_records."""
     schema_manager_indexing.index_schema("testdb", force=True)
     result = schema_manager_indexing.search_schema_v1(
-        "Show me the weather forecast for cities", limit=5
+        "Show me the weather forecast for cities", schema_name="testdb", limit=5
     )
 
     assert len(result) >= 1
@@ -334,7 +350,7 @@ def test_index_schema_returns_zero_when_redis_unavailable(mock_embedding_financi
 
 def test_search_schema_v1_empty_without_index(schema_manager_indexing):
     """search_schema_v1 returns empty list if no schema indexed."""
-    result = schema_manager_indexing.search_schema_v1("How much money?")
+    result = schema_manager_indexing.search_schema_v1("How much money?", schema_name="testdb")
     assert result == []
 
 
@@ -342,7 +358,7 @@ def test_search_schema_v1_respects_limit(schema_manager_indexing):
     """search_schema_v1 returns at most limit tables."""
     schema_manager_indexing.index_schema("testdb", force=True)
     result = schema_manager_indexing.search_schema_v1(
-        "How much money did we make?", limit=1
+        "How much money did we make?", schema_name="testdb", limit=1
     )
     assert len(result) <= 1
 
@@ -390,12 +406,8 @@ def test_index_schema_raises_without_schema_name(mock_redis_v1, mock_embedding_f
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="search_schema_v1 does not filter by schema_name; v1 index is global",
-    strict=False,
-)
 def test_search_schema_v1_filters_by_schema_name(schema_manager_indexing):
-    """search_schema_v1 should filter by schema_name when multiple DBs indexed."""
+    """search_schema_v1 filters by schema_name (namespaced keys per database)."""
     schema_manager_indexing.index_schema("testdb", force=True)
     result = schema_manager_indexing.search_schema_v1(
         "revenue", schema_name="testdb", limit=5
@@ -479,10 +491,11 @@ def test_index_and_search_schema_live():
         assert "financial_records" in top or "revenue" in top or "amount" in top
         assert "weather_data" not in top
     finally:
-        # Clean up schema:v1:* keys
+        # Clean up schema:v1:* keys (namespaced by testdb)
         client = cache._get_client()
         if client:
+            index_key = f"{SCHEMA_V1_INDEX_PREFIX}testdb"
             for table in ["financial_records", "weather_data"]:
-                client.delete(f"{SCHEMA_V1_DDL_PREFIX}{table}")
-                client.delete(f"{SCHEMA_V1_TEXT_PREFIX}{table}")
-                client.srem(SCHEMA_V1_INDEX_KEY, table)
+                client.delete(f"{SCHEMA_V1_DDL_PREFIX}testdb:{table}")
+                client.delete(f"{SCHEMA_V1_TEXT_PREFIX}testdb:{table}")
+                client.srem(index_key, table)

@@ -1208,6 +1208,17 @@ class DaiBaiApp {
         this.attachBtn = document.getElementById('attachBtn');
         this.fileInput = document.getElementById('fileInput');
         this.attachedFilesEl = document.getElementById('attachedFiles');
+        this.testDatabaseModal = document.getElementById('testDatabaseModal');
+        this.testDatabaseModalClose = document.getElementById('testDatabaseModalClose');
+        this.testDatabaseSelect = document.getElementById('testDatabaseSelect');
+        this.testDatabaseHost = document.getElementById('testDatabaseHost');
+        this.testDatabasePort = document.getElementById('testDatabasePort');
+        this.testDatabaseUser = document.getElementById('testDatabaseUser');
+        this.testDatabasePassword = document.getElementById('testDatabasePassword');
+        this.testDatabaseType = document.getElementById('testDatabaseType');
+        this.testDatabaseDb = document.getElementById('testDatabaseDb');
+        this.testDatabaseBtn = document.getElementById('testDatabaseBtn');
+        this.testDatabaseResult = document.getElementById('testDatabaseResult');
     }
     
     bindEvents() {
@@ -1272,6 +1283,21 @@ class DaiBaiApp {
                 this.schemaModal.classList.remove('active');
             }
         });
+
+        // Test Database modal (Admin)
+        document.getElementById('dropdownTestDatabase')?.addEventListener('click', () => {
+            profileDropdown?.classList.remove('open');
+            profileAvatarBtn?.setAttribute('aria-expanded', 'false');
+            this.showTestDatabaseModal();
+        });
+        this.testDatabaseModalClose?.addEventListener('click', () => {
+            this.testDatabaseModal?.classList.remove('active');
+        });
+        this.testDatabaseModal?.addEventListener('click', (e) => {
+            if (e.target === this.testDatabaseModal) this.testDatabaseModal.classList.remove('active');
+        });
+        this.testDatabaseSelect?.addEventListener('change', () => this._onTestDatabaseSelectChange());
+        this.testDatabaseBtn?.addEventListener('click', () => this._runTestDatabaseConnection());
 
         // Settings modal
         if (this.settingsBtn) {
@@ -2102,6 +2128,87 @@ class DaiBaiApp {
             this.schemaContent.textContent = data.schema || 'No schema available';
         } catch (error) {
             this.schemaContent.textContent = 'Failed to load schema: ' + error.message;
+        }
+    }
+
+    async showTestDatabaseModal() {
+        if (!this.testDatabaseModal) return;
+        if (!isAuthenticated()) {
+            signIn();
+            return;
+        }
+        this.testDatabaseModal.classList.add('active');
+        this.testDatabaseSelect.innerHTML = '<option value="">— Select —</option>';
+        if (this.testDatabaseType) this.testDatabaseType.value = '—';
+        if (this.testDatabaseDb) this.testDatabaseDb.value = '';
+        this.testDatabaseHost.value = '';
+        this.testDatabasePort.value = '';
+        this.testDatabaseUser.value = '';
+        this.testDatabasePassword.value = '';
+        this.testDatabaseResult.textContent = '';
+        this.testDatabaseResult.classList.remove('success', 'error');
+        this.testDatabaseBtn.disabled = true;
+        this._testDatabaseConfigs = {};
+        try {
+            const res = await apiFetch('/api/admin/databases');
+            const data = await res.json();
+            const dbs = data.databases || [];
+            for (const db of dbs) {
+                const opt = document.createElement('option');
+                opt.value = db.name;
+                opt.textContent = db.name;
+                this.testDatabaseSelect.appendChild(opt);
+                this._testDatabaseConfigs[db.name] = db;
+            }
+        } catch (e) {
+            this.testDatabaseResult.textContent = 'Failed to load databases: ' + e.message;
+            this.testDatabaseResult.classList.add('error');
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    _onTestDatabaseSelectChange() {
+        const sel = this.testDatabaseSelect?.value;
+        const cfg = sel ? this._testDatabaseConfigs?.[sel] : null;
+        if (this.testDatabaseType) this.testDatabaseType.value = cfg ? 'MySQL' : '—';
+        if (this.testDatabaseDb) this.testDatabaseDb.value = cfg?.database ?? '';
+        this.testDatabaseHost.value = cfg?.host ?? '';
+        this.testDatabasePort.value = cfg?.port ?? '';
+        this.testDatabaseUser.value = cfg?.user ?? '';
+        this.testDatabasePassword.value = cfg?.password ?? '';
+        this.testDatabaseResult.textContent = '';
+        this.testDatabaseResult.classList.remove('success', 'error');
+        this.testDatabaseBtn.disabled = !sel;
+    }
+
+    async _runTestDatabaseConnection() {
+        const sel = this.testDatabaseSelect?.value;
+        if (!sel) return;
+        this.testDatabaseBtn.disabled = true;
+        this.testDatabaseResult.textContent = 'Testing…';
+        this.testDatabaseResult.classList.remove('success', 'error');
+        try {
+            const res = await apiFetch('/api/admin/test-database', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ database: sel }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.success) {
+                this.testDatabaseResult.textContent = data.message || 'Connected';
+                this.testDatabaseResult.classList.add('success');
+            } else {
+                let msg = data.message || data.detail;
+                if (Array.isArray(msg)) msg = msg.map(d => d.msg || d).join('; ');
+                if (msg == null) msg = 'Connection failed';
+                this.testDatabaseResult.textContent = typeof msg === 'string' ? msg : String(msg);
+                this.testDatabaseResult.classList.add('error');
+            }
+        } catch (e) {
+            this.testDatabaseResult.textContent = 'Request failed: ' + (e.message || String(e));
+            this.testDatabaseResult.classList.add('error');
+        } finally {
+            this.testDatabaseBtn.disabled = false;
         }
     }
 

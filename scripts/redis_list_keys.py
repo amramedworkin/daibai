@@ -106,6 +106,7 @@ def main() -> int:
 
     if not rows:
         print(f"No keys matching pattern: {pattern}")
+        print(f"Keys: 0")
         return 0
 
     # Column widths
@@ -126,7 +127,7 @@ def main() -> int:
         print(f"{key_disp:<{max_key}} | {size_str:>{max_size}} | {ttl_str:<{max_ttl}}")
 
     print("=" * (max_key + max_size + max_ttl + 10))
-    print(f"Total: {len(rows)} key(s)")
+    print(f"Keys: {len(rows)}")
     print("")
     return 0
 

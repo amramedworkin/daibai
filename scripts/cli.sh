@@ -133,6 +133,7 @@ Commands by Category:
     train            Train DB schema           |  index            Semantic schema index
   ------------------------------------------------------------------------------------------
   AZURE & INFRASTRUCTURE
+    my-ip            Show current public IP (curl ifconfig.me)
     cosmos-role      Setup Cosmos RBAC         |  cosmos-allow-ip  Whitelist current IP
     redis-create     Create Azure Redis        |  keyvault-create  Create Key Vault
     sync-env         Sync Cosmos config        |  verify-azure-auth Verify secretless auth
@@ -1164,6 +1165,17 @@ cmd_cosmos_role() {
     fi
 }
 
+cmd_my_ip() {
+    local ip
+    ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || true)
+    ip="${ip// /}"
+    if [[ -z "$ip" ]]; then
+        print_error "Could not detect your public IP. Check internet connectivity."
+        return 1
+    fi
+    echo "$ip"
+}
+
 cmd_cosmos_allow_ip() {
     load_env
     print_header "Cosmos DB Firewall — Add Current IP"
@@ -1603,6 +1615,7 @@ _CLI_WILDCARD_CMDS=(
     "cli-query:Single natural language query"
     "train:Train DB schema"
     "index:Semantic schema index"
+    "my-ip:Show current public IP"
     "cosmos-role:Setup Cosmos RBAC"
     "cosmos-allow-ip:Whitelist current IP"
     "redis-create:Create Azure Redis"
@@ -1766,6 +1779,9 @@ main() {
             ;;
         cosmos-allow-ip)
             cmd_cosmos_allow_ip
+            ;;
+        my-ip)
+            cmd_my_ip
             ;;
         test-db)
             cmd_test_db

@@ -657,6 +657,75 @@ async def test_llm_connection(body: Dict[str, Any] = Body(default={}), _user: Di
     return {"success": True, "message": "Connection test not yet implemented"}
 
 
+# --- Admin: Test Database (from daibai.yaml) ---
+
+def _mask_password(pwd: Optional[str]) -> str:
+    """Mask password for safe API response."""
+    return "***" if pwd else "(empty)"
+
+
+@app.get("/api/admin/databases")
+async def admin_get_databases(_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Return daibai.yaml database configs for Admin > Test Database.
+    Passwords are masked. Values come from .env / Key Vault (resolved by load_config).
+    """
+    config = get_config()
+    databases: List[Dict[str, Any]] = []
+    for name, db_config in config.databases.items():
+        databases.append({
+            "name": name,
+            "host": db_config.host,
+            "port": db_config.port,
+            "database": db_config.database,
+            "user": db_config.user,
+            "password": _mask_password(db_config.password),
+            "ssl": db_config.ssl,
+        })
+    return {"databases": databases}
+
+
+@app.post("/api/admin/test-database")
+async def admin_test_database(
+    body: Dict[str, Any] = Body(default={}),
+    _user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Test connectivity to a configured database by name.
+    Uses server-side config (daibai.yaml + .env + Key Vault). No credentials from client.
+    """
+    db_name = body.get("database") if isinstance(body.get("database"), str) else None
+    if not db_name:
+        raise HTTPException(status_code=400, detail="Missing 'database' in request body")
+    config = get_config()
+    if db_name not in config.databases:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Database '{db_name}' not found. Available: {list(config.databases.keys())}",
+        )
+    try:
+        import mysql.connector
+        db_config = config.get_database(db_name)
+        conn = mysql.connector.connect(
+            host=db_config.host,
+            port=db_config.port,
+            database=db_config.database,
+            user=db_config.user,
+            password=db_config.password,
+            ssl_disabled=not db_config.ssl,
+        )
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 AS ok")
+            cur.fetchone()
+        finally:
+            conn.close()
+        return {"success": True, "message": f"Connected to {db_name} successfully"}
+    except Exception as e:
+        logger.warning("[admin] test-database %s failed: %s", db_name, e)
+        return {"success": False, "message": str(e)}
+
+
 # --- Component health checks for Settings > System Health ---
 
 async def _health_check_redis() -> Dict[str, Any]:

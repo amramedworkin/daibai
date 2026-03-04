@@ -127,6 +127,19 @@
                             </button>
                             <div class="profile-dropdown-divider"></div>
 
+                            <!-- Admin -->
+                            <div class="profile-dropdown-group">
+                                <div class="profile-dropdown-group-label">
+                                    <i data-lucide="shield-check"></i>
+                                    Admin
+                                </div>
+                                <button class="profile-dropdown-item" id="dropdownTestDatabase" role="menuitem">
+                                    <i data-lucide="database"></i>
+                                    Test Database
+                                </button>
+                            </div>
+                            <div class="profile-dropdown-divider"></div>
+
                             <!-- Authenticated: sign out -->
                             <button class="profile-dropdown-item profile-dropdown-item--danger" id="dropdownSignOut" role="menuitem" style="display:none">
                                 <i data-lucide="log-out"></i>
@@ -488,6 +501,57 @@
                 <button class="verification-cancel" id="verificationCancelBtn">
                     Cancel — go back to sign in
                 </button>
+            </div>
+        </div>
+
+        <!-- Test Database Modal (Admin) -->
+        <div class="modal" id="testDatabaseModal">
+            <div class="modal-content test-database-modal-content">
+                <div class="modal-header">
+                    <h2>Test Database Connection</h2>
+                    <button class="modal-close" id="testDatabaseModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="test-database-form">
+                        <div class="form-group">
+                            <label for="testDatabaseSelect">Database</label>
+                            <select id="testDatabaseSelect">
+                                <option value="">— Select —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="testDatabaseType">Database Type</label>
+                            <input type="text" id="testDatabaseType" readonly value="MySQL" placeholder="—">
+                        </div>
+                        <div class="form-group">
+                            <label for="testDatabaseDb">Schema / Database Name</label>
+                            <input type="text" id="testDatabaseDb" readonly placeholder="—">
+                        </div>
+                        <div class="form-group">
+                            <label for="testDatabaseHost">Host</label>
+                            <input type="text" id="testDatabaseHost" readonly placeholder="—">
+                        </div>
+                        <div class="form-group">
+                            <label for="testDatabasePort">Port</label>
+                            <input type="text" id="testDatabasePort" readonly placeholder="—">
+                        </div>
+                        <div class="form-group">
+                            <label for="testDatabaseUser">Username</label>
+                            <input type="text" id="testDatabaseUser" readonly placeholder="—">
+                        </div>
+                        <div class="form-group">
+                            <label for="testDatabasePassword">Password</label>
+                            <input type="text" id="testDatabasePassword" readonly placeholder="—" value="" autocomplete="off">
+                        </div>
+                        <div class="test-database-actions">
+                            <button class="btn btn-primary" id="testDatabaseBtn" disabled>
+                                <i data-lucide="plug"></i>
+                                Test Connection
+                            </button>
+                            <span class="test-database-result" id="testDatabaseResult"></span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
