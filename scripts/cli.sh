@@ -122,7 +122,7 @@ Commands by Category:
   ------------------------------------------------------------------------------------------
   LOGGING
     log              Show logs (alias: logs-view) |  log-info       Where are logs (alias: logs-info)
-    rotate-log       Zip current log and start new (alias: logs-rotate)
+    logs-rotate      Zip current log and start new
     logs-info        Log file location/size    |  logs-tail        Live tail log
     logs-view        Page through log          |  logs-errors      Errors and warnings
     logs-today       Today's entries           |  logs-search      Search log for pattern
@@ -1656,7 +1656,6 @@ _CLI_WILDCARD_CMDS=(
     "logs-rotate:Archive and start fresh"
     "log:Show logs"
     "log-info:Where are logs"
-    "rotate-log:Zip current log and start new"
 )
 
 cmd_wildcard_search() {
@@ -1934,9 +1933,6 @@ main() {
             ;;
         log-info)
             cmd_logs_info
-            ;;
-        rotate-log)
-            cmd_logs_rotate
             ;;
         help|--help|-h|"")
             show_help

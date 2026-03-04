@@ -761,7 +761,8 @@ class DaiBaiApp {
             return;
         }
 
-        // Authenticated: load full feature set.
+        // Authenticated: run one-time startup indexing (blocks until complete), then load UI.
+        await this.ensureDatabaseIndexed('all');
         await this.loadSettings();
         await this.loadConversations();
         this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
@@ -803,7 +804,8 @@ class DaiBaiApp {
         this.promptInput.disabled = false;
         this.promptInput.placeholder = 'Ask me about your database…';
 
-        // Load the full feature set.
+        // Load the full feature set (startup indexing, then settings).
+        await this.ensureDatabaseIndexed('all');
         await this.loadSettings();
         await this.loadConversations();
         this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
@@ -857,9 +859,6 @@ class DaiBaiApp {
                 this.promptInput.placeholder = 'Ask me about the Chinook database…';
                 this.sendBtn.disabled = false;
             }
-
-            // Auto-index playground if needed
-            this.ensureDatabaseIndexed('chinook_playground');
 
         } else {
             // ── Unlock and restore the nav dropdowns ─────────────────────
@@ -915,10 +914,17 @@ class DaiBaiApp {
     _showIndexingModal(dbId) {
         const modal = document.getElementById('indexingModal');
         const label = document.getElementById('indexingDbLabel');
+        const statusLine = document.getElementById('indexingStatusLine');
         if (!modal) return;
-        if (label) label.textContent = dbId || 'Preparing…';
-        this._updateIndexingProgress(0, `Vectorizing "${dbId}"…`, null);
-        document.getElementById('indexingStatusLine').textContent = 'Starting…';
+        const isStartup = dbId === 'all' || dbId === 'startup';
+        if (isStartup) {
+            if (label) label.textContent = 'Startup System Indexing Underway…';
+            if (statusLine) statusLine.textContent = 'This is a one-time process to prepare all connected databases. The system will start once indexing is complete.';
+        } else {
+            if (label) label.textContent = dbId || 'Preparing…';
+            if (statusLine) statusLine.textContent = 'Starting…';
+        }
+        this._updateIndexingProgress(0, isStartup ? 'Preparing…' : `Vectorizing "${dbId}"…`, null);
         modal.classList.add('active');
         if (typeof lucide !== 'undefined') lucide.createIcons();
     }
@@ -1009,8 +1015,13 @@ class DaiBaiApp {
                     this._updateIndexingProgress(msg.pct, msg.status, msg.eta);
                 } else if (msg.type === 'done') {
                     this._updateIndexingProgress(100, msg.status, 0);
+                    const isStartup = dbId === 'all' || dbId === 'startup';
+                    if (isStartup) {
+                        showSandboxStatusToast('success', 'Startup indexing complete. All databases ready.');
+                    }
                     setTimeout(() => {
                         this._hideIndexingModal();
+                        this._setInputsEnabledForIndexing(true);
                         resolve();
                     }, 1400);
                 } else if (msg.type === 'error') {
@@ -1210,7 +1221,6 @@ class DaiBaiApp {
         this.databaseSelect.addEventListener('change', () => {
             this.updateSettings();
             this.savePreferences();
-            this.ensureDatabaseIndexed(this.databaseSelect.value);
         });
         this.llmSelect.addEventListener('change', () => {
             this.updateSettings();
@@ -1358,8 +1368,6 @@ class DaiBaiApp {
             this.databaseSelect.innerHTML = settings.databases
                 .map(db => `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`)
                 .join('');
-            // Auto-index if the freshly-selected database is not indexed.
-            this.ensureDatabaseIndexed(this.databaseSelect.value);
 
             // Populate LLM dropdown
             const savedLlm = prefs.llm && settings.llm_providers.includes(prefs.llm)

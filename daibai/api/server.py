@@ -7,6 +7,7 @@ FastAPI backend providing REST and WebSocket endpoints for the GUI.
 import asyncio
 import json
 import logging
+import sys
 import logging.handlers
 import os
 import time
@@ -1293,6 +1294,13 @@ async def ws_schema_progress(websocket: WebSocket):
         target_db, src,
     )
     logger.info("[index] ws_schema_progress: connected db=%s", target_db or "(none)")
+
+    # When db=all or db=startup, index all managed databases at once.
+    is_startup_index = raw_db in ("all", "startup")
+    if is_startup_index:
+        target_db = "all"
+        raw_db = "all"
+
     if not raw_db:
         await websocket.send_json({"type": "error", "message": "No database selected"})
         await websocket.close()
@@ -1300,7 +1308,48 @@ async def ws_schema_progress(websocket: WebSocket):
 
     # Playground uses index_db.index_playground (SQLite); others use SchemaManager.
     is_playground = target_db == "playground"
-    if is_playground:
+
+    if is_startup_index:
+        # Index all databases (daibai.yaml + playground) at startup.
+        from ..core.schema import index_all_startup
+
+        root = Path(__file__).resolve().parent.parent.parent
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+        def _get_schema_manager_for_startup(db_name: str):
+            from ..core.schema import SchemaManager
+            if db_name == "playground":
+                from scripts.index_db import _build_sqlite_execute_fn, _get_cache
+                _PLAY_DB = root / "data" / "playground.db"
+                _MASTER_DB = root / "data" / "chinook_master.db"
+                if not _PLAY_DB.exists() and _MASTER_DB.exists():
+                    import shutil
+                    shutil.copy2(_MASTER_DB, _PLAY_DB)
+                cache = _get_cache()
+                if cache is None:
+                    return None
+                return SchemaManager(
+                    config=None,
+                    execute_fn=_build_sqlite_execute_fn(_PLAY_DB),
+                    cache_manager=cache,
+                )
+            return agent._get_schema_manager(db_name)
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def _progress_cb(pct: float, status: str, eta: float) -> None:
+            asyncio.run_coroutine_threadsafe(
+                queue.put({"type": "progress", "pct": round(pct, 1), "status": status, "eta": round(eta, 1)}),
+                loop,
+            )
+
+        await websocket.send_json({"type": "progress", "pct": 0, "status": "Startup indexing: preparing…", "eta": 60})
+        index_task = asyncio.ensure_future(
+            asyncio.to_thread(index_all_startup, _get_schema_manager_for_startup, _progress_cb)
+        )
+    elif is_playground:
 
         def _run_index_playground() -> int:
             import sys
@@ -1336,7 +1385,7 @@ async def ws_schema_progress(websocket: WebSocket):
         )
 
     try:
-        if not is_playground:
+        if is_startup_index or (not is_playground):
             # Drain the progress queue until the indexing task finishes.
             while True:
                 try:

@@ -2405,9 +2405,11 @@ kbd {
 /* ── Schema Indexing Progress Modal ─────────────────────────────────────────── */
 
 .indexing-modal {
-    background: rgba(0, 0, 0, 0.72);
+    background: rgba(0, 0, 0, 0.82);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
+    z-index: 2000; /* above chat, dropdowns, settings gear during startup indexing */
+    pointer-events: auto; /* block all interaction underneath */
 }
 
 .indexing-modal-content {

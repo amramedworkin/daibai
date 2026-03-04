@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
+from .instrumentation import track_start, track_underway, track_passed, track_failed, init_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,54 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+def index_all_startup(
+    get_schema_manager: "Callable[[str], Optional[SchemaManager]]",
+    progress_cb: Optional[Callable[[float, str, float], None]] = None,
+) -> int:
+    """
+    Index all managed databases at startup (daibai.yaml DBs + playground).
+
+    For each database, calls get_schema_manager(db_name) to obtain a SchemaManager,
+    then invokes index_schema which implements evergreening (TTL refresh if
+    already indexed) or full indexing.
+
+    Args:
+        get_schema_manager: Callable(db_name) -> SchemaManager | None. Returns
+            None if the db cannot be indexed (e.g. not configured).
+        progress_cb: Optional callable(pct, status, eta_seconds) for overall
+            progress across all databases (0-100%).
+
+    Returns:
+        Total number of tables indexed across all databases.
+    """
+    from .config import load_config
+
+    config = load_config()
+    databases = list(config.databases.keys()) + ["playground"]
+    total_dbs = len(databases)
+    total_tables = 0
+
+    for i, db_name in enumerate(databases):
+        sm = get_schema_manager(db_name)
+        if not sm:
+            logger.warning("[index] %s: no schema manager available, skipping", db_name)
+            continue
+
+        def _per_db_progress(pct: float, status: str, eta: float) -> None:
+            base = (i / total_dbs) * 100.0
+            width = 100.0 / total_dbs
+            overall_pct = base + (pct / 100.0) * width
+            if progress_cb is not None:
+                try:
+                    progress_cb(overall_pct, f"[{db_name}] {status}", eta)
+                except Exception:
+                    pass
+
+        total_tables += sm.index_schema(db_name, progress_cb=_per_db_progress)
+
+    return total_tables
 
 
 class SchemaManager:
@@ -403,6 +452,49 @@ class SchemaManager:
             logger.warning("[index] %s: skipped — no Redis client", db)
             return 0
 
+        init_tracker(f"Startup Index: {db}")
+        track_start(f"Schema Indexing: {db}")
+
+        # ── Evergreening: if already indexed, extend TTL and return ───────────
+        is_indexed_key = f"{SCHEMA_STATUS_IS_INDEXED}:{db}"
+        try:
+            if redis.exists(is_indexed_key):
+                tables_ddl = self.discover_schema(schema_name)
+                if not tables_ddl:
+                    logger.info("[index] %s: no tables found (evergreen skip)", db)
+                    track_passed(f"Schema Indexing: {db}", "No tables to evergreen.")
+                    return 0
+                evergreen_count = 0
+                for table in tables_ddl:
+                    ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{table}"
+                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
+                    if redis.exists(ddl_key):
+                        redis.expire(ddl_key, 86400)
+                        evergreen_count += 1
+                    if redis.exists(text_key):
+                        redis.expire(text_key, 86400)
+                for status_key in [
+                    f"{SCHEMA_STATUS_IS_INDEXED}:{db}",
+                    f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}",
+                    f"{SCHEMA_STATUS_DDL_HASH}:{db}",
+                    f"{SCHEMA_V1_LAST_INDEXED}:{db}",
+                ]:
+                    if redis.exists(status_key):
+                        redis.expire(status_key, 86400)
+                track_passed(
+                    f"Schema Indexing: {db}",
+                    f"Database already in Redis. Evergreened TTL back to 24 hours for schema:v1:ddl/text keys and schema:status:*:{db}",
+                )
+                return evergreen_count
+        except Exception as e:
+            track_failed(f"Schema Indexing: {db}", f"Evergreen check failed: {str(e)}")
+            raise
+
+        track_underway(
+            f"Schema Indexing: {db}",
+            f"About to index {db} because it is a managed database. Indexing using SentenceTransformer (local) to target Redis instance.",
+        )
+
         db_library = "sqlite3 (custom execute_fn)" if self._execute_fn else "mysql-connector-python"
         embed_source = (
             "sentence_transformers (all-MiniLM-L6-v2)"
@@ -462,6 +554,10 @@ class SchemaManager:
 
                 vector = self._get_embedding(ddl)
                 if vector is None:
+                    track_failed(
+                        f"Schema Indexing: {db}",
+                        "Index failed: embedding model unavailable (sentence_transformers or embed_fn returned None)",
+                    )
                     logger.critical(
                         "[index] %s: failed — embedding model unavailable (sentence_transformers all-MiniLM-L6-v2 "
                         "or embed_fn returned None); falling back to Lazy Discovery",
@@ -516,12 +612,19 @@ class SchemaManager:
                         "tables=%d size=%s last_indexed_at=%s",
                         db, redis_loc, key_names, stored, size_str, now_iso,
                     )
+                    approx_kb = len(str(tables_ddl)) / 1024
+                    track_passed(
+                        f"Schema Indexing: {db}",
+                        f"Index completed and loaded to Redis keyed by schema:v1:*:{db}. Size approx {approx_kb:.2f} KB",
+                    )
                 except Exception as e:
                     logger.warning("[index] %s: failed to write status keys — %s", db, e)
             else:
                 logger.info("[index] %s: complete — 0 tables stored", db)
+                track_passed(f"Schema Indexing: {db}", "Index completed (0 tables stored).")
 
         except Exception as e:
+            track_failed(f"Schema Indexing: {db}", f"Index failed: {str(e)}")
             logger.critical(
                 "[index] %s: failed — %s: %s; falling back to Lazy Discovery",
                 db, type(e).__name__, str(e),
