@@ -36,6 +36,13 @@ def main() -> None:
             loaded = True
             break
 
+    # Intercept Tailgate
+    if "--tailgate" in sys.argv:
+        from daibai.core.env_ready import run_tailgate
+
+        run_tailgate()
+        sys.exit(0)
+
     if not loaded:
         print(f"{RED}[ERROR] .env file not found!{RESET}")
         print(f"  Looked in: {project_root / '.env'}, {Path.home() / '.daibai' / '.env'}")

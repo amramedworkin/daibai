@@ -254,6 +254,11 @@ def _resolve_env_vars(value: Any) -> Any:
     return value
 
 
+def get_config_file_path() -> Optional[Path]:
+    """Return path to daibai.yaml if found, else None. For logging/config attribution."""
+    return _find_config_file()
+
+
 def _find_config_file() -> Optional[Path]:
     """Find daibai.yaml in standard locations."""
     locations = []

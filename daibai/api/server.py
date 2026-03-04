@@ -946,7 +946,7 @@ async def query(
             status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
             if not status["is_indexed"]:
                 logger.info("[index] REST query: forcing index before execution (db=%s, playground)", db_id)
-                await _trigger_index_background(db_id)
+                await _trigger_index_background(db_id, reason="REST query (playground) not_indexed")
 
             # ── Playground path: Chinook system prompt + SQLite execution ──────
             sql, results, row_count = await _run_playground(
@@ -958,7 +958,7 @@ async def query(
                 status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
                 if not status["is_indexed"]:
                     logger.info("[index] REST query: forcing index before execution (db=%s, production)", db_id)
-                    await _trigger_index_background(db_id)
+                    await _trigger_index_background(db_id, reason="REST query (production) not_indexed")
 
             # ── Production path: user's configured database ───────────────────
             sql = None
@@ -1089,10 +1089,19 @@ async def get_tables(_user: Dict[str, Any] = Depends(get_current_user)):
 
 # ── Schema status & real-time indexing progress ────────────────────────────
 
-async def _trigger_index_background(db_id: str) -> None:
+async def _trigger_index_background(db_id: str, reason: str = "background") -> None:
     """Start schema indexing in background. Non-blocking; logs errors."""
     redis_key_id = _normalize_db_id_for_redis(db_id)
-    logger.info("[index] background: start db_id=%s", db_id)
+    from ..core.config import get_config_file_path
+    config_path = get_config_file_path()
+    if redis_key_id == "playground":
+        config_src = "data/playground.db (Chinook SQLite)"
+    else:
+        config_src = f"daibai.yaml at {config_path}" if config_path else "daibai.yaml (path not found)"
+    logger.info(
+        "[index] about to index db=%s because %s | source=%s",
+        db_id, reason, config_src,
+    )
     try:
         if redis_key_id == "playground":
             root = Path(__file__).resolve().parent.parent.parent
@@ -1111,7 +1120,11 @@ async def _trigger_index_background(db_id: str) -> None:
             else:
                 logger.warning("[index] background: skipped db_id=%s — no schema manager", db_id)
     except Exception as e:
-        logger.warning("[index] background: failed db_id=%s — %s", db_id, e, extra={"db_id": db_id})
+        logger.warning(
+            "[index] background: failed db_id=%s — %s: %s",
+            db_id, type(e).__name__, str(e),
+            exc_info=True,
+        )
 
 
 def _normalize_db_id_for_redis(db_id: str) -> str:
@@ -1251,18 +1264,34 @@ async def ws_schema_progress(websocket: WebSocket):
     """
     token  = websocket.query_params.get("token", "")
     db_arg = websocket.query_params.get("db", "")
+    logger.info("[index] ws_schema_progress: connect attempt db=%s", db_arg or "(none)")
 
     try:
         auth.verify_firebase_token(token)
-    except HTTPException:
+    except HTTPException as e:
+        logger.warning("[index] ws_schema_progress: auth failed — %s", e.detail)
         await websocket.close(code=4001)
         return
 
     await websocket.accept()
 
-    agent     = get_agent()
+    try:
+        agent     = get_agent()
+    except Exception as e:
+        logger.exception("[index] ws_schema_progress: get_agent failed — %s", e)
+        await websocket.send_json({"type": "error", "message": f"Agent init failed: {e}"})
+        await websocket.close()
+        return
+
     raw_db    = db_arg or agent._current_db or ""
     target_db = _normalize_db_id_for_redis(raw_db)
+    from ..core.config import get_config_file_path
+    config_path = get_config_file_path()
+    src = "data/playground.db (Chinook SQLite)" if target_db == "playground" else f"daibai.yaml at {config_path}" if config_path else "daibai.yaml"
+    logger.info(
+        "[index] about to index db=%s because ws_schema_progress connect | source=%s",
+        target_db, src,
+    )
     logger.info("[index] ws_schema_progress: connected db=%s", target_db or "(none)")
     if not raw_db:
         await websocket.send_json({"type": "error", "message": "No database selected"})
@@ -1340,6 +1369,10 @@ async def ws_schema_progress(websocket: WebSocket):
 
     except WebSocketDisconnect:
         index_task.cancel()
+        logger.info("[index] ws_schema_progress: client disconnected db=%s", target_db)
+
+    except Exception as e:
+        logger.exception("[index] ws_schema_progress: unexpected error db=%s — %s", target_db, e)
 
     finally:
         try:
@@ -1531,7 +1564,7 @@ async def websocket_chat(websocket: WebSocket):
                             "content": "Indexing database for AI search — one moment…",
                             "conversation_id": conv_id,
                         })
-                        await _trigger_index_background(db_id)
+                        await _trigger_index_background(db_id, reason="WS chat (playground) not_indexed")
 
                     # ── Playground path ──────────────────────────────────────
                     await _send_debug("6. Playground: generating SQL via LLM...")
@@ -1574,7 +1607,7 @@ async def websocket_chat(websocket: WebSocket):
                                 "content": "Indexing database for AI search — one moment…",
                                 "conversation_id": conv_id,
                             })
-                            await _trigger_index_background(db_id)
+                            await _trigger_index_background(db_id, reason="WS chat (production) not_indexed")
 
                     # ── Production path ──────────────────────────────────────
                     await _send_debug("6. Production: generating SQL via agent (schema pruning + LLM)...")

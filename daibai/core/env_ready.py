@@ -236,3 +236,79 @@ def run(verbose: bool = True, strict: bool = False) -> int:
             print(f"  {red}Not ready{reset}: missing {', '.join(missing)}")
         print("")
     return 0 if ready else 1
+
+
+def run_tailgate() -> None:
+    """Prints a comprehensive, formatted table of all system configuration states."""
+    import os
+    from daibai.core.config import load_config
+
+    cfg = load_config()
+
+    def mask(val: str) -> str:
+        if not val:
+            return "\033[2mUnset\033[0m"
+        val = str(val).strip()
+        if len(val) <= 6:
+            return "***"
+        return f"{val[:3]}...{val[-3:]}"
+
+    def status(val: str) -> str:
+        return "\033[92m[ OK ]\033[0m" if val else "\033[91m[MISS]\033[0m"
+
+    items = [
+        ("Azure Auth", "AZURE_TENANT_ID", os.environ.get("AZURE_TENANT_ID")),
+        ("Azure Auth", "AZURE_CLIENT_ID", os.environ.get("AZURE_CLIENT_ID")),
+        ("Azure Auth", "AZURE_CLIENT_SECRET", os.environ.get("AZURE_CLIENT_SECRET")),
+        ("Cosmos DB", "COSMOS_ENDPOINT", os.environ.get("COSMOS_ENDPOINT")),
+        ("Cosmos DB", "COSMOS_DATABASE", os.environ.get("COSMOS_DATABASE")),
+        (
+            "Redis Cache",
+            "REDIS_URL / AZURE_CONN",
+            os.environ.get("REDIS_URL")
+            or os.environ.get("AZURE_REDIS_CONNECTION_STRING"),
+        ),
+        ("Key Vault", "KEY_VAULT_URL", os.environ.get("KEY_VAULT_URL")),
+        ("Firebase", "FIREBASE_PROJECT_ID", os.environ.get("FIREBASE_PROJECT_ID")),
+        (
+            "Firebase",
+            "FIREBASE_SERVICE_ACCOUNT",
+            os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON"),
+        ),
+    ]
+
+    # Add LLMs
+    for key in EnvValidator.LLM_KEYS:
+        val = os.environ.get(key)
+        if val:
+            items.append(("LLM Config", key, val))
+
+    # Add Database
+    db_host = os.environ.get("DB_HOST") or os.environ.get("MYSQL_HOST")
+    if db_host:
+        items.append(("Database", "DB_HOST (.env)", db_host))
+    elif cfg.databases:
+        first_db = list(cfg.databases.values())[0]
+        items.append(("Database", f"daibai.yaml ({first_db.name})", first_db.host))
+    else:
+        items.append(("Database", "Primary DB Connection", None))
+
+    print("\n\033[1mDAIBAI SYSTEM TAILGATE CHECKLIST\033[0m")
+    print("=" * 85)
+    print(f"{'CATEGORY':<15} | {'VARIABLE / COMPONENT':<30} | {'STATUS':<6} | {'VALUE'}")
+    print("-" * 85)
+
+    for category, name, value in items:
+        val_str = (
+            mask(value)
+            if "HOST" not in name
+            and "URL" not in name
+            and "ENDPOINT" not in name
+            else (value or "\033[2mUnset\033[0m")
+        )
+        print(f"{category:<15} | {name:<30} | {status(value)} | {val_str}")
+
+    print("=" * 85)
+    print(
+        "Note: If using Key Vault, LLM API keys may be missing here but injected at runtime.\n"
+    )

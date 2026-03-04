@@ -151,12 +151,16 @@ Commands by Category:
   CACHE & REDIS
     cache-stats      Show Redis stats          |  cache-monitor    Live Redis monitor
     cache-info       Show connection info      |  cache-test       Test connection
+    redis-list       List all Redis keys with size and TTL
+    redis-delete     Delete Redis key (interactive or pass key)
+    redis-test       Add dummy key, list, delete, list (full cycle test)
   ------------------------------------------------------------------------------------------
   SYSTEM RESET (testing)
     system-reset     Clear Redis, indexes, Firebase, Cosmos, logs, ~/.daibai — fresh start
   ------------------------------------------------------------------------------------------
   CONFIG & ENVIRONMENT
     setup/install    Install dependencies      |  is-ready         Check env components
+    tailgate         Run comprehensive pre-flight config check
     env-check        Check .env variables      |  env-edit         Edit .env file
     env-clean        Clean .env duplicates     |  env-preferences  Show user preferences
     config-path      Show config locations     |  config-edit      Edit daibai.yaml
@@ -1616,6 +1620,9 @@ _CLI_WILDCARD_CMDS=(
     "wait-for-users:Poll for users"
     "firebase-admin:Manage Firebase Auth"
     "cache-stats:Show Redis stats"
+    "redis-list:List all Redis keys with size and TTL"
+    "redis-delete:Delete Redis key (interactive or pass key)"
+    "redis-test:Add dummy key, list, delete, list (full cycle test)"
     "cache-info:Show connection info"
     "cache-monitor:Live Redis monitor"
     "cache-test:Test connection"
@@ -1627,6 +1634,7 @@ _CLI_WILDCARD_CMDS=(
     "config-edit:Edit daibai.yaml"
     "docs:View documentation"
     "docs-azure:View Azure guide"
+    "tailgate:Run comprehensive pre-flight config check"
     "env-check:Check .env variables"
     "env-edit:Edit .env file"
     "env-clean:Clean .env duplicates"
@@ -1830,6 +1838,18 @@ main() {
         cache-stats)
             cmd_cache_stats
             ;;
+        redis-list)
+            load_env
+            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/redis_list_keys.py" "$@"
+            ;;
+        redis-delete)
+            load_env
+            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/redis_delete.py" "$@"
+            ;;
+        redis-test)
+            load_env
+            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/redis_test.py"
+            ;;
         cache-monitor)
             cmd_cache_monitor
             ;;
@@ -1859,6 +1879,10 @@ main() {
             ;;
         docs-azure)
             cmd_docs_azure
+            ;;
+        tailgate)
+            load_env
+            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/check_env_ready.py" --tailgate
             ;;
         env-check)
             cmd_env_check

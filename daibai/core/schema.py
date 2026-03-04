@@ -12,6 +12,7 @@ index_schema(), and search_schema_v1() using schema:v1:* Redis keys.
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -19,6 +20,20 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_redis_url(url: Optional[str]) -> str:
+    """Mask password in Redis URL for safe logging."""
+    if not url:
+        return "(not configured)"
+    # rediss://:password@host:port or redis://:password@host
+    m = re.match(r"(rediss?://)(:[^@]*@)(.+)", url)
+    if m:
+        return f"{m.group(1)}:***@{m.group(3).split('?')[0]}"
+    # Fallback: hide from first @ to next @ or end
+    if "@" in url:
+        return re.sub(r":([^@]+)@", ":***@", url, count=1)
+    return url
 
 
 # Standard MySQL information_schema query for columns
@@ -388,6 +403,26 @@ class SchemaManager:
             logger.warning("[index] %s: skipped — no Redis client", db)
             return 0
 
+        db_library = "sqlite3 (custom execute_fn)" if self._execute_fn else "mysql-connector-python"
+        embed_source = (
+            "sentence_transformers (all-MiniLM-L6-v2)"
+            if self._cache_manager
+            else ("custom embed_fn" if self._embed_fn else "none")
+        )
+        config_loc = (
+            "daibai.yaml databases"
+            if self._config
+            else "project data/playground.db"
+        )
+        try:
+            from .config import get_redis_connection_string
+            redis_loc = _sanitize_redis_url(get_redis_connection_string())
+        except Exception:
+            redis_loc = "(unknown)"
+        logger.info(
+            "[index] %s: indexing using %s against %s from %s | redis=%s",
+            db, db_library, embed_source, config_loc, redis_loc,
+        )
         logger.info("[index] %s: start (force=%s)", db, force)
 
         # Refresh-interval check removed: always re-index on focus (app load, dropdown, playground).
@@ -417,6 +452,7 @@ class SchemaManager:
         ddl_hash = hashlib.sha256(ddl_str.encode()).hexdigest()
 
         stored = 0
+        bytes_written = 0
         # Rolling window of the last 5 per-table durations for ETA estimation.
         _recent_times: List[float] = []
 
@@ -426,16 +462,22 @@ class SchemaManager:
 
                 vector = self._get_embedding(ddl)
                 if vector is None:
-                    logger.critical("[index] %s: embedding model unavailable — falling back to Lazy Discovery", db)
+                    logger.critical(
+                        "[index] %s: failed — embedding model unavailable (sentence_transformers all-MiniLM-L6-v2 "
+                        "or embed_fn returned None); falling back to Lazy Discovery",
+                        db,
+                    )
                     return 0
 
                 ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{table}"
                 text_key = f"{SCHEMA_V1_TEXT_PREFIX}{table}"
                 try:
-                    redis.set(ddl_key, json.dumps(vector), ex=ttl)
+                    vector_json = json.dumps(vector)
+                    redis.set(ddl_key, vector_json, ex=ttl)
                     redis.set(text_key, ddl, ex=ttl)
                     redis.sadd(SCHEMA_V1_INDEX_KEY, table)
                     stored += 1
+                    bytes_written += len(vector_json.encode("utf-8")) + len(ddl.encode("utf-8"))
                 except Exception as e:
                     logger.warning("[index] %s: failed to store table %s — %s", db, table, e)
 
@@ -462,14 +504,29 @@ class SchemaManager:
                     redis.set(f"{SCHEMA_STATUS_IS_INDEXED}:{db}",     "1",              ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}", now_iso,          ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_DDL_HASH}:{db}",      ddl_hash,         ex=ttl)
-                    logger.info("[index] %s: complete — %d table(s), last_indexed_at=%s", db, stored, now_iso)
+                    try:
+                        from .config import get_redis_connection_string
+                        redis_loc = _sanitize_redis_url(get_redis_connection_string())
+                    except Exception:
+                        redis_loc = "(unknown)"
+                    size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written < 1024 * 1024 else f"{bytes_written / (1024 * 1024):.2f}MB"
+                    key_names = f"{SCHEMA_V1_DDL_PREFIX}*, {SCHEMA_V1_TEXT_PREFIX}*, {SCHEMA_V1_INDEX_KEY}, schema:status:*"
+                    logger.info(
+                        "[index] %s: complete — loaded to redis=%s keyed by %s | "
+                        "tables=%d size=%s last_indexed_at=%s",
+                        db, redis_loc, key_names, stored, size_str, now_iso,
+                    )
                 except Exception as e:
                     logger.warning("[index] %s: failed to write status keys — %s", db, e)
             else:
                 logger.info("[index] %s: complete — 0 tables stored", db)
 
         except Exception as e:
-            logger.critical("[index] %s: failed — %s; falling back to Lazy Discovery", db, e, exc_info=True)
+            logger.critical(
+                "[index] %s: failed — %s: %s; falling back to Lazy Discovery",
+                db, type(e).__name__, str(e),
+                exc_info=True,
+            )
             return 0
 
         return stored

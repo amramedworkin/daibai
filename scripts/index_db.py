@@ -178,6 +178,11 @@ def index_playground(schema_name: str = "playground", *, force: bool = False) ->
 
     Returns the number of tables successfully indexed.
     """
+    logger.info(
+        "[index] about to index db=%s because source=data/playground.db (Chinook SQLite) | "
+        "library=sqlite3 | defined in project data/",
+        schema_name,
+    )
     # Auto-create playground.db from master if absent.
     if not _PLAY_DB.exists():
         if not _MASTER_DB.exists():
@@ -195,7 +200,9 @@ def index_playground(schema_name: str = "playground", *, force: bool = False) ->
 
     cache = _get_cache()
     if cache is None:
-        logger.warning("[index] playground: skipped — no cache")
+        logger.warning(
+            "[index] playground: failed — no Redis cache (set REDIS_URL or AZURE_REDIS_CONNECTION_STRING in .env)"
+        )
         return 0
 
     sm = SchemaManager(
@@ -209,7 +216,12 @@ def index_playground(schema_name: str = "playground", *, force: bool = False) ->
         force=force,
         progress_cb=_make_progress_cb(),
     )
-    logger.info("[index] playground: done — %d table(s)", n)
+    if n > 0:
+        logger.info("[index] playground: done — %d table(s)", n)
+    else:
+        logger.warning(
+            "[index] playground: failed — 0 tables indexed (check Redis or embedding model)"
+        )
     return n
 
 
@@ -220,8 +232,10 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
     Returns the number of tables successfully indexed.
     """
     try:
-        from daibai.core.config import settings
-        db_config = settings.get_database(db_name)
+        from daibai.core.config import load_config, get_config_file_path
+        cfg = load_config()
+        db_config = cfg.get_database(db_name)
+        config_path = get_config_file_path()
     except ValueError as e:
         print(f"  ERROR: {e}", file=sys.stderr)
         return 0
@@ -230,11 +244,20 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         logger.warning("[index] %s: config load failed — %s", db_name, e)
         return 0
 
+    config_src = str(config_path) if config_path else "(config path unknown)"
+    logger.info(
+        "[index] about to index db=%s because defined in daibai.yaml | "
+        "config=%s | library=mysql-connector-python",
+        db_name, config_src,
+    )
     logger.info("[index] %s: start (force=%s)", db_name, force)
 
     cache = _get_cache()
     if cache is None:
-        logger.warning("[index] %s: skipped — no cache", db_name)
+        logger.warning(
+            "[index] %s: failed — no Redis cache (set REDIS_URL or AZURE_REDIS_CONNECTION_STRING in .env)",
+            db_name,
+        )
         return 0
 
     sm = SchemaManager(config=db_config, cache_manager=cache)
@@ -244,7 +267,13 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         force=force,
         progress_cb=_make_progress_cb(),
     )
-    logger.info("[index] %s: done — %d table(s)", db_name, n)
+    if n > 0:
+        logger.info("[index] %s: done — %d table(s)", db_name, n)
+    else:
+        logger.warning(
+            "[index] %s: failed — 0 tables indexed (check Redis, embedding model, or DB connectivity)",
+            db_name,
+        )
     return n
 
 
