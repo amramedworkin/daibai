@@ -89,34 +89,8 @@ _log_file_path = _setup_file_logging()
 logger = logging.getLogger("daibai.websocket")
 
 # ── aiohttp session tracing (before Azure SDK imports) ───────────────────────
-# Log every ClientSession open/close to find unclosed sessions (Azure Cosmos, etc.)
-def _patch_aiohttp_session_tracing():
-    try:
-        import aiohttp
-    except ImportError:
-        return
-    if getattr(aiohttp.ClientSession, "_daibai_patched", False):
-        return
-    _original_init = aiohttp.ClientSession.__init__
-    _original_close = aiohttp.ClientSession.close
-    _session_ids = {"next": 0}
-
-    def _logged_init(self, *args, **kwargs):
-        _session_ids["next"] += 1
-        sid = _session_ids["next"]
-        self._daibai_sid = sid
-        logging.getLogger("daibai.aiohttp").info("[aiohttp] Session OPEN id=%s", sid)
-        _original_init(self, *args, **kwargs)
-
-    async def _logged_close(self):
-        sid = getattr(self, "_daibai_sid", "?")
-        logging.getLogger("daibai.aiohttp").info("[aiohttp] Session CLOSE id=%s", sid)
-        return await _original_close(self)
-
-    aiohttp.ClientSession.__init__ = _logged_init
-    aiohttp.ClientSession.close = _logged_close
-    aiohttp.ClientSession._daibai_patched = True
-
+# Log every ClientSession open/close with context tags to find unclosed sessions.
+from .aiohttp_tracing import _patch_aiohttp_session_tracing, tag_aiohttp_session
 
 _patch_aiohttp_session_tracing()
 
@@ -271,13 +245,25 @@ async def _run_playground(
 async def lifespan(app: FastAPI):
     """
     Manage Cosmos DB connection lifecycle. Prevents connection leaks.
-    Startup: init CosmosStore and attach to app.state.
+    Startup: load .env first (so AZURE_* etc. are in os.environ before any SDK use),
+    then init CosmosStore and attach to app.state.
     Shutdown: close the store (client + credential) gracefully.
     """
+    # Load .env before any Azure SDK access (DefaultAzureCredential reads AZURE_* from os.environ)
+    from dotenv import load_dotenv
+    _project_root = Path(__file__).resolve().parent.parent.parent
+    for loc in [_project_root / ".env", Path.cwd() / ".env", Path.home() / ".daibai" / ".env"]:
+        try:
+            if loc.exists():
+                load_dotenv(loc)
+                break
+        except OSError:
+            pass
+
     STATIC_DIR = Path(__file__).parent.parent / "gui" / "static"
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
-    app.state.store = CosmosConversationStore()
+    app.state.store = CosmosConversationStore(tag="Cosmos DB Initialization")
     logger.info(
         "DaiBai server started",
         extra={

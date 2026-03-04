@@ -123,8 +123,11 @@ def _fetch_secrets_from_keyvault(vault_url: str, secret_names: Optional[List[str
         from azure.keyvault.secrets import SecretClient
         from azure.core.exceptions import ResourceNotFoundError
 
-        credential = DefaultAzureCredential()
-        client = SecretClient(vault_url=vault_url, credential=credential)
+        from daibai.api.aiohttp_tracing import tag_aiohttp_session
+
+        with tag_aiohttp_session("Key Vault Config"):
+            credential = DefaultAzureCredential()
+            client = SecretClient(vault_url=vault_url, credential=credential)
         result = {}
         not_found: List[str] = []
         for secret_name in names:

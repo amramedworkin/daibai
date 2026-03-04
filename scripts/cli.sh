@@ -117,12 +117,16 @@ Commands by Category:
     chat-restart     Restart web server        |  chat-bounce      Restart & open UI
     chat-bounce-ff   Restart & open in Firefox |  chat-bounce-ff-wipe  Wipe users, restart & open Firefox
     chat-status      Show running status       |  chat-toggle      Toggle start/stop
-    server           Run foreground server     |  chrome           Chrome with remote-debug port 9222
-    chrome-dev       Chrome dev mode + localhost:8080
+    status           Alias for chat-status    |  server           Run foreground server
+    chrome           Chrome with remote-debug port 9222 |  chrome-dev  Chrome dev + localhost:8080
   ------------------------------------------------------------------------------------------
   LOGGING
-    log              Show logs                 |  rotate-log       Zip current log and start new
-    log-info         Where are logs
+    log              Show logs (alias: logs-view) |  log-info       Where are logs (alias: logs-info)
+    rotate-log       Zip current log and start new (alias: logs-rotate)
+    logs-info        Log file location/size    |  logs-tail        Live tail log
+    logs-view        Page through log          |  logs-errors      Errors and warnings
+    logs-today       Today's entries           |  logs-search      Search log for pattern
+    logs-clean       Remove rotated backups   |  logs-purge       Delete all logs
   ------------------------------------------------------------------------------------------
   CLI & AGENT
     cli-launch       Interactive REPL          |  cli-query        Single natural language query
@@ -132,6 +136,11 @@ Commands by Category:
     cosmos-role      Setup Cosmos RBAC         |  cosmos-allow-ip  Whitelist current IP
     redis-create     Create Azure Redis        |  keyvault-create  Create Key Vault
     sync-env         Sync Cosmos config        |  verify-azure-auth Verify secretless auth
+    sp-create        Get/create DaiBaiApp SP, update AZURE_* in .env
+    keyvault-dump    List all Key Vault secrets and values (uses KEY_VAULT_URL)
+    keyvault-fix-rbac Grant Key Vault Secrets Officer (fixes Forbidden on migrate)
+    keyvault-migrate       Copy .env API keys to Key Vault (--force to overwrite existing)
+    keyvault-migrate-force Same as keyvault-migrate --force
   ------------------------------------------------------------------------------------------
   USERS & AUTH
     list-users       List Cosmos users         |  wait-for-users   Poll for users
@@ -519,6 +528,199 @@ cmd_redis_create() {
 cmd_keyvault_create() {
     print_header "Azure Key Vault Setup"
     bash "$SCRIPT_DIR/setup_keyvault.sh"
+}
+
+cmd_keyvault_fix_rbac() {
+    load_env
+    if [[ -z "${KEY_VAULT_URL:-}" ]]; then
+        print_error "KEY_VAULT_URL not set in .env. Run: ./scripts/cli.sh keyvault-create"
+        exit 1
+    fi
+    local vault_name="${KEY_VAULT_NAME:-daibai-kv}"
+    local rg="${KEY_VAULT_RESOURCE_GROUP:-daibai-rg}"
+    print_header "Key Vault RBAC — Grant Secrets Officer (write secrets)"
+    echo ""
+    echo "  Vault: $vault_name  Resource Group: $rg"
+    echo ""
+    local principal_id
+    principal_id=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)
+    if [[ -z "$principal_id" ]]; then
+        print_error "Not logged in. Run: az login"
+        exit 1
+    fi
+    local vault_id
+    vault_id=$(az keyvault show --name "$vault_name" --resource-group "$rg" --query id -o tsv 2>/dev/null || true)
+    if [[ -z "$vault_id" ]]; then
+        print_error "Key Vault not found. Run: ./scripts/cli.sh keyvault-create"
+        exit 1
+    fi
+    echo "  Assigning Key Vault Secrets Officer..."
+    if az role assignment create \
+        --role "Key Vault Secrets Officer" \
+        --assignee "$principal_id" \
+        --scope "$vault_id" \
+        -o none 2>/dev/null; then
+        print_success "Done. Run keyvault-migrate-force again. (RBAC can take ~1 min to propagate.)"
+    else
+        print_error "Assignment failed. You may need Contributor/Owner on the vault or subscription."
+        exit 1
+    fi
+    echo ""
+}
+
+cmd_keyvault_dump() {
+    load_env
+    local py
+    py="$(_resolve_python)"
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    if [[ -z "${KEY_VAULT_URL:-}" ]]; then
+        print_error "KEY_VAULT_URL not set in .env"
+        echo ""
+        echo "  Run: ./scripts/cli.sh keyvault-create"
+        echo "  Or add to .env: KEY_VAULT_URL=https://your-vault.vault.azure.net/"
+        exit 1
+    fi
+    "$py" "$SCRIPT_DIR/keyvault_dump.py" "$@"
+}
+
+cmd_keyvault_migrate() {
+    load_env
+    local py
+    py="$(_resolve_python)"
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    if [[ -z "${KEY_VAULT_URL:-}" ]]; then
+        print_error "KEY_VAULT_URL not set in .env"
+        echo ""
+        echo "  Run: ./scripts/cli.sh keyvault-create"
+        exit 1
+    fi
+    "$py" "$SCRIPT_DIR/keyvault_migrate.py" "$@"
+}
+
+# -----------------------------------------------------------------------------
+# Service Principal (DaiBaiApp) - Create or show client ID
+# -----------------------------------------------------------------------------
+cmd_sp_create() {
+    load_env
+    local sp_name="${AZURE_CLIENT_NAME:-DaiBaiApp}"
+    print_header "DaiBai Service Principal ($sp_name)"
+    if ! command -v az &>/dev/null; then
+        print_error "Azure CLI required. Install: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli"
+        exit 1
+    fi
+    if ! az account show &>/dev/null; then
+        print_error "Not logged in. Run: az login"
+        exit 1
+    fi
+
+    local ENV_FILE="$PROJECT_DIR/.env"
+    [[ ! -f "$ENV_FILE" ]] && touch "$ENV_FILE"
+
+    local existing
+    existing=$(az ad sp list --display-name "$sp_name" --query "[0]" -o json 2>/dev/null || true)
+    if [[ -n "$existing" && "$existing" != "null" && "$existing" != "[]" ]]; then
+        local app_id tenant_id tenant_name
+        app_id=$(echo "$existing" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('appId',''))" 2>/dev/null)
+        tenant_id=$(az account show --query tenantId -o tsv 2>/dev/null)
+        tenant_name=$(az rest --method get --url "https://graph.microsoft.com/v1.0/organization" --query "value[0].displayName" -o tsv 2>/dev/null || true)
+        echo ""
+        echo "  Service principal '$sp_name' already exists."
+        echo ""
+        echo "  AZURE_CLIENT_NAME=$sp_name"
+        echo "  AZURE_TENANT_NAME=${tenant_name:-}"
+        echo "  AZURE_TENANT_ID=$tenant_id"
+        echo "  AZURE_CLIENT_ID=$app_id"
+        echo "  AZURE_CLIENT_SECRET=(cannot be retrieved — add manually; see steps below)"
+        echo ""
+        echo "  To add AZURE_CLIENT_SECRET:"
+        echo "    1. Azure Portal → Azure Active Directory → App registrations"
+        echo "    2. Find '$sp_name' (or search by Client ID above)"
+        echo "    3. Certificates & secrets → New client secret"
+        echo "    4. Copy the Value (shown once only) and add to .env:"
+        echo "       AZURE_CLIENT_SECRET=<paste-value>"
+        echo ""
+        local py
+        py="$(_resolve_python)"
+        if [[ -n "$py" ]]; then
+            "$py" "$SCRIPT_DIR/update_env.py" "$ENV_FILE" \
+                "AZURE_CLIENT_NAME=$sp_name" \
+                "AZURE_TENANT_NAME=$tenant_name" \
+                "AZURE_TENANT_ID=$tenant_id" \
+                "AZURE_CLIENT_ID=$app_id" 2>/dev/null || true
+        fi
+        print_success "Updated AZURE_CLIENT_NAME, AZURE_TENANT_NAME, AZURE_TENANT_ID, AZURE_CLIENT_ID in .env"
+        echo ""
+        return 0
+    fi
+
+    echo ""
+    echo "  Creating service principal '$sp_name'..."
+    local out
+    out=$(az ad sp create-for-rbac --name "$sp_name" -o json 2>/dev/null) || {
+        print_error "Failed to create service principal"
+        az ad sp create-for-rbac --name "$sp_name" -o json 2>&1 | head -5
+        exit 1
+    }
+    local app_id password tenant_id tenant_name
+    app_id=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('appId',''))" 2>/dev/null)
+    password=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('password',''))" 2>/dev/null)
+    tenant_id=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tenant',''))" 2>/dev/null)
+    tenant_name=$(az rest --method get --url "https://graph.microsoft.com/v1.0/organization" --query "value[0].displayName" -o tsv 2>/dev/null || true)
+    if [[ -z "$app_id" || -z "$password" || -z "$tenant_id" ]]; then
+        print_error "Failed to parse create output"
+        echo "$out" | head -20
+        exit 1
+    fi
+    echo ""
+    print_success "Service principal created."
+    echo ""
+    echo "  AZURE_CLIENT_NAME=$sp_name"
+    echo "  AZURE_TENANT_NAME=${tenant_name:-}"
+    echo "  AZURE_TENANT_ID=$tenant_id"
+    echo "  AZURE_CLIENT_ID=$app_id"
+    echo "  AZURE_CLIENT_SECRET=(saved to .env)"
+    echo ""
+    local py
+    py="$(_resolve_python)"
+    if [[ -n "$py" ]] && "$py" "$SCRIPT_DIR/update_env.py" "$ENV_FILE" \
+        "AZURE_CLIENT_NAME=$sp_name" \
+        "AZURE_TENANT_NAME=$tenant_name" \
+        "AZURE_TENANT_ID=$tenant_id" \
+        "AZURE_CLIENT_ID=$app_id" \
+        "AZURE_CLIENT_SECRET=$password" 2>/dev/null; then
+        :
+    else
+        [[ -n "$(tail -c1 "$ENV_FILE" 2>/dev/null)" ]] && echo "" >> "$ENV_FILE"
+        if grep -q "^AZURE_CLIENT_NAME=" "$ENV_FILE"; then
+            sed -i "s|^AZURE_CLIENT_NAME=.*|AZURE_CLIENT_NAME=$sp_name|" "$ENV_FILE"
+        else
+            echo "AZURE_CLIENT_NAME=$sp_name" >> "$ENV_FILE"
+        fi
+        if [[ -n "$tenant_name" ]]; then
+            if grep -q "^AZURE_TENANT_NAME=" "$ENV_FILE"; then
+                sed -i "s|^AZURE_TENANT_NAME=.*|AZURE_TENANT_NAME=$tenant_name|" "$ENV_FILE"
+            else
+                echo "AZURE_TENANT_NAME=$tenant_name" >> "$ENV_FILE"
+            fi
+        fi
+        if grep -q "^AZURE_TENANT_ID=" "$ENV_FILE"; then
+            sed -i "s|^AZURE_TENANT_ID=.*|AZURE_TENANT_ID=$tenant_id|" "$ENV_FILE"
+        else
+            echo "AZURE_TENANT_ID=$tenant_id" >> "$ENV_FILE"
+        fi
+        if grep -q "^AZURE_CLIENT_ID=" "$ENV_FILE"; then
+            sed -i "s|^AZURE_CLIENT_ID=.*|AZURE_CLIENT_ID=$app_id|" "$ENV_FILE"
+        else
+            echo "AZURE_CLIENT_ID=$app_id" >> "$ENV_FILE"
+        fi
+        if grep -q "^AZURE_CLIENT_SECRET=" "$ENV_FILE"; then
+            sed -i "s|^AZURE_CLIENT_SECRET=.*|AZURE_CLIENT_SECRET=$password|" "$ENV_FILE"
+        else
+            echo "AZURE_CLIENT_SECRET=$password" >> "$ENV_FILE"
+        fi
+    fi
+    print_success "Updated AZURE_CLIENT_NAME, AZURE_TENANT_NAME, AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET in .env"
+    echo ""
 }
 
 # -----------------------------------------------------------------------------
@@ -1401,8 +1603,13 @@ _CLI_WILDCARD_CMDS=(
     "cosmos-allow-ip:Whitelist current IP"
     "redis-create:Create Azure Redis"
     "keyvault-create:Create Key Vault"
+    "keyvault-dump:Dump Key Vault secrets (values)"
+    "keyvault-fix-rbac:Grant Key Vault Secrets Officer role"
+    "keyvault-migrate:Copy .env API keys to Key Vault"
+    "keyvault-migrate-force:Migrate and overwrite existing secrets"
     "sync-env:Sync Cosmos config"
     "verify-azure-auth:Verify secretless auth"
+    "sp-create:Get or create DaiBaiApp service principal, update .env"
     "list-users:List Cosmos users"
     "integrate-user:Sync Firebase user → Cosmos DB"
     "firebase-disable-email-enum:Fix sign-in showing create-account"
@@ -1567,6 +1774,21 @@ main() {
             ;;
         keyvault-create)
             cmd_keyvault_create
+            ;;
+        keyvault-fix-rbac)
+            cmd_keyvault_fix_rbac
+            ;;
+        keyvault-dump)
+            cmd_keyvault_dump "$@"
+            ;;
+        keyvault-migrate)
+            cmd_keyvault_migrate "$@"
+            ;;
+        keyvault-migrate-force)
+            cmd_keyvault_migrate --force
+            ;;
+        sp-create)
+            cmd_sp_create
             ;;
         list-users)
             cmd_list_users

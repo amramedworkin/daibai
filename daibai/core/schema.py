@@ -390,19 +390,19 @@ class SchemaManager:
 
         logger.info("[index] %s: start (force=%s)", db, force)
 
-        # Check refresh interval (skipped when force=True)
-        if not force:
-            last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
-            try:
-                last_raw = redis.get(last_key)
-                if last_raw:
-                    last_ts = float(last_raw)
-                    interval = get_schema_refresh_interval()
-                    if time.time() - last_ts < interval:
-                        logger.info("[index] %s: skipped — SCHEMA_REFRESH_INTERVAL not elapsed", db)
-                        return 0
-            except (ValueError, TypeError):
-                pass
+        # Refresh-interval check removed: always re-index on focus (app load, dropdown, playground).
+        # if not force:
+        #     last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
+        #     try:
+        #         last_raw = redis.get(last_key)
+        #         if last_raw:
+        #             last_ts = float(last_raw)
+        #             interval = get_schema_refresh_interval()
+        #             if time.time() - last_ts < interval:
+        #                 logger.info("[index] %s: skipped — SCHEMA_REFRESH_INTERVAL not elapsed", db)
+        #                 return 0
+        #     except (ValueError, TypeError):
+        #         pass
 
         tables_ddl = self.discover_schema(schema_name)
         if not tables_ddl:

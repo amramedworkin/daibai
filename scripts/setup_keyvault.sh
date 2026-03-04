@@ -3,7 +3,7 @@
 # Azure Key Vault Setup
 # ============================================================================
 # Creates resource group (if needed), provisions Key Vault with RBAC, assigns
-# "Key Vault Secrets User" to the signed-in user, and writes KEY_VAULT_URL to .env.
+# "Key Vault Secrets Officer" to the signed-in user, and writes KEY_VAULT_URL to .env.
 # Idempotent: skips components that already exist.
 #
 # Prerequisites: az login
@@ -66,21 +66,22 @@ else
 fi
 echo ""
 
-# 3. Assign Key Vault Secrets User role to signed-in user
-echo "[3/4] Assigning Key Vault Secrets User role to signed-in user..."
+# 3. Assign Key Vault Secrets Officer role to signed-in user (read + write secrets)
+#    Secrets User = read-only; Secrets Officer = get, list, set (required for keyvault-migrate)
+echo "[3/4] Assigning Key Vault Secrets Officer role to signed-in user..."
 VAULT_ID=$(az keyvault show --name "$KEY_VAULT_NAME" --resource-group "$KEY_VAULT_RESOURCE_GROUP" --query id -o tsv 2>/dev/null)
 if [[ -z "$VAULT_ID" ]]; then
     echo "[ERROR] Could not get vault ID." >&2
     exit 1
 fi
 
-# Check if assignment already exists
-EXISTING=$(az role assignment list --assignee "$PRINCIPAL_ID" --scope "$VAULT_ID" --query "[?roleDefinitionName=='Key Vault Secrets User'].id" -o tsv 2>/dev/null || true)
+# Check if Officer role already assigned (User alone is insufficient for migrate)
+EXISTING=$(az role assignment list --assignee "$PRINCIPAL_ID" --scope "$VAULT_ID" --query "[?roleDefinitionName=='Key Vault Secrets Officer'].id" -o tsv 2>/dev/null || true)
 if [[ -n "$EXISTING" ]]; then
-    echo "  Role already assigned. Skipping."
+    echo "  Key Vault Secrets Officer already assigned. Skipping."
 else
     az role assignment create \
-        --role "Key Vault Secrets User" \
+        --role "Key Vault Secrets Officer" \
         --assignee "$PRINCIPAL_ID" \
         --scope "$VAULT_ID" \
         -o none

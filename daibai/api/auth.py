@@ -149,7 +149,7 @@ async def get_current_user(
     # Just-in-Time user registration: create the Cosmos DB profile on first sign-in.
     try:
         from .database import CosmosStore
-        store = CosmosStore()
+        store = CosmosStore(tag="Auth/JIT User Registration")
         if store.is_configured:
             await store.ensure_user_exists(user_id=uid, email=email)
     except Exception as exc:

@@ -964,28 +964,22 @@ class DaiBaiApp {
     }
 
     /**
-     * Ensure the database is indexed. If not, auto-index and disable all inputs until done.
-     * Called on load, database change, and when entering playground.
-     * Guarded against concurrent indexing (e.g. from loadSettings + ws init).
+     * Force re-index whenever a database comes into focus (load, select, playground).
+     * No status check — always indexes. UI disabled until complete.
      */
     async ensureDatabaseIndexed(dbId) {
         if (!dbId || !isAuthenticated()) return;
         if (this._indexingInProgress) return; // avoid concurrent index runs
         this._indexingInProgress = true;
+
+        console.log('[DaiBai UI] db=', dbId, '— forced auto-indexing triggered');
+        this._setInputsEnabledForIndexing(false);
         try {
-            const res  = await apiFetch(`/api/schema/status/${encodeURIComponent(dbId)}`);
-            const data = await res.json();
-            if (data.is_indexed) return;
-            console.log('[DaiBai UI] db=', dbId, 'not indexed — auto-indexing');
-            this._setInputsEnabledForIndexing(false);
-            try {
-                await this._runSchemaIndexing(dbId);
-            } finally {
-                this._setInputsEnabledForIndexing(true);
-            }
+            await this._runSchemaIndexing(dbId);
         } catch (e) {
-            if (!e.guestMode) console.warn('[Schema] Index check failed:', e);
+            if (!e.guestMode) console.warn('[Schema] Forced index failed:', e);
         } finally {
+            this._setInputsEnabledForIndexing(true);
             this._indexingInProgress = false;
         }
     }
@@ -1578,12 +1572,8 @@ class DaiBaiApp {
         }
         switch (data.type) {
             case 'init':
-                // Server notifies when current db is not_indexed — auto-kickoff index + dialog
-                const idx = data.index_status;
-                if (idx && idx.database && idx.is_indexed === false && isAuthenticated() && !this._indexingInProgress) {
-                    console.log('[DaiBai UI] ws init: db=', idx.database, 'not indexed — auto-indexing');
-                    this.ensureDatabaseIndexed(idx.database);
-                }
+                // Server init acknowledged. Indexing is now strictly handled by
+                // UI events (load, select, switch) to guarantee a forced re-index.
                 break;
 
             case 'ack':

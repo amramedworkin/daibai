@@ -16,6 +16,8 @@ from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity.aio import DefaultAzureCredential
 
+from .aiohttp_tracing import tag_aiohttp_session
+
 
 class CosmosStore:
     """
@@ -30,10 +32,12 @@ class CosmosStore:
         endpoint: Optional[str] = None,
         database_name: Optional[str] = None,
         container_name: Optional[str] = None,
+        tag: str = "CosmosStore",
     ):
         self._endpoint = (endpoint or os.environ.get("COSMOS_ENDPOINT", "")).strip().rstrip("/")
         self._database_name = database_name or os.environ.get("COSMOS_DATABASE", "daibai-metadata")
         self._container_name = container_name or os.environ.get("COSMOS_CONTAINER", "conversations")
+        self._tag = tag
         self._client: Optional[CosmosClient] = None
         self._credential: Optional[DefaultAzureCredential] = None
 
@@ -51,8 +55,9 @@ class CosmosStore:
                 "COSMOS_ENDPOINT not set. Add to environment: "
                 'export COSMOS_ENDPOINT="https://your-account.documents.azure.com:443/"'
             )
-        self._credential = DefaultAzureCredential()
-        self._client = CosmosClient(self._endpoint, credential=self._credential)
+        with tag_aiohttp_session(self._tag):
+            self._credential = DefaultAzureCredential()
+            self._client = CosmosClient(self._endpoint, credential=self._credential)
         return self._client
 
     async def close(self) -> None:
@@ -66,31 +71,34 @@ class CosmosStore:
 
     async def get_chat_history(self, session_id: str) -> list:
         """Fetch the document where id == session_id. Return messages list or [] if not found."""
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        try:
-            doc = await container.read_item(item=session_id, partition_key=session_id)
-            return doc.get("messages", [])
-        except CosmosResourceNotFoundError:
-            return []
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client(self._container_name)
+            try:
+                doc = await container.read_item(item=session_id, partition_key=session_id)
+                return doc.get("messages", [])
+            except CosmosResourceNotFoundError:
+                return []
 
     async def save_chat_history(self, session_id: str, messages: list) -> None:
         """Save chat history. Document structure: {"id": session_id, "messages": messages}."""
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        doc = {"id": session_id, "messages": messages}
-        await container.upsert_item(doc)
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client(self._container_name)
+            doc = {"id": session_id, "messages": messages}
+            await container.upsert_item(doc)
 
     async def ping(self) -> bool:
         """Ping Cosmos DB to verify connectivity. Returns True if successful."""
         if not self._endpoint:
             return False
         try:
-            client = await self._ensure_client()
-            database = client.get_database_client(self._database_name)
-            await database.read()
+            with tag_aiohttp_session(self._tag):
+                client = await self._ensure_client()
+                database = client.get_database_client(self._database_name)
+                await database.read()
             return True
         except Exception:
             return False
@@ -117,43 +125,45 @@ class CosmosStore:
         """
         List all conversations. Returns list of {id, title, created_at, message_count}.
         """
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        from datetime import datetime
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client(self._container_name)
+            from datetime import datetime
 
-        results: List[Dict[str, Any]] = []
-        query = "SELECT c.id, c.messages FROM c"
-        async for item in container.query_items(query=query):
-            session_id = item.get("id", "")
-            messages = item.get("messages", [])
-            if not messages:
-                title = "New conversation"
-                created_at = datetime.now().isoformat()
-            else:
-                first_msg = messages[0]
-                content = first_msg.get("content", "")
-                title = content[:50] + "..." if len(content) > 50 else content or "New conversation"
-                created_at = first_msg.get("timestamp", datetime.now().isoformat())
-            results.append(
-                {
-                    "id": session_id,
-                    "title": title,
-                    "created_at": created_at,
-                    "message_count": len(messages),
-                }
-            )
+            results: List[Dict[str, Any]] = []
+            query = "SELECT c.id, c.messages FROM c"
+            async for item in container.query_items(query=query):
+                session_id = item.get("id", "")
+                messages = item.get("messages", [])
+                if not messages:
+                    title = "New conversation"
+                    created_at = datetime.now().isoformat()
+                else:
+                    first_msg = messages[0]
+                    content = first_msg.get("content", "")
+                    title = content[:50] + "..." if len(content) > 50 else content or "New conversation"
+                    created_at = first_msg.get("timestamp", datetime.now().isoformat())
+                results.append(
+                    {
+                        "id": session_id,
+                        "title": title,
+                        "created_at": created_at,
+                        "message_count": len(messages),
+                    }
+                )
         return sorted(results, key=lambda x: x["created_at"], reverse=True)
 
     async def delete_conversation(self, session_id: str) -> None:
         """Delete a conversation document."""
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        try:
-            await container.delete_item(item=session_id, partition_key=session_id)
-        except CosmosResourceNotFoundError:
-            pass  # Idempotent: already deleted
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client(self._container_name)
+            try:
+                await container.delete_item(item=session_id, partition_key=session_id)
+            except CosmosResourceNotFoundError:
+                pass  # Idempotent: already deleted
 
     async def upsert_user(self, user: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -161,21 +171,23 @@ class CosmosStore:
         Document structure: {"id": oid, "oid": oid, "username": ..., ...}
         Partition key: /id
         """
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client("Users")
-        await container.upsert_item(user)
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client("Users")
+            await container.upsert_item(user)
         return user
 
     async def get_user(self, oid: str) -> Optional[Dict[str, Any]]:
         """Fetch a user record by OID (or Firebase UID). Returns None if not found."""
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client("Users")
-        try:
-            return await container.read_item(item=oid, partition_key=oid)
-        except CosmosResourceNotFoundError:
-            return None
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client("Users")
+            try:
+                return await container.read_item(item=oid, partition_key=oid)
+            except CosmosResourceNotFoundError:
+                return None
 
     async def list_users(self) -> List[Dict[str, Any]]:
         """Fetch all user documents from the Users container.
@@ -184,12 +196,13 @@ class CosmosStore:
         Older records may lack the 'type' field (written before that field was
         added to the onboard endpoint), so filtering on type would miss them.
         """
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client("Users")
-        users = []
-        async for item in container.query_items(query="SELECT * FROM c"):
-            users.append(item)
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client("Users")
+            users = []
+            async for item in container.query_items(query="SELECT * FROM c"):
+                users.append(item)
         return users
 
     async def patch_user(self, user_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -209,14 +222,15 @@ class CosmosStore:
         Delete a user document from the Users container.
         Returns True if deleted, False if not found (idempotent).
         """
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client("Users")
-        try:
-            await container.delete_item(item=uid, partition_key=uid)
-            return True
-        except CosmosResourceNotFoundError:
-            return False
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client("Users")
+            try:
+                await container.delete_item(item=uid, partition_key=uid)
+                return True
+            except CosmosResourceNotFoundError:
+                return False
 
     async def delete_all_users(self) -> int:
         """
@@ -224,19 +238,20 @@ class CosmosStore:
         Returns the number of records deleted.
         Used by the admin wipe operation — call with caution.
         """
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client("Users")
-        ids: List[str] = []
-        async for item in container.query_items(query="SELECT c.id FROM c"):
-            ids.append(item["id"])
-        count = 0
-        for uid in ids:
-            try:
-                await container.delete_item(item=uid, partition_key=uid)
-                count += 1
-            except CosmosResourceNotFoundError:
-                pass
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client("Users")
+            ids: List[str] = []
+            async for item in container.query_items(query="SELECT c.id FROM c"):
+                ids.append(item["id"])
+            count = 0
+            for uid in ids:
+                try:
+                    await container.delete_item(item=uid, partition_key=uid)
+                    count += 1
+                except CosmosResourceNotFoundError:
+                    pass
         return count
 
     async def delete_all_conversations(self) -> int:
@@ -245,19 +260,20 @@ class CosmosStore:
         Returns the number of records deleted.
         Used by the admin wipe operation — call with caution.
         """
-        client = await self._ensure_client()
-        database = client.get_database_client(self._database_name)
-        container = database.get_container_client(self._container_name)
-        ids: List[str] = []
-        async for item in container.query_items(query="SELECT c.id FROM c"):
-            ids.append(item["id"])
-        count = 0
-        for session_id in ids:
-            try:
-                await container.delete_item(item=session_id, partition_key=session_id)
-                count += 1
-            except CosmosResourceNotFoundError:
-                pass
+        with tag_aiohttp_session(self._tag):
+            client = await self._ensure_client()
+            database = client.get_database_client(self._database_name)
+            container = database.get_container_client(self._container_name)
+            ids: List[str] = []
+            async for item in container.query_items(query="SELECT c.id FROM c"):
+                ids.append(item["id"])
+            count = 0
+            for session_id in ids:
+                try:
+                    await container.delete_item(item=session_id, partition_key=session_id)
+                    count += 1
+                except CosmosResourceNotFoundError:
+                    pass
         return count
 
     async def ensure_user_exists(self, user_id: str, email: str) -> None:
