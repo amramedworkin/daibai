@@ -870,6 +870,10 @@ body {
     margin-bottom: 0;
 }
 
+.trace-card-info {
+    border-color: var(--accent);
+}
+
 .trace-header {
     display: flex;
     align-items: center;

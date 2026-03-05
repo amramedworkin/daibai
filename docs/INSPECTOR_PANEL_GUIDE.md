@@ -36,6 +36,83 @@ To keep terminology standard, here is what we will call the new elements:
 
 ---
 
+## 2.0 SQL Execution Flow (Prompt Inspector Steps)
+
+The Prompt Inspector displays the following steps in order. When **recovery mode** runs (after overzealous pruning), steps 4–6 repeat with a `-recovery` suffix so each trace card has a unique ID.
+
+```mermaid
+flowchart TB
+    subgraph InitialPass ["Initial Pass"]
+        direction TB
+        QS1["1. Query Sanitization"]
+        SP1["2. Semantic Pruning (MiniLM-L6)"]
+        SG1["3. SQL Generation (Gemini)"]
+        QS1 --> SP1 --> SG1
+    end
+
+    subgraph RecoveryPass ["Recovery Pass (if overzealous prune detected)"]
+        direction TB
+        QS2["4. Query Sanitization (recovery)"]
+        SP2["5. Semantic Pruning MiniLM-L6 (recovery)"]
+        SG2["6. SQL Generation Gemini (recovery)"]
+        QS2 --> SP2 --> SG2
+    end
+
+    subgraph Execution ["Execution"]
+        EX["7. SQL Execution"]
+    end
+
+    SG1 --> RecoveryPass
+    SG1 -.->|"no missing tables"| Execution
+    RecoveryPass --> Execution
+```
+
+**Why duplicate steps?** When semantic pruning excludes tables that the query actually needs, the system detects "missing tables" in the generated SQL and runs a **recovery pass**. It re-runs Query Sanitization → Semantic Pruning → SQL Generation with the missing tables forced into the schema. The recovery pass uses step IDs suffixed with `-recovery` so each trace card is uniquely identifiable.
+
+---
+
+## 2.1 Prompt Inspector — Named Component UX Structure (Mermaid)
+
+The following Mermaid diagram shows the internal structure and data flow of the **Prompt Inspector** component:
+
+```mermaid
+flowchart TB
+    subgraph PromptInspector ["Prompt Inspector (`.prompt-inspector`)"]
+        direction TB
+
+        SectionTitle["Section Title<br/><code>&lt;h3&gt;</code> Prompt Inspector"]
+        MirroredTextarea["Mirrored Prompt Textarea<br/><code>#mirroredPromptTextarea</code>"]
+        PlaceholderHint["Placeholder: Your query will appear here when you send…"]
+
+        SectionTitle --> MirroredTextarea
+        MirroredTextarea -.-> PlaceholderHint
+    end
+
+    subgraph DataFlow ["Data Flow"]
+        direction LR
+        ChatInput["Chat Input<br/><code>#promptInput</code>"]
+        SendMessage["sendMessage()"]
+        ChatInput -->|"On submit"| SendMessage
+        SendMessage -->|"Copies value"| MirroredTextarea
+    end
+
+    subgraph Layout ["Layout"]
+        FlexBasis["flex: 0 0 25%"]
+        MinHeight["min-height: 80px"]
+    end
+```
+
+| Element | DOM / Class | Role |
+|---------|-------------|------|
+| **Section Title** | `<h3>` inside `.prompt-inspector` | Label: "Prompt Inspector" |
+| **Mirrored Textarea** | `#mirroredPromptTextarea` | Read-only copy of the submitted prompt |
+| **Placeholder** | `placeholder` attribute | Shown when empty |
+| **Data Source** | `#promptInput` | Main chat input; value copied on send |
+| **Trigger** | `sendMessage()` | Copies `promptInput.value` → `mirroredPromptTextarea.value` |
+| **Layout** | `flex: 0 0 25%` | Top ~25% of Inspector Pane height |
+
+---
+
 ## 3. Updates to the Existing System
 
 **Frontend (`index.html`, `styles.css`, `app.js`):**
@@ -324,7 +401,7 @@ To make communicating with Cursor (and other developers) seamless, here is the e
 
 Here is a comprehensive, step-by-step implementation plan broken down into manageable chunks, designed specifically to be fed into Cursor (via Composer or Chat).
 
-It uses the exact component nomenclature established in the `AI_PANE_GUIDE.md` and includes a Mermaid project chart to visualize the dependencies and sequence of the work.
+It uses the exact component nomenclature established in the `INSPECTOR_PANEL_GUIDE.md` and includes a Mermaid project chart to visualize the dependencies and sequence of the work.
 
 ---
 
@@ -375,7 +452,7 @@ Copy and paste these exact prompts into Cursor sequentially. Wait for Cursor to 
 **Copy this into Cursor:**
 
 ```text
-Context: We are building a new right-hand "InspectorPanel" for our application based on docs/AI_PANE_GUIDE.md.
+Context: We are building a new right-hand "InspectorPanel" for our application based on docs/INSPECTOR_PANEL_GUIDE.md.
 
 Task 1: Update `daibai/gui/static/index.html`
 1. Inside the `.main-container`, immediately after `<main class="chat-area">`, add a new `<aside class="inspector-pane" id="inspectorPane">`.

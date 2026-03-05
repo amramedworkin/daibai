@@ -220,15 +220,34 @@ async def _run_playground(
     user_query: str,
     execute: bool,
     history: Optional[List[Dict[str, Any]]] = None,
+    trace_callback: Optional[Any] = None,
 ) -> tuple:
     """
     Generate SQL via the Chinook system prompt, then optionally execute it
     against playground.db.  Returns (sql, results, row_count).
     """
+    llm_tech = agent._current_llm or "LLM"
+    if trace_callback:
+        await trace_callback(step_name="SQL Generation", status="running", tech=llm_tech, step_id="sql-generation")
+    gen_start = time.perf_counter()
     sql = await _generate_playground_sql(agent, user_query, history)
+    if trace_callback:
+        gen_ms = (time.perf_counter() - gen_start) * 1000
+        await trace_callback(
+            step_name="SQL Generation",
+            status="success",
+            tech=llm_tech,
+            duration_ms=gen_ms,
+            input_data=user_query,
+            output_data=sql,
+            step_id="sql-generation",
+        )
     results = None
     row_count = None
     if execute and sql:
+        if trace_callback:
+            await trace_callback(step_name="SQL Execution", status="running", step_id="sql-execution")
+        exec_start = time.perf_counter()
         # execute_playground_query is synchronous (uses threading.Timer); run in
         # a thread so we don't block the async event loop.
         try:
@@ -243,6 +262,16 @@ async def _run_playground(
             raw = await asyncio.to_thread(execute_playground_query, sql)
         results = _playground_rows_to_records(raw["columns"], raw["rows"])
         row_count = raw["row_count"]
+        if trace_callback:
+            exec_ms = (time.perf_counter() - exec_start) * 1000
+            await trace_callback(
+                step_name="SQL Execution",
+                status="success",
+                duration_ms=exec_ms,
+                input_data=sql,
+                output_data={"row_count": row_count},
+                step_id="sql-execution",
+            )
     return sql, results, row_count
 
 
@@ -1896,7 +1925,7 @@ async def websocket_chat(websocket: WebSocket):
                     await _send_debug("6. Playground: generating SQL via LLM...")
                     llm_start               = time.perf_counter()
                     sql, results, row_count = await _run_playground(
-                        agent, query, execute=execute, history=history
+                        agent, query, execute=execute, history=history, trace_callback=emit_trace
                     )
                     req_context["llm_latency_sec"]      = round(time.perf_counter() - llm_start, 3)
                     req_context["generated_sql_length"]  = len(sql) if sql else 0
@@ -1961,6 +1990,14 @@ async def websocket_chat(websocket: WebSocket):
                             )
                             if verbose:
                                 await _send_debug(f"Recovery pass triggered for missing tables: {missing_tables}")
+                            def _wrap_trace_for_recovery(emit_fn):
+                                async def wrapped(**kwargs):
+                                    sid = kwargs.get("step_id")
+                                    if sid and sid not in ("sql-execution",):
+                                        kwargs["step_id"] = f"{sid}-recovery"
+                                    await emit_fn(**kwargs)
+                                return wrapped
+
                             try:
                                 sql = await asyncio.wait_for(
                                     agent.generate_sql_async(
@@ -1968,7 +2005,7 @@ async def websocket_chat(websocket: WebSocket):
                                         "sql",
                                         history=history,
                                         force_tables=missing_tables,
-                                        trace_callback=emit_trace,
+                                        trace_callback=_wrap_trace_for_recovery(emit_trace),
                                     ),
                                     timeout=_PLAYGROUND_LLM_TIMEOUT,
                                 )

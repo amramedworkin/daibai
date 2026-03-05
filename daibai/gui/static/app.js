@@ -1108,7 +1108,10 @@ class DaiBaiApp {
     copyToClipboard(text) {
         if (text && this.autoCopyCheckbox.checked) {
             navigator.clipboard.writeText(text).catch(err => {
-                console.error('Failed to copy:', err);
+                // Expected when triggered by WebSocket/async (no user activation)
+                if (err?.name !== 'NotAllowedError') {
+                    console.error('Failed to copy:', err);
+                }
             });
         }
     }
@@ -1220,9 +1223,10 @@ class DaiBaiApp {
         const stepId = traceData.step_id || `trace-${stepName.replace(/\s+/g, '-')}-${++this._traceStepCounter}`;
 
         if (status === 'running') {
+            const uniqueId = `trace-${stepId}-${++this._traceStepCounter}`;
             const card = document.createElement('div');
             card.className = 'trace-card';
-            card.id = stepId;
+            card.id = uniqueId;
             card.dataset.stepId = stepId;
             card.dataset.stepName = stepName;
             card.innerHTML = `
@@ -1236,16 +1240,19 @@ class DaiBaiApp {
             `;
             log.appendChild(card);
         } else {
-            let card = document.getElementById(stepId);
+            // Prefer last running card for this step (handles recovery pass duplicate step_ids)
+            const cards = [...log.querySelectorAll('.trace-card')];
+            const running = cards.filter(c => c.dataset.stepName === stepName && c.querySelector('.trace-status-icon.running'));
+            let card = running.length ? running[running.length - 1] : null;
             if (!card) {
-                const cards = [...log.querySelectorAll('.trace-card')].reverse();
-                card = cards.find(c => c.dataset.stepName === stepName && c.querySelector('.trace-status-icon.running')) || null;
+                card = document.getElementById(stepId);
             }
             if (!card) {
                 // No prior running card — create a completed card from scratch
+                const uniqueId = `trace-${stepId}-${++this._traceStepCounter}`;
                 const newCard = document.createElement('div');
                 newCard.className = 'trace-card';
-                newCard.id = stepId;
+                newCard.id = uniqueId;
                 const statusIcon = status === 'success'
                     ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>'
                     : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
@@ -1290,6 +1297,32 @@ class DaiBaiApp {
             }
         }
 
+        log.scrollTop = log.scrollHeight;
+    }
+
+    /**
+     * Show an explanatory trace card when falling back to REST (no live traces).
+     */
+    _showRestFallbackTrace() {
+        const log = this.executionTraceLog;
+        if (!log) return;
+        const card = document.createElement('div');
+        card.className = 'trace-card trace-card-info';
+        card.innerHTML = `
+            <div class="trace-header">
+                <span class="trace-status-icon success">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </span>
+                <span class="trace-action-name">REST fallback</span>
+                <span class="trace-tech-label">No live traces</span>
+            </div>
+            <div class="trace-payloads">
+                <details open><summary>Why no traces?</summary>
+                <div class="trace-payload-content">The WebSocket was not connected when you sent this query, so the request went via REST. Execution traces are only streamed over WebSocket. Refresh the page to ensure the connection is ready, then try again.</div>
+                </details>
+            </div>
+        `;
+        log.appendChild(card);
         log.scrollTop = log.scrollHeight;
     }
 
@@ -1885,8 +1918,30 @@ class DaiBaiApp {
         // Show contextual loading indicator — "Thinking…" while the LLM works.
         this.showLoadingIndicator('Thinking…');
         
-        // Send via WebSocket
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        // Prefer WebSocket so Inspector Panel receives trace events.
+        // If WS is connecting, wait briefly before falling back to REST.
+        let useWs = this.ws && this.ws.readyState === WebSocket.OPEN;
+        if (!useWs && this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+            try {
+                await new Promise((resolve) => {
+                    const done = () => {
+                        this.ws?.removeEventListener('open', onOpen);
+                        this.ws?.removeEventListener('error', onErr);
+                        this.ws?.removeEventListener('close', onErr);
+                        resolve();
+                    };
+                    const onOpen = () => { clearTimeout(t); done(); };
+                    const onErr = () => { clearTimeout(t); done(); };
+                    const t = setTimeout(done, 3000);
+                    this.ws.addEventListener('open', onOpen);
+                    this.ws.addEventListener('error', onErr);
+                    this.ws.addEventListener('close', onErr);
+                });
+                useWs = this.ws && this.ws.readyState === WebSocket.OPEN;
+            } catch (_) {}
+        }
+
+        if (useWs) {
             const verbose = this.verboseMode ?? JSON.parse(localStorage.getItem('daibai_preferences') || '{}').verbose;
             const payload = {
                 query: query,
@@ -1899,6 +1954,7 @@ class DaiBaiApp {
             if (verbose) console.log('[DaiBai verbose] WS sending:', { type: 'query', ...payload });
             this.ws.send(JSON.stringify(payload));
         } else {
+            this._showRestFallbackTrace();
             await this.sendMessageRest(query);
         }
         
