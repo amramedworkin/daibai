@@ -514,10 +514,16 @@ class DaiBaiAgent:
         allowed_norm = {t.lower() for t in allowed}
         return {t for t in tables_in_sql if t.lower() not in allowed_norm}
 
-    def _get_pruned_schema(self, prompt: str, db_name: Optional[str] = None) -> Tuple[str, Optional[Set[str]]]:
+    def _get_pruned_schema(
+        self,
+        prompt: str,
+        db_name: Optional[str] = None,
+        force_tables: Optional[Set[str]] = None,
+    ) -> Tuple[str, Optional[Set[str]]]:
         """
         Get schema pruned by semantic relevance to the prompt.
         Returns (schema_text, allowed_tables). If pruning unavailable, returns (full_schema, None).
+        When force_tables is provided, appends DDL for missing tables via discover_schema.
         """
         name = db_name or self._current_db
         if not name:
@@ -531,6 +537,20 @@ class DaiBaiAgent:
                 if ddl_list:
                     pruned = "\n".join(ddl_list)
                     allowed = self._extract_table_names_from_ddl(ddl_list)
+                    # Inject DDL for force_tables (overzealous prune correction)
+                    if force_tables:
+                        allowed_lower = {t.lower() for t in allowed}
+                        missing = {t for t in force_tables if t.lower() not in allowed_lower}
+                        if missing:
+                            all_ddls = sm.discover_schema(name)
+                            if all_ddls:
+                                all_ddls_lower_keys = {k.lower(): v for k, v in all_ddls.items()}
+                                for m_table in missing:
+                                    if m_table.lower() in all_ddls_lower_keys:
+                                        pruned += f"\n{all_ddls_lower_keys[m_table.lower()]}"
+                                        # Preserve original casing from all_ddls
+                                        orig_key = next(k for k in all_ddls if k.lower() == m_table.lower())
+                                        allowed.add(orig_key)
                     return pruned, allowed
             except Exception:
                 pass
@@ -613,21 +633,11 @@ class DaiBaiAgent:
         }
 
         db_name = self._current_db or "unknown"
-        pruned_schema, allowed_tables = self._get_pruned_schema(sanitized)
+        pruned_schema, allowed_tables = self._get_pruned_schema(
+            sanitized, db_name=db_name, force_tables=force_tables
+        )
         if allowed_tables is None:
             allowed_tables = set()
-
-        # Recovery: inject DDL for force_tables (overzealous prune correction)
-        if force_tables:
-            sm = self._get_schema_manager(db_name)
-            if sm:
-                try:
-                    force_ddls = sm.get_ddl_for_tables(schema_name=db_name, table_names=force_tables)
-                    if force_ddls:
-                        pruned_schema = (pruned_schema + "\n\n" + "\n".join(force_ddls)) if pruned_schema else "\n".join(force_ddls)
-                        allowed_tables = allowed_tables | force_tables
-                except Exception:
-                    pass
 
         self._last_allowed_tables = allowed_tables
 
@@ -693,21 +703,11 @@ Return the SQL in a ```sql code block. Do not execute it."""
         }
 
         db_name = self._current_db or "unknown"
-        pruned_schema, allowed_tables = self._get_pruned_schema(sanitized)
+        pruned_schema, allowed_tables = self._get_pruned_schema(
+            sanitized, db_name=db_name, force_tables=force_tables
+        )
         if allowed_tables is None:
             allowed_tables = set()
-
-        # Recovery: inject DDL for force_tables (overzealous prune correction)
-        if force_tables:
-            sm = self._get_schema_manager(db_name)
-            if sm:
-                try:
-                    force_ddls = sm.get_ddl_for_tables(schema_name=db_name, table_names=force_tables)
-                    if force_ddls:
-                        pruned_schema = (pruned_schema + "\n\n" + "\n".join(force_ddls)) if pruned_schema else "\n".join(force_ddls)
-                        allowed_tables = allowed_tables | force_tables
-                except Exception:
-                    pass
 
         self._last_allowed_tables = allowed_tables
 

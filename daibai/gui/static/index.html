@@ -437,12 +437,13 @@
                 </div>
                 <h2 class="indexing-title">Indexing Schema</h2>
                 <p class="indexing-db-label" id="indexingDbLabel">Preparing…</p>
-                <div class="indexing-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="indexingTrack">
-                    <div class="indexing-bar" id="indexingBar" style="width:0%"></div>
-                </div>
-                <div class="indexing-stats">
-                    <span class="indexing-pct" id="indexingPct">0%</span>
-                    <span class="indexing-eta" id="indexingEta"></span>
+                <div class="indexing-processing" aria-live="polite">
+                    <span class="indexing-dots" aria-hidden="true">
+                        <span class="indexing-dot"></span>
+                        <span class="indexing-dot"></span>
+                        <span class="indexing-dot"></span>
+                    </span>
+                    <span class="indexing-processing-text">Processing</span>
                 </div>
                 <p class="indexing-status-line" id="indexingStatusLine">Starting…</p>
             </div>

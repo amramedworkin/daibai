@@ -103,7 +103,7 @@ from pydantic import BaseModel
 
 from ..core.config import load_config, Config
 from ..core.agent import DaiBaiAgent
-from ..core.guardrails import SecurityViolation
+from ..core.guardrails import SecurityViolation, extract_tables_from_query
 from .database import CosmosConversationStore
 from . import auth
 from .auth import get_current_user
@@ -1108,6 +1108,25 @@ async def query(
             except asyncio.TimeoutError:
                 logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
                 sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
+            # Multi-pass recovery: check for missing tables immediately after generation
+            if sql and agent._last_allowed_tables is not None:
+                attempted_tables = extract_tables_from_query(sql)
+                allowed_lower = {t.lower() for t in agent._last_allowed_tables}
+                missing_tables = {t for t in attempted_tables if t.lower() not in allowed_lower}
+                if missing_tables:
+                    logger.info(
+                        "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
+                        sorted(missing_tables),
+                    )
+                    try:
+                        sql = await asyncio.wait_for(
+                            agent.generate_sql_async(
+                                request.query, "sql", history=history, force_tables=missing_tables
+                            ),
+                            timeout=_PLAYGROUND_LLM_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Recovery pass timed out")
             sanitized = getattr(agent, "_last_sanitized_query", None) or request.query
             if sanitized != request.query:
                 logger.info(
@@ -1118,42 +1137,10 @@ async def query(
             results   = None
             row_count = None
             if request.execute and sql:
-                try:
-                    df = agent.run_sql(sql)
-                    if df is not None:
-                        results   = _dataframe_to_json_safe(df)
-                        row_count = len(df)
-                except SecurityViolation as e:
-                    if e.layer == "scope":
-                        missing_tables = agent.extract_missing_tables(sql)
-                        if missing_tables:
-                            logger.info(
-                                "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
-                                sorted(missing_tables),
-                            )
-                            try:
-                                sql = await asyncio.wait_for(
-                                    agent.generate_sql_async(
-                                        request.query, "sql", history=history, force_tables=missing_tables
-                                    ),
-                                    timeout=_PLAYGROUND_LLM_TIMEOUT,
-                                )
-                            except asyncio.TimeoutError:
-                                sql = f"-- Recovery timed out. Original scope error: {e}"
-                                results = None
-                                row_count = None
-                            else:
-                                try:
-                                    df = agent.run_sql(sql)
-                                    if df is not None:
-                                        results   = _dataframe_to_json_safe(df)
-                                        row_count = len(df)
-                                except SecurityViolation:
-                                    raise
-                        else:
-                            raise
-                    else:
-                        raise
+                df = agent.run_sql(sql)
+                if df is not None:
+                    results   = _dataframe_to_json_safe(df)
+                    row_count = len(df)
 
         assistant_msg = {
             "role": "assistant",
@@ -1929,6 +1916,28 @@ async def websocket_chat(websocket: WebSocket):
                     except asyncio.TimeoutError:
                         logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
                         sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
+                    # Multi-pass recovery: check for missing tables immediately after generation
+                    if sql and agent._last_allowed_tables is not None:
+                        attempted_tables = extract_tables_from_query(sql)
+                        allowed_lower = {t.lower() for t in agent._last_allowed_tables}
+                        missing_tables = {t for t in attempted_tables if t.lower() not in allowed_lower}
+                        if missing_tables:
+                            logger.info(
+                                "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
+                                sorted(missing_tables),
+                                extra=req_context,
+                            )
+                            if verbose:
+                                await _send_debug(f"Recovery pass triggered for missing tables: {missing_tables}")
+                            try:
+                                sql = await asyncio.wait_for(
+                                    agent.generate_sql_async(
+                                        query, "sql", history=history, force_tables=missing_tables
+                                    ),
+                                    timeout=_PLAYGROUND_LLM_TIMEOUT,
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning("Recovery pass timed out", extra=req_context)
                     sanitized = getattr(agent, "_last_sanitized_query", None) or query
                     req_context["original_query"] = query
                     req_context["sanitized_query"] = sanitized
@@ -1955,60 +1964,19 @@ async def websocket_chat(websocket: WebSocket):
                     if execute and sql:
                         await _send_debug("8. Production: executing SQL...")
                         exec_start = time.perf_counter()
-                        try:
-                            df = agent.run_sql(sql)
-                            if df is not None:
-                                results   = _dataframe_to_json_safe(df)
-                                row_count = len(df)
-                                req_context["result_row_count"] = row_count
-                                await websocket.send_json({
-                                    "type":            "results",
-                                    "content":         results,
-                                    "row_count":       row_count,
-                                    "columns":         list(df.columns),
-                                    "conversation_id": conv_id,
-                                })
-                        except SecurityViolation as e:
-                            if e.layer == "scope":
-                                missing_tables = agent.extract_missing_tables(sql)
-                                if missing_tables:
-                                    logger.info(
-                                        "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
-                                        sorted(missing_tables),
-                                        extra=req_context,
-                                    )
-                                    await _send_debug("8b. Recovery: regenerating with missing tables...")
-                                    try:
-                                        sql = await asyncio.wait_for(
-                                            agent.generate_sql_async(
-                                                query, "sql", history=history, force_tables=missing_tables
-                                            ),
-                                            timeout=_PLAYGROUND_LLM_TIMEOUT,
-                                        )
-                                    except asyncio.TimeoutError:
-                                        raise
-                                    await websocket.send_json({
-                                        "type":            "sql",
-                                        "content":         sql,
-                                        "conversation_id": conv_id,
-                                    })
-                                    df = agent.run_sql(sql)
-                                    if df is not None:
-                                        results   = _dataframe_to_json_safe(df)
-                                        row_count = len(df)
-                                        req_context["result_row_count"] = row_count
-                                        await websocket.send_json({
-                                            "type":            "results",
-                                            "content":         results,
-                                            "row_count":       row_count,
-                                            "columns":         list(df.columns),
-                                            "conversation_id": conv_id,
-                                        })
-                                else:
-                                    raise
-                            else:
-                                raise
+                        df = agent.run_sql(sql)
                         req_context["exec_latency_sec"] = round(time.perf_counter() - exec_start, 3)
+                        if df is not None:
+                            results   = _dataframe_to_json_safe(df)
+                            row_count = len(df)
+                            req_context["result_row_count"] = row_count
+                            await websocket.send_json({
+                                "type":            "results",
+                                "content":         results,
+                                "row_count":       row_count,
+                                "columns":         list(df.columns),
+                                "conversation_id": conv_id,
+                            })
 
                 await _send_debug("9. Saving conversation to Cosmos...")
                 assistant_msg = {

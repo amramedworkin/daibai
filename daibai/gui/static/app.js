@@ -936,37 +936,14 @@ class DaiBaiApp {
     }
 
     /**
-     * Update the progress bar, percentage, status line, and ETA.
-     * @param {number} pct      0–100
+     * Update the status line during indexing (progress bar removed; animated dots indicate activity).
+     * @param {number} pct      0–100 (unused; kept for WebSocket API compatibility)
      * @param {string} status   Status message from the server
-     * @param {number|null} eta Seconds remaining (null = not yet known)
+     * @param {number|null} eta Seconds remaining (unused; kept for API compatibility)
      */
     _updateIndexingProgress(pct, status, eta) {
-        if (pct <= 0 || pct >= 99.5) console.log('[DaiBai UI] artifact: indexingProgress pct=', Math.round(pct), 'status=', status);
-        const bar    = document.getElementById('indexingBar');
-        const pctEl  = document.getElementById('indexingPct');
-        const etaEl  = document.getElementById('indexingEta');
         const statEl = document.getElementById('indexingStatusLine');
-        const track  = document.getElementById('indexingTrack');
-
-        if (bar)    bar.style.width    = `${Math.min(100, pct)}%`;
-        if (pctEl)  pctEl.textContent  = `${Math.round(pct)}%`;
-        if (statEl) statEl.textContent = status || '';
-        if (track)  track.setAttribute('aria-valuenow', Math.round(pct));
-
-        if (etaEl) {
-            if (eta === null || eta === undefined) {
-                etaEl.textContent = 'Calculating…';
-            } else if (eta <= 0) {
-                etaEl.textContent = 'Almost done';
-            } else if (eta < 60) {
-                etaEl.textContent = `~${Math.ceil(eta)}s remaining`;
-            } else {
-                const m = Math.floor(eta / 60);
-                const s = Math.ceil(eta % 60);
-                etaEl.textContent = `~${m}m ${s}s remaining`;
-            }
-        }
+        if (statEl) statEl.textContent = status || 'Processing…';
     }
 
     /**
