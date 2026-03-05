@@ -80,7 +80,7 @@ class SemanticCache:
         except Exception:
             return None
 
-    def get_cached_response(self, prompt: str) -> Optional[str]:
+    def get_cached_response(self, prompt: str, namespace: str = "default") -> Optional[str]:
         """
         Search cache for a similar prompt (cosine similarity > threshold).
         Returns cached response or None on miss.
@@ -92,9 +92,10 @@ class SemanticCache:
             return None
         try:
             query_embedding = embed_fn(prompt)
-            entry_ids = self._redis.smembers(self.INDEX_KEY)
+            index_key = f"{self.KEY_PREFIX}{namespace}:index"
+            entry_ids = self._redis.smembers(index_key)
             for eid in entry_ids:
-                key = f"{self.KEY_PREFIX}entry:{eid}"
+                key = f"{self.KEY_PREFIX}{namespace}:entry:{eid}"
                 raw = self._redis.get(key)
                 if not raw:
                     continue
@@ -109,7 +110,7 @@ class SemanticCache:
         except Exception:
             return None
 
-    def set_cached_response(self, prompt: str, response: str) -> bool:
+    def set_cached_response(self, prompt: str, response: str, namespace: str = "default") -> bool:
         """Store prompt embedding and response in cache. Returns True on success."""
         if not self._ensure_redis():
             return False
@@ -119,10 +120,11 @@ class SemanticCache:
         try:
             embedding = embed_fn(prompt)
             eid = str(uuid.uuid4())
-            key = f"{self.KEY_PREFIX}entry:{eid}"
+            index_key = f"{self.KEY_PREFIX}{namespace}:index"
+            key = f"{self.KEY_PREFIX}{namespace}:entry:{eid}"
             entry = {"embedding": embedding, "response": response, "prompt": prompt}
             self._redis.set(key, json.dumps(entry))
-            self._redis.sadd(self.INDEX_KEY, eid)
+            self._redis.sadd(index_key, eid)
             return True
         except Exception:
             return False
@@ -205,15 +207,19 @@ class CachedLLMProvider(BaseLLMProvider):
         self._cache = cache
 
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
-        cached = self._cache.get_cached_response(prompt)
+        ctx = context or {}
+        namespace = ctx.get("namespace") or ctx.get("_cache_namespace", "default")
+        cached = self._cache.get_cached_response(prompt, namespace=namespace)
         if cached is not None:
             return LLMResponse(text=cached, model=self._provider.model_name, from_cache=True)
         response = self._provider.generate(prompt, context)
-        self._cache.set_cached_response(prompt, response.text)
+        self._cache.set_cached_response(prompt, response.text, namespace=namespace)
         return response
 
     async def generate_async(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
-        cached = self._cache.get_cached_response(prompt)
+        ctx = context or {}
+        namespace = ctx.get("namespace") or ctx.get("_cache_namespace", "default")
+        cached = self._cache.get_cached_response(prompt, namespace=namespace)
         if cached is not None:
             cb = (context or {}).get("_trace_callback")
             if cb and asyncio.iscoroutinefunction(cb):
@@ -228,11 +234,13 @@ class CachedLLMProvider(BaseLLMProvider):
                 )
             return LLMResponse(text=cached, model=self._provider.model_name, from_cache=True)
         response = await self._provider.generate_async(prompt, context)
-        self._cache.set_cached_response(prompt, response.text)
+        self._cache.set_cached_response(prompt, response.text, namespace=namespace)
         return response
 
     async def stream(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> AsyncIterator[str]:
-        cached = self._cache.get_cached_response(prompt)
+        ctx = context or {}
+        namespace = ctx.get("namespace") or ctx.get("_cache_namespace", "default")
+        cached = self._cache.get_cached_response(prompt, namespace=namespace)
         if cached is not None:
             yield cached
             return

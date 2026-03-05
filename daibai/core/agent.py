@@ -21,7 +21,7 @@ from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_
 from .guardrails import GuardrailPipeline, SQLValidator, SecurityViolation, extract_tables_from_query
 from .cache import CacheManager
 from .metrics import SchemaPruningMetrics
-from .schema import SchemaManager
+from .schema import SchemaManager, get_index_namespace
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
@@ -233,6 +233,16 @@ class DaiBaiAgent:
         """Get current LLM provider name."""
         return self._current_llm
     
+    def _get_db_namespace(self, db_name: str) -> str:
+        """Get the deterministic hash for a given database alias."""
+        if db_name == "playground":
+            return "playground"
+        try:
+            config = self.config.get_database(db_name)
+            return get_index_namespace(config, fallback=db_name)
+        except ValueError:
+            return db_name
+
     def _get_cache_manager(self) -> Optional[CacheManager]:
         """Lazy-init CacheManager for schema pruning (Redis + embeddings)."""
         if self._cache_manager is not None:
@@ -330,13 +340,14 @@ class DaiBaiAgent:
         if db_name in self._trained_dbs:
             return
         
-        # Check if we have cached schema
-        cached = self._schema_cache.get(db_name)
+        # Check if we have cached schema (keyed by connection hash, not alias)
+        namespace = self._get_db_namespace(db_name)
+        cached = self._schema_cache.get(namespace)
         
         if cached:
             # Check if stale
             current_count = self._get_table_count(db_name)
-            if not self._schema_cache.is_stale(db_name, current_count):
+            if not self._schema_cache.is_stale(namespace, current_count):
                 # Use cached schema
                 self._schema_memory[db_name] = cached["schema"]
                 self._trained_dbs.add(db_name)
@@ -374,8 +385,8 @@ class DaiBaiAgent:
         schema = self._fetch_schema_from_db(name)
         table_count = schema.count("-- Table:")
         
-        # Save to persistent cache
-        self._schema_cache.save(name, schema, table_count)
+        # Save to persistent cache (keyed by connection hash, not alias)
+        self._schema_cache.save(self._get_db_namespace(name), schema, table_count)
 
         # Index for semantic pruning (Redis + embeddings)
         sm = self._get_schema_manager(name)
@@ -405,7 +416,7 @@ class DaiBaiAgent:
         name = db_name or self._current_db
         if name:
             self._trained_dbs.discard(name)
-            self._schema_cache.clear(name)
+            self._schema_cache.clear(self._get_db_namespace(name))
         return self.train_schema(name, verbose=True)
     
     def is_trained(self, db_name: Optional[str] = None) -> bool:
@@ -413,7 +424,7 @@ class DaiBaiAgent:
         name = db_name or self._current_db
         if not name:
             return False
-        return name in self._trained_dbs or self._schema_cache.get(name) is not None
+        return name in self._trained_dbs or self._schema_cache.get(self._get_db_namespace(name)) is not None
     
     def get_schema_pruning_stats(self) -> Dict[str, Any]:
         """
@@ -426,7 +437,7 @@ class DaiBaiAgent:
         """Get training status for all databases."""
         status = {}
         for db_name in self.config.list_databases():
-            cached = self._schema_cache.get(db_name)
+            cached = self._schema_cache.get(self._get_db_namespace(db_name))
             if cached:
                 status[db_name] = {
                     "trained": True,
@@ -621,6 +632,9 @@ class DaiBaiAgent:
                 context["schema"] = self.get_schema()
             except Exception:
                 pass
+        # Isolate semantic cache by connection credentials
+        if "namespace" not in context and self._current_db:
+            context["namespace"] = self._get_db_namespace(self._current_db)
         
         return provider.generate(prompt, context)
     
@@ -635,6 +649,9 @@ class DaiBaiAgent:
                 context["schema"] = self.get_schema()
             except Exception:
                 pass
+        # Isolate semantic cache by connection credentials
+        if "namespace" not in context and self._current_db:
+            context["namespace"] = self._get_db_namespace(self._current_db)
         
         return await provider.generate_async(prompt, context)
     
@@ -708,10 +725,12 @@ Return the SQL in a ```sql code block. Do not execute it."""
         if allowed_tables:
             system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
 
+        namespace = self._get_db_namespace(db_name)
         context = {
             "system_prompt": system_prompt,
             "schema": pruned_schema,
             "allowed_tables": allowed_tables,
+            "namespace": namespace,
         }
 
         response = self.generate(enhanced_prompt, context)
@@ -813,10 +832,12 @@ Return the SQL in a ```sql code block. Do not execute it."""
         if allowed_tables:
             system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
 
+        namespace = self._get_db_namespace(db_name)
         context: Dict[str, Any] = {
             "system_prompt": system_prompt,
             "schema": pruned_schema,
             "allowed_tables": allowed_tables,
+            "namespace": namespace,
         }
         if history:
             context["messages"] = [{"role": m.get("role"), "content": m.get("content", "")} for m in history]

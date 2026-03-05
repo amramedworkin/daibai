@@ -132,12 +132,13 @@ class CacheManager:
         response: str,
         vector: Optional[List[float]] = None,
         ttl: int = 3600,
+        namespace: str = "default",
     ) -> bool:
         """
         Store a semantic cache entry: text, embedding vector, and response.
         If vector is None, generates it via get_embedding(text).
         Returns False if embedding generation fails (graceful degradation).
-        Key format: semantic:<hash_of_text>. Value: JSON with vector and response.
+        Key format: semantic:<namespace>:<hash_of_text>. Value: JSON with vector and response.
         """
         if vector is None:
             vector = self.get_embedding(text)
@@ -148,7 +149,7 @@ class CacheManager:
             if client is None:
                 return False
             key_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
-            key = f"{SEMANTIC_KEY_PREFIX}{key_hash}"
+            key = f"{SEMANTIC_KEY_PREFIX}{namespace}:{key_hash}"
             payload = {"text": text, "vector": vector, "response": response}
             client.set(key, json.dumps(payload), ex=ttl)
             return True
@@ -159,10 +160,11 @@ class CacheManager:
         self,
         prompt: str,
         threshold: Optional[float] = None,
+        namespace: str = "default",
     ) -> Optional[str]:
         """
         Search semantic cache for a similar prompt.
-        Generates embedding for prompt, scans semantic: keys, computes cosine similarity.
+        Generates embedding for prompt, scans semantic:<namespace>: keys, computes cosine similarity.
         Returns cached response if a match exceeds threshold, else None.
         Threshold defaults to SEMANTIC_SIMILARITY_THRESHOLD from .env (0.90).
         """
@@ -175,7 +177,7 @@ class CacheManager:
             client = self._get_client()
             if client is None:
                 return None
-            keys = client.keys(f"{SEMANTIC_KEY_PREFIX}*")
+            keys = client.keys(f"{SEMANTIC_KEY_PREFIX}{namespace}:*")
             best_response = None
             best_sim = 0.0
             for key in keys:

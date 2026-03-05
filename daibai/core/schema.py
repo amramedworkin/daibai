@@ -44,6 +44,19 @@ def _sanitize_db_password(pwd: Optional[str]) -> str:
     return "***"
 
 
+def get_index_namespace(config: Optional[DatabaseConfig], fallback: str) -> str:
+    """
+    Generate a deterministic hash based on DB connection credentials.
+    Ensures users with the same credentials share the same index,
+    while users with different credentials get isolated indexes.
+    """
+    if not config:
+        return fallback
+    # Create a unique connection string for hashing
+    conn_str = f"{config.host}:{config.port}/{config.database}@{config.user}"
+    return hashlib.sha256(conn_str.encode()).hexdigest()[:16]
+
+
 def _log_index_connection(
     db: str,
     config: Optional[DatabaseConfig] = None,
@@ -220,6 +233,10 @@ class SchemaManager:
         self._cache_manager = cache_manager
         self._embed_fn = embed_fn
         self._redis_client = redis_client
+
+    def _get_namespace(self, schema_name: Optional[str] = None) -> str:
+        db = schema_name or (self._config.database if self._config else "unknown")
+        return get_index_namespace(self._config, fallback=db)
 
     def _run_query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Execute SQL and return rows as list of dicts."""
@@ -501,6 +518,7 @@ class SchemaManager:
         db = schema_name or (self._config.database if self._config else None)
         if not db:
             raise ValueError("schema_name or config.database required")
+        namespace = self._get_namespace(schema_name)
 
         _log_index_connection(
             db,
@@ -517,7 +535,7 @@ class SchemaManager:
         track_start(f"Schema Indexing: {db}")
 
         # ── Evergreening: if already indexed, extend TTL and return ───────────
-        is_indexed_key = f"{SCHEMA_STATUS_IS_INDEXED}:{db}"
+        is_indexed_key = f"{SCHEMA_STATUS_IS_INDEXED}:{namespace}"
         try:
             if redis.exists(is_indexed_key):
                 tables_ddl = self.discover_schema(schema_name)
@@ -526,10 +544,10 @@ class SchemaManager:
                     track_passed(f"Schema Indexing: {db}", "No tables to evergreen.")
                     return 0
                 evergreen_count = 0
-                index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
+                index_key = f"{SCHEMA_V1_INDEX_PREFIX}{namespace}"
                 for table in tables_ddl:
-                    ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{db}:{table}"
-                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{table}"
+                    ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:{table}"
+                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:{table}"
                     if redis.exists(ddl_key):
                         redis.expire(ddl_key, 86400)
                         evergreen_count += 1
@@ -539,8 +557,8 @@ class SchemaManager:
                     redis.expire(index_key, 86400)
                 gmeta_evergreened = False
                 for gmeta_key in [
-                    f"{SCHEMA_V1_DDL_PREFIX}{db}:_global_summary",
-                    f"{SCHEMA_V1_TEXT_PREFIX}{db}:_global_summary",
+                    f"{SCHEMA_V1_DDL_PREFIX}{namespace}:_global_summary",
+                    f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:_global_summary",
                 ]:
                     if redis.exists(gmeta_key):
                         redis.expire(gmeta_key, 86400)
@@ -548,10 +566,10 @@ class SchemaManager:
                 if gmeta_evergreened:
                     logger.info("[index] %s: evergreened _global_summary TTL", db)
                 for status_key in [
-                    f"{SCHEMA_STATUS_IS_INDEXED}:{db}",
-                    f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}",
-                    f"{SCHEMA_STATUS_DDL_HASH}:{db}",
-                    f"{SCHEMA_V1_LAST_INDEXED}:{db}",
+                    f"{SCHEMA_STATUS_IS_INDEXED}:{namespace}",
+                    f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{namespace}",
+                    f"{SCHEMA_STATUS_DDL_HASH}:{namespace}",
+                    f"{SCHEMA_V1_LAST_INDEXED}:{namespace}",
                 ]:
                     if redis.exists(status_key):
                         redis.expire(status_key, 86400)
@@ -639,9 +657,9 @@ class SchemaManager:
                     )
                     return 0
 
-                ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{db}:{table}"
-                text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{table}"
-                index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
+                ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:{table}"
+                text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:{table}"
+                index_key = f"{SCHEMA_V1_INDEX_PREFIX}{namespace}"
                 try:
                     vector_json = json.dumps(vector)
                     redis.set(ddl_key, vector_json, ex=ttl)
@@ -685,8 +703,8 @@ class SchemaManager:
                 logger.warning("[index] %s: _global_summary skipped — embedding unavailable", db)
             else:
                 try:
-                    gmeta_ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{db}:_global_summary"
-                    gmeta_text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:_global_summary"
+                gmeta_ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:_global_summary"
+                gmeta_text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:_global_summary"
                     redis.set(gmeta_ddl_key, json.dumps(gmeta_vector), ex=ttl)
                     redis.set(gmeta_text_key, global_summary_content, ex=ttl)
                     redis.sadd(index_key, "_global_summary")
@@ -704,24 +722,24 @@ class SchemaManager:
             if stored > 0:
                 now_iso = datetime.now(timezone.utc).isoformat()
                 try:
-                    redis.set(f"{SCHEMA_V1_LAST_INDEXED}:{db}",      str(time.time()), ex=ttl)
-                    redis.set(f"{SCHEMA_STATUS_IS_INDEXED}:{db}",     "1",              ex=ttl)
-                    redis.set(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}", now_iso,          ex=ttl)
-                    redis.set(f"{SCHEMA_STATUS_DDL_HASH}:{db}",      ddl_hash,         ex=ttl)
+                    redis.set(f"{SCHEMA_V1_LAST_INDEXED}:{namespace}",      str(time.time()), ex=ttl)
+                    redis.set(f"{SCHEMA_STATUS_IS_INDEXED}:{namespace}",     "1",              ex=ttl)
+                    redis.set(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{namespace}", now_iso,          ex=ttl)
+                    redis.set(f"{SCHEMA_STATUS_DDL_HASH}:{namespace}",      ddl_hash,         ex=ttl)
                     try:
                         from .config import get_redis_connection_string
                         redis_loc = _sanitize_redis_url(get_redis_connection_string())
                     except Exception:
                         redis_loc = "(unknown)"
                     size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written < 1024 * 1024 else f"{bytes_written / (1024 * 1024):.2f}MB"
-                    key_names = f"{SCHEMA_V1_DDL_PREFIX}{db}:*, {SCHEMA_V1_TEXT_PREFIX}{db}:* (incl. _global_summary), {SCHEMA_V1_INDEX_PREFIX}{db}, schema:status:*"
+                    key_names = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:*, {SCHEMA_V1_TEXT_PREFIX}{namespace}:* (incl. _global_summary), {SCHEMA_V1_INDEX_PREFIX}{namespace}, schema:status:*"
                     logger.info(
                         "[index] %s: complete — loaded to redis=%s keyed by %s | "
                         "tables=%d size=%s last_indexed_at=%s",
                         db, redis_loc, key_names, stored, size_str, now_iso,
                     )
                     approx_kb = len(str(tables_ddl)) / 1024
-                    gmeta_note = " (incl. _global_summary)" if redis.exists(f"{SCHEMA_V1_DDL_PREFIX}{db}:_global_summary") else ""
+                    gmeta_note = " (incl. _global_summary)" if redis.exists(f"{SCHEMA_V1_DDL_PREFIX}{namespace}:_global_summary") else ""
                     track_passed(
                         f"Schema Indexing: {db}",
                         f"Index completed and loaded to Redis keyed by schema:v1:*:{db}. Size approx {approx_kb:.2f} KB{gmeta_note}",
@@ -768,6 +786,7 @@ class SchemaManager:
         db = schema_name or (self._config.database if self._config else None)
         if not db:
             return []
+        namespace = self._get_namespace(schema_name)
 
         query_vector = self._get_embedding(query)
         if query_vector is None:
@@ -778,7 +797,7 @@ class SchemaManager:
             return []
 
         limit = limit or get_schema_vector_limit()
-        index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
+        index_key = f"{SCHEMA_V1_INDEX_PREFIX}{namespace}"
         try:
             raw_names = list(redis.smembers(index_key)) or []
             table_names = [
@@ -789,8 +808,8 @@ class SchemaManager:
 
         scored: List[Tuple[float, str]] = []
         for table in table_names:
-            ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{db}:{table}"
-            text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{table}"
+            ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:{table}"
+            text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:{table}"
             raw_vector = redis.get(ddl_key)
             raw_ddl = redis.get(text_key)
             if not raw_vector or not raw_ddl:
@@ -821,12 +840,13 @@ class SchemaManager:
         db = schema_name or (self._config.database if self._config else None)
         if not db:
             return []
+        namespace = self._get_namespace(schema_name)
 
         redis = self._get_redis()
         if redis is None:
             return []
 
-        index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
+        index_key = f"{SCHEMA_V1_INDEX_PREFIX}{namespace}"
         try:
             raw_names = list(redis.smembers(index_key)) or []
             table_names = [
@@ -850,6 +870,7 @@ class SchemaManager:
         db = schema_name or (self._config.database if self._config else None)
         if not db or not table_names:
             return []
+        namespace = self._get_namespace(schema_name)
 
         tables_set = set(str(t).strip() for t in table_names if t)
         if not tables_set:
@@ -870,7 +891,7 @@ class SchemaManager:
                 candidates = [table_key] if table_key in indexed else [indexed_lower.get(table_key.lower())]
                 candidates = [c for c in candidates if c]
                 for c in candidates:
-                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{c}"
+                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:{c}"
                     try:
                         raw = redis.get(text_key)
                         if raw:
