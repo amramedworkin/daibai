@@ -2092,8 +2092,7 @@ class DaiBaiApp {
         if (msg.role === 'assistant') {
             const sqlBlock = messageEl.querySelector('.sql-block');
             if (sqlBlock) {
-                this.bindSqlActions(messageEl, sqlBlock);
-                this.bindSqlModifiers(sqlBlock);
+                this.bindSqlActions(messageEl, msg.sql ?? msg.content ?? '');
             }
             if (msg.results) this.bindExportCsvButtons(messageEl);
         }
@@ -2124,8 +2123,7 @@ class DaiBaiApp {
         // Bind copy, run, modifier checkboxes, and export buttons
         const sqlBlock = messageEl.querySelector('.sql-block');
         if (sqlBlock) {
-            this.bindSqlActions(messageEl, sqlBlock);
-            this.bindSqlModifiers(sqlBlock);
+            this.bindSqlActions(messageEl, sql);
         }
         this.bindExportCsvButtons(messageEl);
     }
@@ -2211,69 +2209,75 @@ class DaiBaiApp {
         });
     }
     
-    _getCurrentSql(blockEl) {
-        const pre = blockEl?.querySelector('.sql-code');
-        return pre ? pre.textContent || blockEl.dataset.originalSql || '' : '';
-    }
-
-    bindSqlModifiers(blockEl) {
-        const modDb = blockEl?.querySelector('.mod-db');
-        const modTbl = blockEl?.querySelector('.mod-tbl');
-        const modAlias = blockEl?.querySelector('.mod-alias');
-        const pre = blockEl?.querySelector('.sql-code');
-        if (!modDb || !modTbl || !modAlias || !pre) return;
-
-        const apply = () => {
-            const original = blockEl.dataset.originalSql || pre.textContent;
-            if (!original) return;
-            const db = !!modDb.checked;
-            const tbl = !!modTbl.checked;
-            const alias = !!modAlias.checked;
-            if (!db && !tbl && !alias) {
-                pre.textContent = original;
-                return;
-            }
-            apiFetch('/api/sql/rewrite', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sql: original, db_qualify: db, table_qualify: tbl, alias }),
-            })
-                .then(r => r.json())
-                .then(data => { if (data.sql) pre.textContent = data.sql; })
-                .catch(() => {});
-        };
-
-        [modDb, modTbl, modAlias].forEach(cb => cb.addEventListener('change', apply));
-    }
-
-    bindSqlActions(messageEl, sqlBlock) {
+    bindSqlActions(messageEl, sql) {
         const copyBtn = messageEl.querySelector('.copy-btn');
         const runBtn = messageEl.querySelector('.run-btn');
-        
+        const sqlBlock = messageEl.querySelector('.sql-block');
+        const sqlCodePre = messageEl.querySelector('.sql-code');
+        const originalSql = sqlBlock?.dataset?.originalSql ?? sql;
+
+        // Handle Rewrites
+        const checkboxes = messageEl.querySelectorAll('.sql-modifiers input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            cb.addEventListener('change', async () => {
+                const dbQualify = messageEl.querySelector('.mod-db')?.checked ?? false;
+                const tblQualify = messageEl.querySelector('.mod-tbl')?.checked ?? false;
+                const alias = messageEl.querySelector('.mod-alias')?.checked ?? false;
+
+                // If all are unchecked, restore original
+                if (!dbQualify && !tblQualify && !alias) {
+                    sqlCodePre.textContent = originalSql;
+                    sql = originalSql;
+                    return;
+                }
+
+                sqlCodePre.textContent = 'Rewriting SQL...';
+                try {
+                    const res = await apiFetch('/api/format-sql', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sql: originalSql,
+                            db_qualify: dbQualify,
+                            table_qualify: tblQualify,
+                            use_alias: alias,
+                            database: document.getElementById('databaseSelect')?.value || null,
+                        }),
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        sqlCodePre.textContent = data.sql;
+                        sql = data.sql;
+                    } else {
+                        sqlCodePre.textContent = 'Error rewriting SQL. Restoring original...\n' + originalSql;
+                        sql = originalSql;
+                    }
+                } catch (e) {
+                    sqlCodePre.textContent = originalSql;
+                    sql = originalSql;
+                }
+            });
+        });
+
         if (copyBtn) {
             copyBtn.addEventListener('click', () => {
-                const sql = this._getCurrentSql(sqlBlock);
                 navigator.clipboard.writeText(sql).catch(() => {});
                 copyBtn.textContent = 'Copied!';
                 setTimeout(() => copyBtn.textContent = 'Copy', 2000);
             });
         }
-        
+
         if (runBtn) {
             runBtn.addEventListener('click', async () => {
-                const sql = this._getCurrentSql(sqlBlock);
                 runBtn.textContent = 'Running...';
                 runBtn.disabled = true;
-                
                 try {
                     const response = await apiFetch('/api/execute', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ sql }),
                     });
-                    
                     const data = await response.json();
-                    
                     if (response.ok) {
                         this.appendResultsToLastMessage({ content: data.results });
                         this.saveToCsv(data.results);

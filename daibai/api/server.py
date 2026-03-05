@@ -1221,15 +1221,16 @@ class ExecuteRequest(BaseModel):
     sql: str
 
 
-class SqlRewriteRequest(BaseModel):
+class FormatSqlRequest(BaseModel):
     sql: str
     db_qualify: bool = False
     table_qualify: bool = False
-    alias: bool = False
+    use_alias: bool = False
+    database: Optional[str] = None
 
 
-@app.post("/api/sql/rewrite")
-async def rewrite_sql(request: SqlRewriteRequest, _user: Dict[str, Any] = Depends(get_current_user)):
+@app.post("/api/format-sql")
+async def format_sql(request: FormatSqlRequest, _user: Dict[str, Any] = Depends(get_current_user)):
     """Rewrite SQL with database qualifications, table qualifications, and aliases."""
     # TODO: Implement actual rewriting logic per modifiers
     return {"sql": request.sql}
