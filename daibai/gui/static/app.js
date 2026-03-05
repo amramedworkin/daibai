@@ -1036,10 +1036,9 @@ class DaiBaiApp {
         // Click logging (default: true) — log every click to console for debugging lag
         this.logClicks = prefs.logClicks !== false;
         
-        // Sidebar state
-        if (prefs.sidebarCollapsed) {
-            this.sidebar.classList.add('collapsed');
-        }
+        // Layout mode (sidebar + inspector visibility)
+        const layoutMode = prefs.layoutMode || 'sidebar-main';
+        this.updateLayout(layoutMode);
     }
     
     savePreferences() {
@@ -1050,6 +1049,7 @@ class DaiBaiApp {
             autoExecute: this.executeCheckbox.checked,
             verbose: existing.verbose ?? this.verboseMode ?? false,
             logClicks: existing.logClicks !== false ? true : false,
+            layoutMode: this.layoutMode || 'sidebar-main',
             sidebarCollapsed: this.sidebar.classList.contains('collapsed'),
             database: this.databaseSelect.value,
             llm: this.llmSelect.value,
@@ -1196,13 +1196,52 @@ class DaiBaiApp {
         this.testDatabaseDb = document.getElementById('testDatabaseDb');
         this.testDatabaseBtn = document.getElementById('testDatabaseBtn');
         this.testDatabaseResult = document.getElementById('testDatabaseResult');
+        this.inspectorPane = document.getElementById('inspectorPane');
+        this.layoutToggleLeftCenter = document.getElementById('layoutToggleLeftCenter');
+        this.layoutToggleCenterOnly = document.getElementById('layoutToggleCenterOnly');
+        this.layoutToggleCenterRight = document.getElementById('layoutToggleCenterRight');
+    }
+    
+    /**
+     * Update layout mode: toggle .collapsed on #sidebar and #inspectorPane.
+     * @param {string} mode - 'sidebar-main' | 'main-only' | 'main-inspector'
+     */
+    updateLayout(mode) {
+        if (!this.sidebar) return;
+        this.layoutMode = mode;
+        switch (mode) {
+            case 'sidebar-main':
+                this.sidebar.classList.remove('collapsed');
+                this.inspectorPane?.classList.add('collapsed');
+                break;
+            case 'main-only':
+                this.sidebar.classList.add('collapsed');
+                this.inspectorPane?.classList.add('collapsed');
+                break;
+            case 'main-inspector':
+                this.sidebar.classList.add('collapsed');
+                this.inspectorPane?.classList.remove('collapsed');
+                break;
+            default:
+                this.sidebar.classList.remove('collapsed');
+                this.inspectorPane?.classList.remove('collapsed');
+        }
+        this.layoutToggleLeftCenter?.classList.toggle('active', mode === 'sidebar-main');
+        this.layoutToggleCenterOnly?.classList.toggle('active', mode === 'main-only');
+        this.layoutToggleCenterRight?.classList.toggle('active', mode === 'main-inspector');
+        this.savePreferences();
     }
     
     bindEvents() {
-        // Sidebar toggle
+        // Layout toggles (Inspector Panel)
+        this.layoutToggleLeftCenter?.addEventListener('click', () => this.updateLayout('sidebar-main'));
+        this.layoutToggleCenterOnly?.addEventListener('click', () => this.updateLayout('main-only'));
+        this.layoutToggleCenterRight?.addEventListener('click', () => this.updateLayout('main-inspector'));
+
+        // Sidebar toggle (flip between sidebar-main and main-only; from main-inspector go to sidebar-main)
         this.sidebarToggle.addEventListener('click', () => {
-            this.sidebar.classList.toggle('collapsed');
-            this.savePreferences();
+            const next = this.layoutMode === 'sidebar-main' ? 'main-only' : 'sidebar-main';
+            this.updateLayout(next);
         });
         
         // Settings changes
@@ -1703,7 +1742,11 @@ class DaiBaiApp {
         }
         const query = this.promptInput.value.trim();
         if (!query || this.isLoading) return;
-        
+
+        // Mirror prompt to Inspector Panel
+        const mirroredEl = document.getElementById('mirroredPromptTextarea');
+        if (mirroredEl) mirroredEl.value = query;
+
         this._ignoreWebSocketMessages = false;
         this._pendingQuery = query;
         this._abortController = new AbortController();
