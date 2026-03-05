@@ -703,8 +703,8 @@ class SchemaManager:
                 logger.warning("[index] %s: _global_summary skipped — embedding unavailable", db)
             else:
                 try:
-                gmeta_ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:_global_summary"
-                gmeta_text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:_global_summary"
+                    gmeta_ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:_global_summary"
+                    gmeta_text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:_global_summary"
                     redis.set(gmeta_ddl_key, json.dumps(gmeta_vector), ex=ttl)
                     redis.set(gmeta_text_key, global_summary_content, ex=ttl)
                     redis.sadd(index_key, "_global_summary")
