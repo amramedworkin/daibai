@@ -2089,8 +2089,13 @@ class DaiBaiApp {
         }
         
         this.messagesContainer.appendChild(messageEl);
-        if (msg.role === 'assistant' && msg.results) {
-            this.bindExportCsvButtons(messageEl);
+        if (msg.role === 'assistant') {
+            const sqlBlock = messageEl.querySelector('.sql-block');
+            if (sqlBlock) {
+                this.bindSqlActions(messageEl, sqlBlock);
+                this.bindSqlModifiers(sqlBlock);
+            }
+            if (msg.results) this.bindExportCsvButtons(messageEl);
         }
         this.scrollToBottom();
     }
@@ -2116,24 +2121,37 @@ class DaiBaiApp {
         this.messagesContainer.appendChild(messageEl);
         this.scrollToBottom();
         
-        // Bind copy, run, and export buttons
-        this.bindSqlActions(messageEl, sql);
+        // Bind copy, run, modifier checkboxes, and export buttons
+        const sqlBlock = messageEl.querySelector('.sql-block');
+        if (sqlBlock) {
+            this.bindSqlActions(messageEl, sqlBlock);
+            this.bindSqlModifiers(sqlBlock);
+        }
         this.bindExportCsvButtons(messageEl);
     }
     
     renderSqlBlock(sql) {
         if (!sql) return '<div class="message-text">Could not generate SQL</div>';
         
+        // Store the original SQL safely (escape for HTML attribute to handle quotes)
+        const safeSql = this.escapeHtml(sql);
+        const safeAttr = (sql || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        
         return `
-            <div class="sql-block">
+            <div class="sql-block" data-original-sql="${safeAttr}">
                 <div class="sql-header">
                     <span>SQL</span>
+                    <div class="sql-modifiers">
+                        <label><input type="checkbox" class="mod-db"> DB Qualify</label>
+                        <label><input type="checkbox" class="mod-tbl"> Table Qualify</label>
+                        <label><input type="checkbox" class="mod-alias"> Alias</label>
+                    </div>
                     <div class="sql-actions">
                         <button class="copy-btn">Copy</button>
                         <button class="run-btn">Run</button>
                     </div>
                 </div>
-                <pre class="sql-code">${this.escapeHtml(sql)}</pre>
+                <pre class="sql-code">${safeSql}</pre>
             </div>
         `;
     }
@@ -2193,13 +2211,49 @@ class DaiBaiApp {
         });
     }
     
-    bindSqlActions(messageEl, sql) {
+    _getCurrentSql(blockEl) {
+        const pre = blockEl?.querySelector('.sql-code');
+        return pre ? pre.textContent || blockEl.dataset.originalSql || '' : '';
+    }
+
+    bindSqlModifiers(blockEl) {
+        const modDb = blockEl?.querySelector('.mod-db');
+        const modTbl = blockEl?.querySelector('.mod-tbl');
+        const modAlias = blockEl?.querySelector('.mod-alias');
+        const pre = blockEl?.querySelector('.sql-code');
+        if (!modDb || !modTbl || !modAlias || !pre) return;
+
+        const apply = () => {
+            const original = blockEl.dataset.originalSql || pre.textContent;
+            if (!original) return;
+            const db = !!modDb.checked;
+            const tbl = !!modTbl.checked;
+            const alias = !!modAlias.checked;
+            if (!db && !tbl && !alias) {
+                pre.textContent = original;
+                return;
+            }
+            apiFetch('/api/sql/rewrite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sql: original, db_qualify: db, table_qualify: tbl, alias }),
+            })
+                .then(r => r.json())
+                .then(data => { if (data.sql) pre.textContent = data.sql; })
+                .catch(() => {});
+        };
+
+        [modDb, modTbl, modAlias].forEach(cb => cb.addEventListener('change', apply));
+    }
+
+    bindSqlActions(messageEl, sqlBlock) {
         const copyBtn = messageEl.querySelector('.copy-btn');
         const runBtn = messageEl.querySelector('.run-btn');
         
         if (copyBtn) {
             copyBtn.addEventListener('click', () => {
-                navigator.clipboard.writeText(sql);
+                const sql = this._getCurrentSql(sqlBlock);
+                navigator.clipboard.writeText(sql).catch(() => {});
                 copyBtn.textContent = 'Copied!';
                 setTimeout(() => copyBtn.textContent = 'Copy', 2000);
             });
@@ -2207,6 +2261,7 @@ class DaiBaiApp {
         
         if (runBtn) {
             runBtn.addEventListener('click', async () => {
+                const sql = this._getCurrentSql(sqlBlock);
                 runBtn.textContent = 'Running...';
                 runBtn.disabled = true;
                 
@@ -2214,7 +2269,7 @@ class DaiBaiApp {
                     const response = await apiFetch('/api/execute', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ sql: sql })
+                        body: JSON.stringify({ sql }),
                     });
                     
                     const data = await response.json();

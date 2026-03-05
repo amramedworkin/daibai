@@ -1221,6 +1221,20 @@ class ExecuteRequest(BaseModel):
     sql: str
 
 
+class SqlRewriteRequest(BaseModel):
+    sql: str
+    db_qualify: bool = False
+    table_qualify: bool = False
+    alias: bool = False
+
+
+@app.post("/api/sql/rewrite")
+async def rewrite_sql(request: SqlRewriteRequest, _user: Dict[str, Any] = Depends(get_current_user)):
+    """Rewrite SQL with database qualifications, table qualifications, and aliases."""
+    # TODO: Implement actual rewriting logic per modifiers
+    return {"sql": request.sql}
+
+
 @app.post("/api/execute")
 async def execute_sql(request: ExecuteRequest, _user: Dict[str, Any] = Depends(get_current_user)):
     """Execute SQL directly."""
