@@ -503,6 +503,17 @@ class DaiBaiAgent:
                 tables.add(m.group(1))
         return tables
 
+    def extract_missing_tables(self, sql: str) -> Set[str]:
+        """
+        Extract tables from SQL that were not in the last allowed scope.
+        Used for recovery when SecurityViolation (scope) occurs from overzealous pruning.
+        """
+        tables_in_sql = extract_tables_from_query(sql)
+        allowed = self._last_allowed_tables or set()
+        # Normalize for case-insensitive comparison
+        allowed_norm = {t.lower() for t in allowed}
+        return {t for t in tables_in_sql if t.lower() not in allowed_norm}
+
     def _get_pruned_schema(self, prompt: str, db_name: Optional[str] = None) -> Tuple[str, Optional[Set[str]]]:
         """
         Get schema pruned by semantic relevance to the prompt.
@@ -573,7 +584,12 @@ class DaiBaiAgent:
         
         return await provider.generate_async(prompt, context)
     
-    def generate_sql(self, prompt: str, mode: str = "sql") -> str:
+    def generate_sql(
+        self,
+        prompt: str,
+        mode: str = "sql",
+        force_tables: Optional[Set[str]] = None,
+    ) -> str:
         """Generate SQL from natural language.
         
         Uses semantic schema pruning: only the most relevant tables (Top-K by
@@ -598,6 +614,21 @@ class DaiBaiAgent:
 
         db_name = self._current_db or "unknown"
         pruned_schema, allowed_tables = self._get_pruned_schema(sanitized)
+        if allowed_tables is None:
+            allowed_tables = set()
+
+        # Recovery: inject DDL for force_tables (overzealous prune correction)
+        if force_tables:
+            sm = self._get_schema_manager(db_name)
+            if sm:
+                try:
+                    force_ddls = sm.get_ddl_for_tables(schema_name=db_name, table_names=force_tables)
+                    if force_ddls:
+                        pruned_schema = (pruned_schema + "\n\n" + "\n".join(force_ddls)) if pruned_schema else "\n".join(force_ddls)
+                        allowed_tables = allowed_tables | force_tables
+                except Exception:
+                    pass
+
         self._last_allowed_tables = allowed_tables
 
         # Fetch table list from index for LLM grounding (no DB hit)
@@ -642,7 +673,11 @@ Return the SQL in a ```sql code block. Do not execute it."""
         return response.sql or self._extract_sql(response.text)
     
     async def generate_sql_async(
-        self, prompt: str, mode: str = "sql", history: Optional[List[Dict[str, Any]]] = None
+        self,
+        prompt: str,
+        mode: str = "sql",
+        history: Optional[List[Dict[str, Any]]] = None,
+        force_tables: Optional[Set[str]] = None,
     ) -> str:
         """Generate SQL asynchronously. Optionally pass conversation history for context.
         
@@ -659,6 +694,21 @@ Return the SQL in a ```sql code block. Do not execute it."""
 
         db_name = self._current_db or "unknown"
         pruned_schema, allowed_tables = self._get_pruned_schema(sanitized)
+        if allowed_tables is None:
+            allowed_tables = set()
+
+        # Recovery: inject DDL for force_tables (overzealous prune correction)
+        if force_tables:
+            sm = self._get_schema_manager(db_name)
+            if sm:
+                try:
+                    force_ddls = sm.get_ddl_for_tables(schema_name=db_name, table_names=force_tables)
+                    if force_ddls:
+                        pruned_schema = (pruned_schema + "\n\n" + "\n".join(force_ddls)) if pruned_schema else "\n".join(force_ddls)
+                        allowed_tables = allowed_tables | force_tables
+                except Exception:
+                    pass
+
         self._last_allowed_tables = allowed_tables
 
         # Fetch table list from index for LLM grounding (no DB hit)

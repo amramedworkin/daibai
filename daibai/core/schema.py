@@ -15,7 +15,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
 from .instrumentation import track_start, track_underway, track_passed, track_failed, init_tracker
@@ -833,6 +833,65 @@ class SchemaManager:
                 t.decode("utf-8") if isinstance(t, bytes) else t for t in raw_names
             ]
             # Exclude internal summary/metadata documents
-            return sorted(t for t in table_names if t not in ("_global_summary", "_global_summary"))
+            return sorted(t for t in table_names if t not in ("_global_summary", "_global_metadata"))
         except Exception:
             return []
+
+    def get_ddl_for_tables(
+        self,
+        schema_name: Optional[str] = None,
+        table_names: Optional[Iterable[str]] = None,
+    ) -> List[str]:
+        """
+        Get DDL strings for specific tables from Redis or DB.
+        Used for recovery when force_tables are needed after overzealous pruning.
+        Returns list of DDL strings (order not guaranteed).
+        """
+        db = schema_name or (self._config.database if self._config else None)
+        if not db or not table_names:
+            return []
+
+        tables_set = set(str(t).strip() for t in table_names if t)
+        if not tables_set:
+            return []
+
+        # Try Redis first (schema:v1:text:{db}:{table})
+        redis = self._get_redis()
+        ddls: List[str] = []
+        missing: Set[str] = set(tables_set)
+
+        if redis:
+            indexed = set(self.get_table_names_from_index(schema_name=db))
+            indexed_lower = {t.lower(): t for t in indexed}
+            for table in tables_set:
+                # Strip schema prefix (e.g. "myschema.accounts" -> "accounts")
+                table_key = table.split(".")[-1] if "." in table else table
+                # Try exact match first, then case-insensitive via indexed names
+                candidates = [table_key] if table_key in indexed else [indexed_lower.get(table_key.lower())]
+                candidates = [c for c in candidates if c]
+                for c in candidates:
+                    text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:{c}"
+                    try:
+                        raw = redis.get(text_key)
+                        if raw:
+                            ddls.append(raw if isinstance(raw, str) else raw.decode("utf-8"))
+                            missing.discard(table)
+                            missing.discard(table_key)
+                            break
+                    except Exception:
+                        pass
+
+        # Fallback to discover_schema for tables not in Redis
+        if missing:
+            try:
+                full_ddl = self.discover_schema(schema_name)
+                full_ddl_lower = {k.lower(): (k, v) for k, v in full_ddl.items()}
+                for t in missing:
+                    simple = t.split(".")[-1] if "." in t else t
+                    key, ddl = full_ddl_lower.get(simple.lower(), (None, None))
+                    if ddl:
+                        ddls.append(ddl)
+            except Exception:
+                pass
+
+        return ddls
