@@ -29,10 +29,10 @@ _BLOCKED_FUNCTIONS = frozenset({
     "load_file", "into_outfile", "into_dumpfile",  # File exfil
 })
 
-# System schema probing
+# System schema probing (mysql, performance_schema, pg_toast hard-blocked;
+# information_schema, pg_catalog, sys, sqlite_master allowed for active DB metadata)
 _BLOCKED_SCHEMAS = frozenset({
-    "information_schema", "pg_catalog", "pg_toast", "sys",
-    "mysql", "sqlite_master", "performance_schema",
+    "mysql", "performance_schema", "pg_toast",
 })
 
 
@@ -297,6 +297,7 @@ class SQLValidator:
         self,
         query: str,
         allowed_tables: Optional[Set[str]] = None,
+        current_db: Optional[str] = None,
     ) -> None:
         """
         Validate SQL. Raises SecurityViolation if invalid.
@@ -305,6 +306,8 @@ class SQLValidator:
             query: SQL string to validate.
             allowed_tables: If provided, only these tables may be referenced.
                            If None, scope check is skipped (permissive).
+            current_db: Active database name. Required when querying information_schema
+                        (filtered to this database). Enables metadata questions.
         """
         if not query or not query.strip():
             raise SecurityViolation("Empty query", "lexical")
@@ -375,6 +378,37 @@ class SQLValidator:
                     f"System schema probing blocked: {q}",
                     "scope",
                 )
+
+        # Enforce current_db restriction for information_schema (metadata queries)
+        if not current_db:
+            for tbl in refs_to_check:
+                tbl_lower = tbl.lower()
+                if tbl_lower == "information_schema" or tbl_lower.startswith("information_schema."):
+                    raise SecurityViolation(
+                        "information_schema queries require current_db context",
+                        "scope",
+                    )
+            for q in qualified:
+                ql = q.lower()
+                if ql.startswith("information_schema."):
+                    raise SecurityViolation(
+                        "information_schema queries require current_db context",
+                        "scope",
+                    )
+        elif current_db:
+            # Lightweight safety check: information_schema queries must reference current_db (schema filter)
+            sql_lower = sql.lower()
+            current_db_lower = current_db.lower()
+            has_information_schema = (
+                any(t == "information_schema" or t.startswith("information_schema.") for t in refs_to_check)
+                or any(q.lower().startswith("information_schema.") for q in qualified)
+            )
+            if has_information_schema and current_db_lower not in sql_lower:
+                raise SecurityViolation(
+                    f"information_schema queries must filter by current database ({current_db})",
+                    "scope",
+                )
+
         if allowed_tables is not None:
             allowed_normalized = {_normalize_identifier(t) for t in allowed_tables}
             out_of_scope = refs_to_check - allowed_normalized
@@ -406,12 +440,13 @@ class SQLValidator:
         execute_fn: Callable[[str], any],
         query: str,
         allowed_tables: Optional[Set[str]] = None,
+        current_db: Optional[str] = None,
     ):
         """
         Validate query, then execute. Returns execute_fn(query) if valid.
         Raises SecurityViolation if validation fails.
         """
-        self.validate(query, allowed_tables=allowed_tables)
+        self.validate(query, allowed_tables=allowed_tables, current_db=current_db)
         return execute_fn(query)
 
 
@@ -469,9 +504,10 @@ class GuardrailPipeline:
         self,
         query: str,
         allowed_tables: Optional[Set[str]] = None,
+        current_db: Optional[str] = None,
     ) -> None:
         """
         Stage 2: Post-LLM SQL validation.
         Delegates to SQLValidator (lexical, function, tautology, scope).
         """
-        self._validator.validate(query, allowed_tables=allowed_tables)
+        self._validator.validate(query, allowed_tables=allowed_tables, current_db=current_db)

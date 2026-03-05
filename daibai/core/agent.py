@@ -114,7 +114,7 @@ class DatabaseRunner:
         allowed_tables: Optional[Set[str]] = None,
     ) -> Optional[pd.DataFrame]:
         """Execute SQL and return results as DataFrame. Validates through SQLValidator first."""
-        self._validator.validate(sql, allowed_tables=allowed_tables)
+        self._validator.validate(sql, allowed_tables=allowed_tables, current_db=self.config.database)
         self._ensure_connection()
 
         try:
@@ -595,6 +595,17 @@ class DaiBaiAgent:
         pruned_schema, allowed_tables = self._get_pruned_schema(prompt)
         self._last_allowed_tables = allowed_tables
 
+        # Fetch table list from index for LLM grounding (no DB hit)
+        table_list_str = ""
+        sm = self._get_schema_manager(db_name)
+        if sm:
+            try:
+                table_names = sm.get_table_names_from_index(schema_name=db_name)
+                if table_names:
+                    table_list_str = ", ".join(table_names)
+            except Exception:
+                pass
+
         enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
 Database: {db_name}
 
@@ -602,7 +613,17 @@ Request: {prompt}
 
 Return the SQL in a ```sql code block. Do not execute it."""
 
-        system_prompt = "You are an expert SQL developer. Generate clean, efficient SQL."
+        system_prompt = (
+            "You are an expert SQL developer. Generate clean, efficient SQL. "
+        )
+        if table_list_str:
+            system_prompt += (
+                f"The active database contains the following tables: {table_list_str}. "
+                "Use this for counting tables or identifying schema scope. "
+            )
+        system_prompt += (
+            "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs."
+        )
         if allowed_tables:
             system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
 
@@ -633,6 +654,17 @@ Return the SQL in a ```sql code block. Do not execute it."""
         pruned_schema, allowed_tables = self._get_pruned_schema(prompt)
         self._last_allowed_tables = allowed_tables
 
+        # Fetch table list from index for LLM grounding (no DB hit)
+        table_list_str = ""
+        sm = self._get_schema_manager(db_name)
+        if sm:
+            try:
+                table_names = sm.get_table_names_from_index(schema_name=db_name)
+                if table_names:
+                    table_list_str = ", ".join(table_names)
+            except Exception:
+                pass
+
         enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
 Database: {db_name}
 
@@ -640,7 +672,17 @@ Request: {prompt}
 
 Return the SQL in a ```sql code block. Do not execute it."""
 
-        system_prompt = "You are an expert SQL developer. Generate clean, efficient SQL."
+        system_prompt = (
+            "You are an expert SQL developer. Generate clean, efficient SQL. "
+        )
+        if table_list_str:
+            system_prompt += (
+                f"The active database contains the following tables: {table_list_str}. "
+                "Use this for counting tables or identifying schema scope. "
+            )
+        system_prompt += (
+            "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs."
+        )
         if allowed_tables:
             system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
 

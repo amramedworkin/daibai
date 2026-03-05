@@ -370,15 +370,38 @@ def test_positive_valid_join():
     )
 
 
-def test_system_schema_information_schema_blocked():
-    """information_schema probing must be blocked."""
+def test_system_schema_information_schema_blocked_without_current_db():
+    """information_schema without current_db context must be blocked."""
     v = SQLValidator()
     with pytest.raises(SecurityViolation) as exc:
         v.validate(
             "SELECT * FROM information_schema.tables",
             allowed_tables={"users"},
+            current_db=None,
         )
-    assert "information_schema" in str(exc.value).lower() or "probing" in str(exc.value).lower()
+    assert "information_schema" in str(exc.value).lower() or "current_db" in str(exc.value).lower()
+
+
+def test_system_schema_information_schema_allowed_with_current_db():
+    """information_schema is allowed when current_db is provided and appears in query (schema filter)."""
+    v = SQLValidator()
+    v.validate(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'mydb'",
+        allowed_tables=None,  # scope check skipped for metadata
+        current_db="mydb",
+    )
+
+
+def test_system_schema_information_schema_blocked_without_filter():
+    """information_schema with current_db but query does not filter by it must be blocked."""
+    v = SQLValidator()
+    with pytest.raises(SecurityViolation) as exc:
+        v.validate(
+            "SELECT * FROM information_schema.tables",
+            allowed_tables=None,
+            current_db="mydb",
+        )
+    assert "filter" in str(exc.value).lower() or "current database" in str(exc.value).lower()
 
 
 def test_system_schema_mysql_blocked():

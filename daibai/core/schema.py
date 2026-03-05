@@ -537,6 +537,16 @@ class SchemaManager:
                         redis.expire(text_key, 86400)
                 if redis.exists(index_key):
                     redis.expire(index_key, 86400)
+                gmeta_evergreened = False
+                for gmeta_key in [
+                    f"{SCHEMA_V1_DDL_PREFIX}{db}:_global_summary",
+                    f"{SCHEMA_V1_TEXT_PREFIX}{db}:_global_summary",
+                ]:
+                    if redis.exists(gmeta_key):
+                        redis.expire(gmeta_key, 86400)
+                        gmeta_evergreened = True
+                if gmeta_evergreened:
+                    logger.info("[index] %s: evergreened _global_summary TTL", db)
                 for status_key in [
                     f"{SCHEMA_STATUS_IS_INDEXED}:{db}",
                     f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{db}",
@@ -658,6 +668,39 @@ class SchemaManager:
                     except Exception:
                         pass   # progress errors must never abort indexing
 
+            # ── Global metadata document for meta-questions ("how many tables", etc.) ──
+            logger.info("[index] %s: indexing global summary (_global_summary) for %d tables", db, total)
+            if progress_cb is not None:
+                try:
+                    progress_cb(100.0 * total / (total + 1), "Vectorizing: _global_summary", 0)
+                except Exception:
+                    pass
+            table_list = ", ".join(sorted(tables_ddl.keys()))
+            global_summary_content = (
+                f"This is the {db} database. It contains {total} tables: {table_list}. "
+                "Use this to answer questions about the overall database structure or table counts."
+            )
+            gmeta_vector = self._get_embedding(global_summary_content)
+            if gmeta_vector is None:
+                logger.warning("[index] %s: _global_summary skipped — embedding unavailable", db)
+            else:
+                try:
+                    gmeta_ddl_key = f"{SCHEMA_V1_DDL_PREFIX}{db}:_global_summary"
+                    gmeta_text_key = f"{SCHEMA_V1_TEXT_PREFIX}{db}:_global_summary"
+                    redis.set(gmeta_ddl_key, json.dumps(gmeta_vector), ex=ttl)
+                    redis.set(gmeta_text_key, global_summary_content, ex=ttl)
+                    redis.sadd(index_key, "_global_summary")
+                    stored += 1
+                    logger.info("[index] %s: _global_summary stored | tables=%d", db, total)
+                except Exception as e:
+                    logger.warning("[index] %s: failed to store _global_summary — %s", db, e)
+
+            if progress_cb is not None and stored > 0:
+                try:
+                    progress_cb(100.0, "Index complete", 0)
+                except Exception:
+                    pass
+
             if stored > 0:
                 now_iso = datetime.now(timezone.utc).isoformat()
                 try:
@@ -671,16 +714,17 @@ class SchemaManager:
                     except Exception:
                         redis_loc = "(unknown)"
                     size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written < 1024 * 1024 else f"{bytes_written / (1024 * 1024):.2f}MB"
-                    key_names = f"{SCHEMA_V1_DDL_PREFIX}{db}:*, {SCHEMA_V1_TEXT_PREFIX}{db}:*, {SCHEMA_V1_INDEX_PREFIX}{db}, schema:status:*"
+                    key_names = f"{SCHEMA_V1_DDL_PREFIX}{db}:*, {SCHEMA_V1_TEXT_PREFIX}{db}:* (incl. _global_summary), {SCHEMA_V1_INDEX_PREFIX}{db}, schema:status:*"
                     logger.info(
                         "[index] %s: complete — loaded to redis=%s keyed by %s | "
                         "tables=%d size=%s last_indexed_at=%s",
                         db, redis_loc, key_names, stored, size_str, now_iso,
                     )
                     approx_kb = len(str(tables_ddl)) / 1024
+                    gmeta_note = " (incl. _global_summary)" if redis.exists(f"{SCHEMA_V1_DDL_PREFIX}{db}:_global_summary") else ""
                     track_passed(
                         f"Schema Indexing: {db}",
-                        f"Index completed and loaded to Redis keyed by schema:v1:*:{db}. Size approx {approx_kb:.2f} KB",
+                        f"Index completed and loaded to Redis keyed by schema:v1:*:{db}. Size approx {approx_kb:.2f} KB{gmeta_note}",
                     )
                 except Exception as e:
                     logger.warning("[index] %s: failed to write status keys — %s", db, e)
@@ -763,3 +807,32 @@ class SchemaManager:
 
         scored.sort(key=lambda x: -x[0])
         return [ddl for _, ddl in scored[:limit]]
+
+    def get_table_names_from_index(
+        self,
+        schema_name: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Get the list of table names from the semantic index (Redis).
+        Does not hit the database. Excludes internal docs (_global_summary, _global_summary).
+
+        Returns empty list if not indexed or Redis unavailable.
+        """
+        db = schema_name or (self._config.database if self._config else None)
+        if not db:
+            return []
+
+        redis = self._get_redis()
+        if redis is None:
+            return []
+
+        index_key = f"{SCHEMA_V1_INDEX_PREFIX}{db}"
+        try:
+            raw_names = list(redis.smembers(index_key)) or []
+            table_names = [
+                t.decode("utf-8") if isinstance(t, bytes) else t for t in raw_names
+            ]
+            # Exclude internal summary/metadata documents
+            return sorted(t for t in table_names if t not in ("_global_summary", "_global_summary"))
+        except Exception:
+            return []

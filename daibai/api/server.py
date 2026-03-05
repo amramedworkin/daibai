@@ -122,9 +122,10 @@ def get_store(request: Request) -> CosmosConversationStore:
 
 
 def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
-    """Convert DataFrame to list of dicts with Timestamp/datetime/numpy types made JSON-serializable."""
+    """Convert DataFrame to list of dicts with Timestamp/datetime/numpy/Decimal made JSON-serializable."""
     import pandas as pd
     from datetime import datetime, date
+    from decimal import Decimal
     records = df.to_dict(orient="records")
     out = []
     for row in records:
@@ -134,6 +135,8 @@ def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
                 new_row[k] = None
             elif isinstance(v, (pd.Timestamp, datetime, date)):
                 new_row[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
+            elif isinstance(v, Decimal):
+                new_row[k] = float(v)
             elif hasattr(v, "item"):  # numpy scalar (int64, float64, etc.)
                 new_row[k] = v.item()
             elif isinstance(v, (bytes, bytearray)):
@@ -1004,6 +1007,42 @@ async def query(
     }
 
     try:
+        # Meta-table query: answer table count/list from Redis (no DB hit)
+        if _is_meta_table_query(request.query):
+            db_id = "chinook_playground" if request.is_playground else agent._current_db
+            if db_id:
+                redis_key = _normalize_db_id_for_redis(db_id)
+                status = _get_schema_index_status(redis_key)
+                if status.get("is_indexed"):
+                    sm = _get_schema_manager_for_meta(agent, redis_key)
+                    if sm:
+                        try:
+                            table_names = sm.get_table_names_from_index(schema_name=redis_key)
+                            if table_names is not None:
+                                n = len(table_names)
+                                if n == 0:
+                                    msg = f"There are no tables in the {db_id} database."
+                                else:
+                                    list_str = ", ".join(table_names) if n <= 20 else ", ".join(table_names[:20]) + f" ... and {n - 20} more"
+                                    msg = f"There are {n} table{'s' if n != 1 else ''} in the {db_id} database: {list_str}."
+                                assistant_msg = {
+                                    "role": "assistant",
+                                    "content": msg,
+                                    "sql": None,
+                                    "timestamp": datetime.now().isoformat(),
+                                }
+                                await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                                track_passed("Chat request", "meta-table query (direct from Redis)")
+                                return QueryResponse(
+                                    sql=None,
+                                    explanation=msg,
+                                    results=None,
+                                    row_count=None,
+                                    conversation_id=conv_id,
+                                )
+                        except Exception as e:
+                            logger.warning("[meta] table list from Redis failed — %s", e)
+
         # Index interrogation: answer schema-status questions directly
         if _is_index_interrogation_query(request.query):
             db_id = "chinook_playground" if request.is_playground else get_agent()._current_db
@@ -1318,6 +1357,44 @@ def _is_index_interrogation_query(query: str) -> bool:
         "when were you indexed",
         "last indexed",
         "indexed when",
+    ]
+    return any(p in q for p in patterns)
+
+
+def _get_schema_manager_for_meta(agent: DaiBaiAgent, redis_key: str):
+    """Get SchemaManager for reading table list from Redis. Handles playground (not in config)."""
+    if redis_key == "playground":
+        try:
+            from ..core.cache import CacheManager
+            cache = CacheManager()
+            if cache._get_client():
+                from ..core.schema import SchemaManager
+                return SchemaManager(config=None, cache_manager=cache)
+        except Exception:
+            pass
+        return None
+    try:
+        return agent._get_schema_manager(redis_key)
+    except (ValueError, KeyError):
+        return None
+
+
+def _is_meta_table_query(query: str) -> bool:
+    """True if the user is asking for table count or table listing (answered from Redis, no DB hit)."""
+    q = query.strip().lower()
+    patterns = [
+        "how many tables",
+        "how many table",
+        "list tables",
+        "list table",
+        "show tables",
+        "show table",
+        "what tables",
+        "which tables",
+        "table count",
+        "number of tables",
+        "tables in this database",
+        "tables in the database",
     ]
     return any(p in q for p in patterns)
 
@@ -1672,6 +1749,43 @@ async def websocket_chat(websocket: WebSocket):
             await _send_debug("4. Sent ack to client")
 
             try:
+                # ── Meta-table query: answer table count/list from Redis (no DB hit) ──
+                if _is_meta_table_query(query):
+                    await _send_debug("5. Meta-table query detected — checking Redis")
+                    db_id = "chinook_playground" if is_playground else agent._current_db
+                    if db_id:
+                        redis_key = _normalize_db_id_for_redis(db_id)
+                        status = _get_schema_index_status(redis_key)
+                        if status.get("is_indexed"):
+                            sm = _get_schema_manager_for_meta(agent, redis_key)
+                            if sm:
+                                try:
+                                    table_names = sm.get_table_names_from_index(schema_name=redis_key)
+                                    if table_names is not None:
+                                        n = len(table_names)
+                                        if n == 0:
+                                            msg = f"There are no tables in the {db_id} database."
+                                        else:
+                                            list_str = ", ".join(table_names) if n <= 20 else ", ".join(table_names[:20]) + f" ... and {n - 20} more"
+                                            msg = f"There are {n} table{'s' if n != 1 else ''} in the {db_id} database: {list_str}."
+                                        await websocket.send_json({
+                                            "type": "message",
+                                            "content": msg,
+                                            "conversation_id": conv_id,
+                                        })
+                                        assistant_msg = {
+                                            "role": "assistant",
+                                            "content": msg,
+                                            "sql": None,
+                                            "results": None,
+                                            "timestamp": datetime.now().isoformat(),
+                                        }
+                                        await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                                        await websocket.send_json({"type": "done", "conversation_id": conv_id})
+                                        continue
+                                except Exception as e:
+                                    logger.warning("[meta] WS table list from Redis failed — %s", e)
+
                 # ── Index interrogation: answer schema-status questions directly ──
                 if _is_index_interrogation_query(query):
                     await _send_debug("5. Index interrogation detected — answering directly")
