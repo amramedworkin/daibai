@@ -856,6 +856,116 @@ body {
     min-height: 0;
 }
 
+/* ── Trace Card (Execution Trace in Inspector) ───────────────────────────────── */
+
+.trace-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+
+.trace-card:last-child {
+    margin-bottom: 0;
+}
+
+.trace-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    min-height: 40px;
+}
+
+.trace-header:hover {
+    background: var(--bg-hover);
+}
+
+.trace-header .trace-status-icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+}
+
+.trace-header .trace-status-icon.success {
+    color: var(--success);
+}
+
+.trace-header .trace-status-icon.error {
+    color: var(--error);
+}
+
+.trace-header .trace-status-icon.running {
+    animation: trace-spinner 0.8s linear infinite;
+}
+
+@keyframes trace-spinner {
+    to { transform: rotate(360deg); }
+}
+
+.trace-action-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.trace-tech-label {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.trace-time-metrics {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+.trace-payloads {
+    border-top: 1px solid var(--border);
+}
+
+.trace-payloads details {
+    border: none;
+}
+
+.trace-payloads summary {
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    background: var(--bg-secondary);
+}
+
+.trace-payloads summary:hover {
+    background: var(--bg-hover);
+}
+
+.trace-payload-content {
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* Layout toggles (top nav) */
 .layout-toggles-group {
     display: flex;

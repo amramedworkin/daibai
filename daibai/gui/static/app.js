@@ -1200,8 +1200,115 @@ class DaiBaiApp {
         this.layoutToggleLeftCenter = document.getElementById('layoutToggleLeftCenter');
         this.layoutToggleCenterOnly = document.getElementById('layoutToggleCenterOnly');
         this.layoutToggleCenterRight = document.getElementById('layoutToggleCenterRight');
+        this.executionTraceLog = document.getElementById('executionTraceLog');
     }
     
+    _traceStepCounter = 0;
+
+    /**
+     * Render a trace step to #executionTraceLog.
+     * @param {Object} traceData - { step_name, status, tech?, duration_ms?, input?, output?, step_id? }
+     */
+    renderTraceStep(traceData) {
+        const log = this.executionTraceLog;
+        if (!log) return;
+
+        const stepName = traceData.step_name || 'Step';
+        const status = traceData.status || 'running';
+        const tech = traceData.tech || '';
+        const durationMs = traceData.duration_ms;
+        const stepId = traceData.step_id || `trace-${stepName.replace(/\s+/g, '-')}-${++this._traceStepCounter}`;
+
+        if (status === 'running') {
+            const card = document.createElement('div');
+            card.className = 'trace-card';
+            card.id = stepId;
+            card.dataset.stepId = stepId;
+            card.dataset.stepName = stepName;
+            card.innerHTML = `
+                <div class="trace-header">
+                    <span class="trace-status-icon running" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="12"/></svg>
+                    </span>
+                    <span class="trace-action-name">${this.escapeHtml(stepName)}</span>
+                    ${tech ? `<span class="trace-tech-label">${this.escapeHtml(tech)}</span>` : ''}
+                </div>
+            `;
+            log.appendChild(card);
+        } else {
+            let card = document.getElementById(stepId);
+            if (!card) {
+                const cards = [...log.querySelectorAll('.trace-card')].reverse();
+                card = cards.find(c => c.dataset.stepName === stepName && c.querySelector('.trace-status-icon.running')) || null;
+            }
+            if (!card) {
+                // No prior running card — create a completed card from scratch
+                const newCard = document.createElement('div');
+                newCard.className = 'trace-card';
+                newCard.id = stepId;
+                const statusIcon = status === 'success'
+                    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>'
+                    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+                const payloads = this._buildTracePayloadsHtml(traceData.input, traceData.output);
+                newCard.innerHTML = `
+                    <div class="trace-header">
+                        <span class="trace-status-icon ${status}">${statusIcon}</span>
+                        <span class="trace-action-name">${this.escapeHtml(stepName)}</span>
+                        ${tech ? `<span class="trace-tech-label">${this.escapeHtml(tech)}</span>` : ''}
+                        ${durationMs != null ? `<span class="trace-time-metrics">${durationMs}ms</span>` : ''}
+                    </div>
+                    ${payloads}
+                `;
+                log.appendChild(newCard);
+            } else {
+                const statusIcon = status === 'success'
+                    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>'
+                    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+                const iconEl = card.querySelector('.trace-status-icon');
+                if (iconEl) {
+                    iconEl.className = `trace-status-icon ${status}`;
+                    iconEl.innerHTML = statusIcon;
+                }
+                const header = card.querySelector('.trace-header');
+                if (header) {
+                    if (durationMs != null) {
+                        let timeEl = header.querySelector('.trace-time-metrics');
+                        if (!timeEl) {
+                            timeEl = document.createElement('span');
+                            timeEl.className = 'trace-time-metrics';
+                            header.appendChild(timeEl);
+                        }
+                        timeEl.textContent = `${durationMs}ms`;
+                    }
+                }
+                const payloads = this._buildTracePayloadsHtml(traceData.input, traceData.output);
+                if (payloads) {
+                    const existing = card.querySelector('.trace-payloads');
+                    if (existing) existing.remove();
+                    card.insertAdjacentHTML('beforeend', payloads);
+                }
+            }
+        }
+
+        log.scrollTop = log.scrollHeight;
+    }
+
+    _buildTracePayloadsHtml(input, output) {
+        const hasInput = input !== undefined && input !== null && input !== '';
+        const hasOutput = output !== undefined && output !== null && output !== '';
+        if (!hasInput && !hasOutput) return '';
+        const format = (v) => typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+        let html = '<div class="trace-payloads">';
+        if (hasInput) {
+            html += `<details><summary>Input</summary><div class="trace-payload-content">${this.escapeHtml(format(input))}</div></details>`;
+        }
+        if (hasOutput) {
+            html += `<details><summary>Output</summary><div class="trace-payload-content">${this.escapeHtml(format(output))}</div></details>`;
+        }
+        html += '</div>';
+        return html;
+    }
+
     /**
      * Update layout mode: toggle .collapsed on #sidebar and #inspectorPane.
      * @param {string} mode - 'sidebar-main' | 'main-only' | 'main-inspector'
@@ -1690,6 +1797,10 @@ class DaiBaiApp {
                 }
                 break;
 
+            case 'trace':
+                if (data.content) this.renderTraceStep(data.content);
+                break;
+
             case 'done':
                 // Safety net: remove any lingering indicator (e.g. execute=false path).
                 this.removeLoadingIndicator();
@@ -1743,9 +1854,13 @@ class DaiBaiApp {
         const query = this.promptInput.value.trim();
         if (!query || this.isLoading) return;
 
-        // Mirror prompt to Inspector Panel
+        // Mirror prompt to Inspector Panel and clear previous trace
         const mirroredEl = document.getElementById('mirroredPromptTextarea');
         if (mirroredEl) mirroredEl.value = query;
+        if (this.executionTraceLog) {
+            this.executionTraceLog.innerHTML = '';
+            this._traceStepCounter = 0;
+        }
 
         this._ignoreWebSocketMessages = false;
         this._pendingQuery = query;
