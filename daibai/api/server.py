@@ -2075,7 +2075,14 @@ async def index():
     """Serve the main GUI."""
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
-        return FileResponse(index_path)
+        return FileResponse(
+            index_path,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
     return HTMLResponse("<h1>DaiBai GUI</h1><p>Static files not found.</p>")
 
 

@@ -173,6 +173,7 @@ Commands by Category:
     test             Run unit test suite       |  test-db          Test DB validation
     test-cosmos      Test Cosmos DB E2E        |  test-redis       Test Redis integration
     test-guardrails  Test SQL guardrails       |  test-cache-connection Test CacheManager
+    test-suite       Full test run: venv + pip install -e . + pytest + deactivate
 
 EOF
 }
@@ -1361,6 +1362,24 @@ run_pytest() {
     "$py" -m pytest "$@"
 }
 
+cmd_test_suite() {
+    # Full test execution: create venv, install deps, run pytest, deactivate
+    cd "$PROJECT_DIR" || return 1
+    print_header "Test Suite (venv + pip install -e . + pytest)"
+    if [[ ! -d .venv ]]; then
+        print_info "Creating .venv..."
+        python3 -m venv .venv
+    fi
+    print_info "Installing package (pip install -e .)..."
+    .venv/bin/pip install -e . -q
+    print_info "Running pytest..."
+    .venv/bin/python -m pytest "$@"
+    local rc=$?
+    # deactivate not needed when using explicit .venv/bin paths;
+    # script exits and shell is discarded
+    return $rc
+}
+
 cmd_test() {
     local sub="${1:-run}"
     shift || true
@@ -1733,6 +1752,7 @@ _CLI_WILDCARD_CMDS=(
     "env-clean:Clean .env duplicates"
     "env-preferences:Show user preferences"
     "test:Run unit test suite"
+    "test-suite:Full test run (venv + pip install -e . + pytest)"
     "test-db:Test DB validation"
     "test-cosmos:Test Cosmos DB E2E"
     "test-redis:Test Redis integration"
@@ -1933,6 +1953,9 @@ main() {
             ;;
         test-guardrails)
             cmd_test_guardrails
+            ;;
+        test-suite)
+            cmd_test_suite "$@"
             ;;
         cache-stats)
             cmd_cache_stats

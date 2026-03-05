@@ -300,46 +300,51 @@ class SQLValidator:
         query: str,
         allowed_tables: Optional[Set[str]] = None,
         current_db: Optional[str] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ) -> None:
         """
         Validate SQL. Raises SecurityViolation if invalid.
 
         Args:
             query: SQL string to validate.
-            allowed_tables: If provided, only these tables may be referenced.
-                           If None, scope check is skipped (permissive).
+            allowed_tables: If provided (and strict_scope=True), only these tables may be referenced.
             current_db: Active database name. Required when querying information_schema
                         (filtered to this database). Enables metadata questions.
+            strict_scope: If True, enforce allowed_tables. If False (permissive), scope check skipped.
+            execution_mode: "read_only" (default) or "god_mode". God-mode bypasses DML/DDL and injection checks.
         """
         if not query or not query.strip():
             raise SecurityViolation("Empty query", "lexical")
 
-        # Layer 3: Injection shield - block multi-statement
-        # Use sqlparse.split to avoid splitting on ; inside string literals
         statements = [s.strip() for s in sqlparse.split(query) if s.strip()]
-        if len(statements) > 1:
-            raise SecurityViolation(
-                f"Multi-statement queries are blocked (found {len(statements)} statements)",
-                "injection",
-            )
+        if execution_mode != "god_mode":
+            # Layer 3: Injection shield - block multi-statement
+            if len(statements) > 1:
+                raise SecurityViolation(
+                    f"Multi-statement queries are blocked (found {len(statements)} statements)",
+                    "injection",
+                )
 
-        sql = statements[0]
+        sql = statements[0] if statements else query.strip()
+
         parsed_list = sqlparse.parse(sql)
         if not parsed_list:
             raise SecurityViolation("Invalid or empty SQL", "lexical")
 
         parsed = parsed_list[0]
 
-        # Layer 1: Lexical block - forbidden keywords (excluding string literals)
-        keywords = _get_statement_keywords_outside_strings(parsed)
-        for kw in keywords:
-            if kw in self._blocked:
-                raise SecurityViolation(
-                    f"Forbidden keyword: {kw}",
-                    "lexical",
-                )
+        if execution_mode != "god_mode":
+            # Layer 1: Lexical block - forbidden keywords (excluding string literals)
+            keywords = _get_statement_keywords_outside_strings(parsed)
+            for kw in keywords:
+                if kw in self._blocked:
+                    raise SecurityViolation(
+                        f"Forbidden keyword: {kw}",
+                        "lexical",
+                    )
 
-        # Layer 1b: Blocked functions (DoS, info disclosure)
+        # Layer 1b: Blocked functions (DoS, info disclosure) — always active
         funcs = _extract_functions_from_parsed(parsed) | _extract_functions_from_query(sql)
         blocked = funcs & _BLOCKED_FUNCTIONS
         if blocked:
@@ -348,12 +353,13 @@ class SQLValidator:
                 "lexical",
             )
 
-        # Layer 1c: Tautology detection (OR 1=1 injection)
-        if _detect_tautology(sql):
-            raise SecurityViolation(
-                "Tautology (OR 1=1 pattern) detected. Query blocked.",
-                "lexical",
-            )
+        if execution_mode != "god_mode":
+            # Layer 1c: Tautology detection (OR 1=1 injection)
+            if _detect_tautology(sql):
+                raise SecurityViolation(
+                    "Tautology (OR 1=1 pattern) detected. Query blocked.",
+                    "lexical",
+                )
 
         # Layer 2: Scope check and system schema probing
         refs = _extract_tables_from_parsed(parsed)
@@ -411,7 +417,7 @@ class SQLValidator:
                     "scope",
                 )
 
-        if allowed_tables is not None:
+        if strict_scope and allowed_tables is not None:
             allowed_normalized = {_normalize_identifier(t) for t in allowed_tables}
             out_of_scope = refs_to_check - allowed_normalized
             if out_of_scope:
@@ -443,12 +449,20 @@ class SQLValidator:
         query: str,
         allowed_tables: Optional[Set[str]] = None,
         current_db: Optional[str] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ):
         """
         Validate query, then execute. Returns execute_fn(query) if valid.
         Raises SecurityViolation if validation fails.
         """
-        self.validate(query, allowed_tables=allowed_tables, current_db=current_db)
+        self.validate(
+            query,
+            allowed_tables=allowed_tables,
+            current_db=current_db,
+            strict_scope=strict_scope,
+            execution_mode=execution_mode,
+        )
         return execute_fn(query)
 
 
@@ -533,11 +547,14 @@ class GuardrailPipeline:
             return query
 
     @classmethod
-    def validate_prompt(cls, user_prompt: str) -> bool:
+    def validate_prompt(cls, user_prompt: str, execution_mode: str = "read_only") -> bool:
         """
         Stage 1: Pre-LLM input sanitization.
         Blocks suspicious SQL syntax in natural language (in-band injection).
+        God-mode bypasses this check; trusted users may put explicit DML/DDL in prompts.
         """
+        if execution_mode == "god_mode":
+            return True
         if not user_prompt or not user_prompt.strip():
             return True
         for pattern in SUSPICIOUS_PROMPT_PATTERNS:
@@ -553,9 +570,17 @@ class GuardrailPipeline:
         query: str,
         allowed_tables: Optional[Set[str]] = None,
         current_db: Optional[str] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ) -> None:
         """
         Stage 2: Post-LLM SQL validation.
         Delegates to SQLValidator (lexical, function, tautology, scope).
         """
-        self._validator.validate(query, allowed_tables=allowed_tables, current_db=current_db)
+        self._validator.validate(
+            query,
+            allowed_tables=allowed_tables,
+            current_db=current_db,
+            strict_scope=strict_scope,
+            execution_mode=execution_mode,
+        )

@@ -23,7 +23,7 @@ These requests are not necessarily destructive but can easily crash database ser
 
 * **Time-Based & Computational DoS Attacks:** Functions specifically designed to tie up server resources (e.g., benchmark(), pg\_sleep(), waitfor) are universally blocked.  
 * **Unbounded Cartesian Products:** Queries attempting to join massive tables without ON clauses or lacking a LIMIT/TOP boundary. Currently, the guardrails will flag queries attempting to return unbounded rows, requiring users to explicitly define constraints (e.g., "Show me the *top 100* users...").  
-* **Out-of-Scope Schema Access:** If the Semantic Pruner only grants the LLM access to the sales and products tables, any attempt by the LLM to query the hr\_salaries table—even if it exists in the database—will be blocked as a context violation.
+* **Out-of-Scope Schema Access (Now Permissive):** Previously a hard block, the allowed_tables check now acts primarily as a performance optimization for context window pruning rather than a strict security barrier. If a user asks for a table that was pruned from the semantic context, the system will attempt to execute it (or run a multi-pass retrieval) rather than blocking the user. Strict scope isolation can still be enabled via the `strict_scope` flag for restricted environments.
 
 ### **🔍 3\. Questionable Operations (Increased Scrutiny)**
 
@@ -35,6 +35,10 @@ These operations sit in a gray area. They might be the result of a poorly phrase
 
 ---
 
-🚀 **Future Roadmap: "God-Mode"**
+🚀 **Advanced Execution Modes**
 
-*In a future revision, we will introduce a configurable "God-Mode" (Strictly gated by RBAC and explicit environment variables). This will allow system administrators to bypass the read-only guardrails for specific, authenticated sessions to perform automated database migrations and mass-updates via natural language.*
+### **⚡ God-Mode (Implemented)**
+"God-Mode" is an elevated execution state that overrides the read-only guardrails. When an authenticated session is granted `god_mode`, the AST validator explicitly bypasses the `_BLOCKED_KEYWORDS` (DML/DDL) and prompt-injection sanitizers. This allows trusted users and system administrators to perform automated database migrations, table creation, and mass data-updates via natural language, while still retaining base-level DoS protections (blocking `sleep()`, `benchmark()`).
+
+### **👑 God-Emperor Mode (Coming Soon)**
+While God-Mode grants full Data Manipulation and Data Definition capabilities over the active databases, **God-Emperor Mode** will elevate the agent to manage the database server itself. Slated for a future release, this mode will allow authorized users to prompt DaiBai to manage Database User Accounts, Server Authorizations, Role-Based Access Controls (RBAC), and cross-database permissions securely through natural language dialogue.

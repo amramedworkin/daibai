@@ -116,6 +116,12 @@ def mock_redis_v1():
         def smembers(self, name):
             return self._sets.get(name, set())
 
+        def exists(self, *keys):
+            return sum(1 for k in keys if k in self._storage or k in self._sets)
+
+        def expire(self, key, seconds):
+            pass
+
     return MockRedis()
 
 
@@ -345,8 +351,8 @@ def test_pruned_context_respects_schema_vector_limit():
 
 def test_scope_enforcement_blocks_out_of_scope_table():
     """
-    When pruned context allows only {sales}, and agent hallucinates a query
-    referencing {orders}, SecurityViolation is raised.
+    When strict_scope=True and pruned context allows only {sales}, and agent
+    hallucinates a query referencing {orders}, SecurityViolation is raised.
     """
     from daibai.core.guardrails import SQLValidator
 
@@ -355,6 +361,7 @@ def test_scope_enforcement_blocks_out_of_scope_table():
         v.validate(
             "SELECT * FROM sales UNION SELECT * FROM orders",
             allowed_tables={"sales"},
+            strict_scope=True,
         )
     assert "orders" in str(exc.value).lower() or "scope" in str(exc.value).lower()
 

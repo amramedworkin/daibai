@@ -42,7 +42,11 @@ def test_tdd_out_of_scope_block():
     """RED→GREEN: SELECT * FROM passwords must raise (passwords not in allowed_tables)."""
     v = SQLValidator()
     with pytest.raises(SecurityViolation) as exc:
-        v.validate("SELECT * FROM passwords", allowed_tables=ALLOWED_TABLES)
+        v.validate(
+            "SELECT * FROM passwords",
+            allowed_tables=ALLOWED_TABLES,
+            strict_scope=True,
+        )
     assert exc.value.layer == "scope"
     assert "passwords" in str(exc.value)
 
@@ -180,6 +184,7 @@ def test_scope_check_allowed_tables():
     v.validate(
         "SELECT * FROM sales_data WHERE amount > 0",
         allowed_tables={"sales_data"},
+        strict_scope=True,
     )
 
 
@@ -190,6 +195,7 @@ def test_scope_check_out_of_scope():
         v.validate(
             "SELECT * FROM secret_settings WHERE key = 'api_key'",
             allowed_tables={"sales_data"},
+            strict_scope=True,
         )
     assert exc.value.layer == "scope"
     assert "secret_settings" in str(exc.value)
@@ -202,6 +208,7 @@ def test_scope_check_multiple_tables():
         v.validate(
             "SELECT * FROM sales_data s JOIN orders o ON s.id = o.sale_id",
             allowed_tables={"sales_data"},
+            strict_scope=True,
         )
     assert exc.value.layer == "scope"
     assert "orders" in str(exc.value)
@@ -213,6 +220,7 @@ def test_scope_check_multiple_allowed():
     v.validate(
         "SELECT * FROM sales_data s JOIN orders o ON s.id = o.sale_id",
         allowed_tables={"sales_data", "orders"},
+        strict_scope=True,
     )
 
 
@@ -222,6 +230,7 @@ def test_scope_check_subquery():
     v.validate(
         "SELECT * FROM sales WHERE id IN (SELECT sale_id FROM orders)",
         allowed_tables={"sales", "orders"},
+        strict_scope=True,
     )
 
 
@@ -232,6 +241,7 @@ def test_scope_check_subquery_out_of_scope():
         v.validate(
             "SELECT * FROM sales WHERE id IN (SELECT id FROM secret_users)",
             allowed_tables={"sales"},
+            strict_scope=True,
         )
     assert exc.value.layer == "scope"
 
@@ -357,6 +367,7 @@ def test_union_scope_admin_blocked():
         v.validate(
             "SELECT name FROM sales UNION SELECT password FROM admin",
             allowed_tables={"sales"},
+            strict_scope=True,
         )
     assert "admin" in str(exc.value).lower() or "scope" in str(exc.value).lower()
 
@@ -367,6 +378,7 @@ def test_positive_valid_join():
     v.validate(
         "SELECT s.revenue, c.name FROM sales s JOIN clients c ON s.client_id = c.id LIMIT 10",
         allowed_tables={"sales", "clients"},
+        strict_scope=True,
     )
 
 
@@ -520,6 +532,53 @@ def test_scope_none_skips_check():
     v.validate("SELECT * FROM any_table")
 
 
+def test_permissive_scope_allows_out_of_scope():
+    """With strict_scope=False (default), out-of-scope tables are allowed (permissive model)."""
+    v = SQLValidator()
+    v.validate(
+        "SELECT * FROM passwords",
+        allowed_tables={"users", "orders"},
+        strict_scope=False,
+    )
+
+
+def test_god_mode_bypasses_dml_block():
+    """God-mode allows DML/DDL keywords (DELETE, DROP, etc)."""
+    v = SQLValidator()
+    v.validate("DELETE FROM users WHERE id = 1", execution_mode="god_mode")
+    v.validate("DROP TABLE IF EXISTS x", execution_mode="god_mode")
+
+
+def test_god_mode_bypasses_tautology():
+    """God-mode allows tautology patterns (administrators may use WHERE 1=1 for mass updates)."""
+    v = SQLValidator()
+    v.validate(
+        "UPDATE users SET active = 1 WHERE 1=1",
+        execution_mode="god_mode",
+    )
+
+
+def test_god_mode_bypasses_multi_statement():
+    """God-mode allows multi-statement queries."""
+    v = SQLValidator()
+    v.validate("SELECT 1; SELECT 2", execution_mode="god_mode")
+
+
+def test_god_mode_still_blocks_dos_functions():
+    """God-mode still blocks sleep/benchmark to prevent accidental DoS."""
+    v = SQLValidator()
+    with pytest.raises(SecurityViolation):
+        v.validate("SELECT sleep(10)", execution_mode="god_mode")
+    with pytest.raises(SecurityViolation):
+        v.validate("SELECT benchmark(1000000, 1)", execution_mode="god_mode")
+
+
+def test_god_mode_prompt_bypass():
+    """validate_prompt returns True immediately for god_mode (allows DML in natural language)."""
+    assert GuardrailPipeline.validate_prompt("DROP TABLE users", execution_mode="god_mode") is True
+    assert GuardrailPipeline.validate_prompt("Show me UNION SELECT password", execution_mode="god_mode") is True
+
+
 # ---------------------------------------------------------------------------
 # validate_and_execute
 # ---------------------------------------------------------------------------
@@ -538,6 +597,7 @@ def test_validate_and_execute_passes():
         exec_fn,
         "SELECT 1 FROM sales",
         allowed_tables={"sales"},
+        strict_scope=True,
     )
     assert result == "ok"
     assert len(calls) == 1
@@ -814,11 +874,19 @@ def test_scope_check_live():
         pytest.skip("No tables in database for scope test")
 
     allowed = {tables[0].lower()}
-    v.validate(f"SELECT * FROM `{tables[0]}` LIMIT 1", allowed_tables=allowed)
+    v.validate(
+        f"SELECT * FROM `{tables[0]}` LIMIT 1",
+        allowed_tables=allowed,
+        strict_scope=True,
+    )
 
     out_of_scope = "nonexistent_table_xyz_123"
     with pytest.raises(SecurityViolation) as exc:
-        v.validate(f"SELECT * FROM {out_of_scope}", allowed_tables=allowed)
+        v.validate(
+            f"SELECT * FROM {out_of_scope}",
+            allowed_tables=allowed,
+            strict_scope=True,
+        )
     assert exc.value.layer == "scope"
 
 
@@ -836,6 +904,7 @@ def test_scope_join_live(live_test_table):
         exec_fn,
         f"SELECT * FROM `{live_test_table}` LIMIT 1",
         allowed_tables={live_test_table},
+        strict_scope=True,
     )
     assert result is not None
 
@@ -844,6 +913,7 @@ def test_scope_join_live(live_test_table):
         v.validate(
             f"SELECT * FROM `{live_test_table}` t1 JOIN information_schema.tables t2 ON 1=1",
             allowed_tables={live_test_table},
+            strict_scope=True,
         )
     assert exc.value.layer == "scope"
 
@@ -999,10 +1069,18 @@ def test_scope_check_live():
         pytest.skip("No tables in database for scope test")
 
     allowed = {tables[0]}
-    v.validate(f"SELECT * FROM `{tables[0]}` LIMIT 1", allowed_tables=allowed)
+    v.validate(
+        f"SELECT * FROM `{tables[0]}` LIMIT 1",
+        allowed_tables=allowed,
+        strict_scope=True,
+    )
 
     # Query out-of-scope table must fail
     out_of_scope = "nonexistent_table_xyz_123"
     with pytest.raises(SecurityViolation) as exc:
-        v.validate(f"SELECT * FROM {out_of_scope}", allowed_tables=allowed)
+        v.validate(
+            f"SELECT * FROM {out_of_scope}",
+            allowed_tables=allowed,
+            strict_scope=True,
+        )
     assert exc.value.layer == "scope"

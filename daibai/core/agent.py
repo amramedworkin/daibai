@@ -112,9 +112,17 @@ class DatabaseRunner:
         self,
         sql: str,
         allowed_tables: Optional[Set[str]] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ) -> Optional[pd.DataFrame]:
         """Execute SQL and return results as DataFrame. Validates through SQLValidator first."""
-        self._validator.validate(sql, allowed_tables=allowed_tables, current_db=self.config.database)
+        self._validator.validate(
+            sql,
+            allowed_tables=allowed_tables,
+            current_db=self.config.database,
+            strict_scope=strict_scope,
+            execution_mode=execution_mode,
+        )
         self._ensure_connection()
 
         try:
@@ -137,10 +145,20 @@ class DatabaseRunner:
         self,
         sql: str,
         allowed_tables: Optional[Set[str]] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ) -> Optional[pd.DataFrame]:
         """Async SQL execution (runs sync in executor)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.run_sql(sql, allowed_tables))
+        return await loop.run_in_executor(
+            None,
+            lambda: self.run_sql(
+                sql,
+                allowed_tables=allowed_tables,
+                strict_scope=strict_scope,
+                execution_mode=execution_mode,
+            ),
+        )
     
     def close(self):
         """Close database connection."""
@@ -423,6 +441,8 @@ class DaiBaiAgent:
         sql: str,
         db_name: Optional[str] = None,
         allowed_tables: Optional[Set[str]] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ) -> Optional[pd.DataFrame]:
         """Execute SQL and return results. Validates through SQLValidator first.
         
@@ -433,7 +453,12 @@ class DaiBaiAgent:
         scope = allowed_tables if allowed_tables is not None else self._last_allowed_tables
         runner = self._get_runner(db_name)
         try:
-            result = runner.run_sql(sql, allowed_tables=scope)
+            result = runner.run_sql(
+                sql,
+                allowed_tables=scope,
+                strict_scope=strict_scope,
+                execution_mode=execution_mode,
+            )
             self._record_pruning_metrics(sql, scope)
             return result
         except SecurityViolation as e:
@@ -446,6 +471,8 @@ class DaiBaiAgent:
         sql: str,
         db_name: Optional[str] = None,
         allowed_tables: Optional[Set[str]] = None,
+        strict_scope: bool = False,
+        execution_mode: str = "read_only",
     ) -> Optional[pd.DataFrame]:
         """Execute SQL asynchronously. Validates through SQLValidator first.
         
@@ -455,7 +482,12 @@ class DaiBaiAgent:
         scope = allowed_tables if allowed_tables is not None else self._last_allowed_tables
         runner = self._get_runner(db_name)
         try:
-            result = await runner.run_sql_async(sql, allowed_tables=scope)
+            result = await runner.run_sql_async(
+                sql,
+                allowed_tables=scope,
+                strict_scope=strict_scope,
+                execution_mode=execution_mode,
+            )
             self._record_pruning_metrics(sql, scope)
             return result
         except SecurityViolation as e:
@@ -609,6 +641,7 @@ class DaiBaiAgent:
         prompt: str,
         mode: str = "sql",
         force_tables: Optional[Set[str]] = None,
+        execution_mode: str = "read_only",
     ) -> str:
         """Generate SQL from natural language.
         
@@ -623,7 +656,7 @@ class DaiBaiAgent:
         Returns:
             Generated SQL string
         """
-        GuardrailPipeline.validate_prompt(prompt)
+        GuardrailPipeline.validate_prompt(prompt, execution_mode=execution_mode)
         sanitized = GuardrailPipeline.sanitize_query_sync(prompt, self.generate)
         self._last_sanitized_query = sanitized
         mode_prompts = {
@@ -688,12 +721,13 @@ Return the SQL in a ```sql code block. Do not execute it."""
         mode: str = "sql",
         history: Optional[List[Dict[str, Any]]] = None,
         force_tables: Optional[Set[str]] = None,
+        execution_mode: str = "read_only",
     ) -> str:
         """Generate SQL asynchronously. Optionally pass conversation history for context.
         
         Uses semantic schema pruning when Redis + embeddings are available.
         """
-        GuardrailPipeline.validate_prompt(prompt)
+        GuardrailPipeline.validate_prompt(prompt, execution_mode=execution_mode)
         sanitized = await GuardrailPipeline.sanitize_query(prompt, self.generate_async)
         self._last_sanitized_query = sanitized
         mode_prompts = {

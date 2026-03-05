@@ -46,7 +46,13 @@ def client(in_memory_store):
     def _get_store_override(request: Request):
         return in_memory_store
 
+    async def _get_user_override():
+        return {"uid": "test-uid", "email": "test@example.com", "claims": {}}
+
+    from daibai.api.auth import get_current_user
+
     app.dependency_overrides[get_store] = _get_store_override
+    app.dependency_overrides[get_current_user] = _get_user_override
 
     with TestClient(app) as c:
         yield c

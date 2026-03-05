@@ -47,7 +47,10 @@ def test_cache_manager_ping_loads_connection_from_env(mock_from_url):
         result = manager.ping()
 
     assert result is True
-    mock_from_url.assert_called_once_with("redis://localhost:6379", decode_responses=True)
+    mock_from_url.assert_called_once()
+    call_kw = mock_from_url.call_args[1]
+    assert call_kw.get("decode_responses") is True
+    assert mock_from_url.call_args[0][0] == "redis://localhost:6379"
     mock_client.ping.assert_called_once()
 
 
