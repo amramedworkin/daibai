@@ -5,6 +5,7 @@ This is a minimal base for type hints only - each provider has its own
 full implementation without forced abstraction.
 """
 
+import asyncio
 import json
 import uuid
 from abc import ABC, abstractmethod
@@ -145,6 +146,7 @@ class LLMResponse:
     tokens_used: Optional[int] = None
     model: Optional[str] = None
     raw_response: Optional[Any] = None
+    from_cache: bool = False
 
 
 class BaseLLMProvider(ABC):
@@ -205,7 +207,7 @@ class CachedLLMProvider(BaseLLMProvider):
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         cached = self._cache.get_cached_response(prompt)
         if cached is not None:
-            return LLMResponse(text=cached, model=self._provider.model_name)
+            return LLMResponse(text=cached, model=self._provider.model_name, from_cache=True)
         response = self._provider.generate(prompt, context)
         self._cache.set_cached_response(prompt, response.text)
         return response
@@ -213,7 +215,18 @@ class CachedLLMProvider(BaseLLMProvider):
     async def generate_async(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         cached = self._cache.get_cached_response(prompt)
         if cached is not None:
-            return LLMResponse(text=cached, model=self._provider.model_name)
+            cb = (context or {}).get("_trace_callback")
+            if cb and asyncio.iscoroutinefunction(cb):
+                await cb(
+                    step_name="Cache Hit (Redis)",
+                    status="success",
+                    tech="Redis",
+                    duration_ms=0,
+                    input_data={"prompt_preview": (prompt[:150] + "…") if len(prompt) > 150 else prompt},
+                    output_data={"cached_sql_preview": (cached[:150] + "…") if len(cached) > 150 else cached},
+                    step_id="redis-cache-hit",
+                )
+            return LLMResponse(text=cached, model=self._provider.model_name, from_cache=True)
         response = await self._provider.generate_async(prompt, context)
         self._cache.set_cached_response(prompt, response.text)
         return response

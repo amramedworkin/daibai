@@ -820,6 +820,8 @@ Return the SQL in a ```sql code block. Do not execute it."""
         }
         if history:
             context["messages"] = [{"role": m.get("role"), "content": m.get("content", "")} for m in history]
+        if trace_callback:
+            context["_trace_callback"] = trace_callback
 
         llm_tech = self._current_llm or "LLM"
         if trace_callback:

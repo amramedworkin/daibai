@@ -69,6 +69,8 @@ flowchart TB
 
 **Why duplicate steps?** When semantic pruning excludes tables that the query actually needs, the system detects "missing tables" in the generated SQL and runs a **recovery pass**. It re-runs Query Sanitization → Semantic Pruning → SQL Generation with the missing tables forced into the schema. The recovery pass uses step IDs suffixed with `-recovery` so each trace card is uniquely identifiable.
 
+**Redis cache short-circuit:** When a similar prior request is found in the semantic cache (Redis), a **Cache Hit (Redis)** trace card appears. The SQL Generation step is skipped (no LLM call); the cached SQL is returned instead. This card shows a preview of the prompt and cached result.
+
 ---
 
 ## 2.1 Prompt Inspector — Named Component UX Structure (Mermaid)
