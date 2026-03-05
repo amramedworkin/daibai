@@ -63,6 +63,18 @@
             </div>
             
             <div class="nav-right">
+                <!-- Layout toggles: Left+Center | Center Only | Center+Right -->
+                <div class="layout-toggles-group" id="layoutToggles" role="group" aria-label="Layout">
+                    <button type="button" class="layout-toggle-btn" id="layoutToggleLeftCenter" title="Sidebar + Chat">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="6" height="18" rx="1"/><rect x="10" y="3" width="12" height="18" rx="1"/></svg>
+                    </button>
+                    <button type="button" class="layout-toggle-btn" id="layoutToggleCenterOnly" title="Chat only">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                    </button>
+                    <button type="button" class="layout-toggle-btn" id="layoutToggleCenterRight" title="Chat + Inspector">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="12" height="18" rx="1"/><rect x="16" y="3" width="6" height="18" rx="1"/></svg>
+                    </button>
+                </div>
                 <!-- Profile menu — always visible; dropdown adapts to auth state -->
                 <div class="user-identity" id="userIdentity">
                     <span class="user-display-name" id="userDisplayName" style="display:none"></span>
@@ -293,6 +305,17 @@
                     </div>
                 </div>
             </main>
+
+            <!-- Inspector Pane (right column) -->
+            <aside class="inspector-pane" id="inspectorPane">
+                <div class="prompt-inspector">
+                    <h3>Prompt Inspector</h3>
+                    <textarea id="mirroredPromptTextarea" readonly rows="4" placeholder="Your query will appear here when you send…"></textarea>
+                </div>
+                <div class="execution-trace-log" id="executionTraceLog">
+                    <!-- Trace cards appended by JS -->
+                </div>
+            </aside>
         </div>
 
         <!-- Settings Modal -->

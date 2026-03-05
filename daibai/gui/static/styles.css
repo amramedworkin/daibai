@@ -28,6 +28,8 @@
     
     /* Spacing */
     --sidebar-width: 260px;
+    --inspector-width: 25vw;
+    --inspector-min-width: 320px;
     --topnav-height: 56px;
     
     /* Typography */
@@ -582,7 +584,7 @@ body {
     color: var(--text-primary);
 }
 
-/* Main Container */
+/* Main Container — 3-column: sidebar | chat-area | inspector-pane */
 .main-container {
     display: flex;
     flex: 1;
@@ -783,9 +785,108 @@ body {
 /* Chat Area */
 .chat-area {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+/* Inspector Pane (right column) */
+.inspector-pane {
+    --inspector-w: var(--inspector-width);
+    width: var(--inspector-w);
+    min-width: var(--inspector-min-width);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border);
+    overflow: hidden;
+    transition: transform var(--transition-normal), width var(--transition-normal), min-width var(--transition-normal);
+}
+
+.inspector-pane.collapsed {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    border-left: none;
+}
+
+.prompt-inspector {
+    flex: 0 0 25%;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.prompt-inspector h3 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+}
+
+.prompt-inspector textarea {
+    flex: 1;
+    min-height: 60px;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    resize: none;
+}
+
+.prompt-inspector textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.execution-trace-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    min-height: 0;
+}
+
+/* Layout toggles (top nav) */
+.layout-toggles-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 12px;
+}
+
+.layout-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.layout-toggle-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.layout-toggle-btn.active {
+    background: var(--accent-light);
+    color: var(--accent);
 }
 
 .messages-container {
