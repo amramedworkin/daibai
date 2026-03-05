@@ -1723,6 +1723,36 @@ async def websocket_chat(websocket: WebSocket):
                 if verbose:
                     await websocket.send_json({"type": "debug", "content": msg, "conversation_id": conv_id})
 
+            async def emit_trace(
+                step_name: str,
+                status: str,
+                tech: str = "",
+                duration_ms: Optional[float] = None,
+                input_data: Any = None,
+                output_data: Any = None,
+                step_id: Optional[str] = None,
+            ) -> None:
+                """Send a trace payload to the client for Inspector Panel display."""
+                payload = {
+                    "type": "trace",
+                    "content": {
+                        "step_name": step_name,
+                        "status": status,
+                        "tech": tech,
+                        "step_id": step_id or step_name.lower().replace(" ", "-"),
+                    },
+                }
+                if duration_ms is not None:
+                    payload["content"]["duration_ms"] = int(round(duration_ms))
+                if input_data is not None:
+                    payload["content"]["input"] = input_data
+                if output_data is not None:
+                    payload["content"]["output"] = output_data
+                try:
+                    await websocket.send_json(payload)
+                except Exception as e:
+                    logger.debug("[trace] emit failed: %s", e)
+
             req_context: Dict[str, Any] = {
                 **log_context,
                 "conversation_id":   conv_id,
@@ -1910,7 +1940,9 @@ async def websocket_chat(websocket: WebSocket):
                     llm_start = time.perf_counter()
                     try:
                         sql = await asyncio.wait_for(
-                            agent.generate_sql_async(query, "sql", history=history),
+                            agent.generate_sql_async(
+                                query, "sql", history=history, trace_callback=emit_trace
+                            ),
                             timeout=_PLAYGROUND_LLM_TIMEOUT,
                         )
                     except asyncio.TimeoutError:
@@ -1932,7 +1964,11 @@ async def websocket_chat(websocket: WebSocket):
                             try:
                                 sql = await asyncio.wait_for(
                                     agent.generate_sql_async(
-                                        query, "sql", history=history, force_tables=missing_tables
+                                        query,
+                                        "sql",
+                                        history=history,
+                                        force_tables=missing_tables,
+                                        trace_callback=emit_trace,
                                     ),
                                     timeout=_PLAYGROUND_LLM_TIMEOUT,
                                 )
@@ -1963,9 +1999,20 @@ async def websocket_chat(websocket: WebSocket):
                     row_count = None
                     if execute and sql:
                         await _send_debug("8. Production: executing SQL...")
+                        await emit_trace("SQL Execution", status="running", step_id="sql-execution")
                         exec_start = time.perf_counter()
                         df = agent.run_sql(sql)
-                        req_context["exec_latency_sec"] = round(time.perf_counter() - exec_start, 3)
+                        exec_elapsed = time.perf_counter() - exec_start
+                        exec_ms = exec_elapsed * 1000
+                        req_context["exec_latency_sec"] = round(exec_elapsed, 3)
+                        await emit_trace(
+                            "SQL Execution",
+                            status="success",
+                            duration_ms=exec_ms,
+                            input_data=sql,
+                            output_data={"row_count": len(df) if df is not None else 0},
+                            step_id="sql-execution",
+                        )
                         if df is not None:
                             results   = _dataframe_to_json_safe(df)
                             row_count = len(df)

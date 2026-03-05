@@ -7,10 +7,11 @@ Orchestrates LLM providers and database connections for natural language SQL gen
 import os
 import re
 import json
+import time
 import hashlib
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, Set, Tuple, Dict, Any, List
+from typing import Optional, Set, Tuple, Dict, Any, List, Callable, Awaitable
 from pathlib import Path
 
 import pandas as pd
@@ -722,14 +723,29 @@ Return the SQL in a ```sql code block. Do not execute it."""
         history: Optional[List[Dict[str, Any]]] = None,
         force_tables: Optional[Set[str]] = None,
         execution_mode: str = "read_only",
+        trace_callback: Optional[Callable[..., Awaitable[None]]] = None,
     ) -> str:
         """Generate SQL asynchronously. Optionally pass conversation history for context.
         
         Uses semantic schema pruning when Redis + embeddings are available.
         """
         GuardrailPipeline.validate_prompt(prompt, execution_mode=execution_mode)
+
+        if trace_callback:
+            await trace_callback(step_name="Query Sanitization", status="running", step_id="query-sanitization")
+        sanitize_start = time.perf_counter()
         sanitized = await GuardrailPipeline.sanitize_query(prompt, self.generate_async)
         self._last_sanitized_query = sanitized
+        if trace_callback:
+            sanitize_ms = (time.perf_counter() - sanitize_start) * 1000
+            await trace_callback(
+                step_name="Query Sanitization",
+                status="success",
+                duration_ms=sanitize_ms,
+                input_data=prompt,
+                output_data=sanitized,
+                step_id="query-sanitization",
+            )
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request.",
@@ -737,9 +753,28 @@ Return the SQL in a ```sql code block. Do not execute it."""
         }
 
         db_name = self._current_db or "unknown"
+        if trace_callback:
+            await trace_callback(
+                step_name="Semantic Pruning",
+                status="running",
+                tech="MiniLM-L6",
+                step_id="semantic-pruning",
+            )
+        prune_start = time.perf_counter()
         pruned_schema, allowed_tables = self._get_pruned_schema(
             sanitized, db_name=db_name, force_tables=force_tables
         )
+        if trace_callback:
+            prune_ms = (time.perf_counter() - prune_start) * 1000
+            await trace_callback(
+                step_name="Semantic Pruning",
+                status="success",
+                tech="MiniLM-L6",
+                duration_ms=prune_ms,
+                input_data=sanitized,
+                output_data={"allowed_tables": sorted(allowed_tables) if allowed_tables else []},
+                step_id="semantic-pruning",
+            )
         if allowed_tables is None:
             allowed_tables = set()
 
@@ -785,8 +820,29 @@ Return the SQL in a ```sql code block. Do not execute it."""
         if history:
             context["messages"] = [{"role": m.get("role"), "content": m.get("content", "")} for m in history]
 
+        llm_tech = self._current_llm or "LLM"
+        if trace_callback:
+            await trace_callback(
+                step_name="SQL Generation",
+                status="running",
+                tech=llm_tech,
+                step_id="sql-generation",
+            )
+        gen_start = time.perf_counter()
         response = await self.generate_async(enhanced_prompt, context)
-        return response.sql or self._extract_sql(response.text)
+        sql_result = response.sql or self._extract_sql(response.text)
+        if trace_callback:
+            gen_ms = (time.perf_counter() - gen_start) * 1000
+            await trace_callback(
+                step_name="SQL Generation",
+                status="success",
+                tech=llm_tech,
+                duration_ms=gen_ms,
+                input_data=sanitized,
+                output_data=sql_result,
+                step_id="sql-generation",
+            )
+        return sql_result
     
     def _extract_sql(self, text: str) -> str:
         """Extract SQL from response text."""
