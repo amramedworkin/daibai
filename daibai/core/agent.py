@@ -192,6 +192,9 @@ class DaiBaiAgent:
         # Last allowed_tables from pruned context (for run_sql scope enforcement)
         self._last_allowed_tables: Optional[Set[str]] = None
 
+        # Last sanitized query (for logging/debug; set during generate_sql/generate_sql_async)
+        self._last_sanitized_query: Optional[str] = None
+
         # Usage metrics for schema pruning tuning
         self._pruning_metrics = SchemaPruningMetrics(self.config.memory_dir / "metrics")
 
@@ -585,6 +588,8 @@ class DaiBaiAgent:
             Generated SQL string
         """
         GuardrailPipeline.validate_prompt(prompt)
+        sanitized = GuardrailPipeline.sanitize_query_sync(prompt, self.generate)
+        self._last_sanitized_query = sanitized
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
@@ -592,7 +597,7 @@ class DaiBaiAgent:
         }
 
         db_name = self._current_db or "unknown"
-        pruned_schema, allowed_tables = self._get_pruned_schema(prompt)
+        pruned_schema, allowed_tables = self._get_pruned_schema(sanitized)
         self._last_allowed_tables = allowed_tables
 
         # Fetch table list from index for LLM grounding (no DB hit)
@@ -609,7 +614,7 @@ class DaiBaiAgent:
         enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
 Database: {db_name}
 
-Request: {prompt}
+Request: {sanitized}
 
 Return the SQL in a ```sql code block. Do not execute it."""
 
@@ -644,6 +649,8 @@ Return the SQL in a ```sql code block. Do not execute it."""
         Uses semantic schema pruning when Redis + embeddings are available.
         """
         GuardrailPipeline.validate_prompt(prompt)
+        sanitized = await GuardrailPipeline.sanitize_query(prompt, self.generate_async)
+        self._last_sanitized_query = sanitized
         mode_prompts = {
             "sql": "Generate ONLY a SELECT query for this request.",
             "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request.",
@@ -651,7 +658,7 @@ Return the SQL in a ```sql code block. Do not execute it."""
         }
 
         db_name = self._current_db or "unknown"
-        pruned_schema, allowed_tables = self._get_pruned_schema(prompt)
+        pruned_schema, allowed_tables = self._get_pruned_schema(sanitized)
         self._last_allowed_tables = allowed_tables
 
         # Fetch table list from index for LLM grounding (no DB hit)
@@ -668,7 +675,7 @@ Return the SQL in a ```sql code block. Do not execute it."""
         enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
 Database: {db_name}
 
-Request: {prompt}
+Request: {sanitized}
 
 Return the SQL in a ```sql code block. Do not execute it."""
 

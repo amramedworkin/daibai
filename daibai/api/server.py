@@ -1107,6 +1107,13 @@ async def query(
             except asyncio.TimeoutError:
                 logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
                 sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
+            sanitized = getattr(agent, "_last_sanitized_query", None) or request.query
+            if sanitized != request.query:
+                logger.info(
+                    "[request] REST /api/query | query sanitized | original=%r sanitized=%r",
+                    (request.query[:80] + "…") if len(request.query) > 80 else request.query,
+                    (sanitized[:80] + "…") if len(sanitized) > 80 else sanitized,
+                )
             results   = None
             row_count = None
             if request.execute and sql:
@@ -1889,8 +1896,20 @@ async def websocket_chat(websocket: WebSocket):
                     except asyncio.TimeoutError:
                         logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
                         sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
+                    sanitized = getattr(agent, "_last_sanitized_query", None) or query
+                    req_context["original_query"] = query
+                    req_context["sanitized_query"] = sanitized
                     req_context["llm_latency_sec"]     = round(time.perf_counter() - llm_start, 3)
                     req_context["generated_sql_length"] = len(sql) if sql else 0
+                    if sanitized != query:
+                        logger.info(
+                            "[request] WS chat | query sanitized | original=%r sanitized=%r",
+                            query[:80] + "…" if len(query) > 80 else query,
+                            sanitized[:80] + "…" if len(sanitized) > 80 else sanitized,
+                            extra=req_context,
+                        )
+                    if verbose and sanitized != query:
+                        await _send_debug(f"Sanitized query: {sanitized}")
                     await _send_debug(f"7. Production: SQL generated ({len(sql or '')} chars)")
 
                     await websocket.send_json({

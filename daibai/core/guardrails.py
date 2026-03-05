@@ -2,13 +2,15 @@
 Phase 3 Step 3: Deterministic SQL Guardrail (Safety-First Architecture).
 
 Literature-backed (Peng et al. 2023 IEEE): Two-stage pipeline:
+- Stage 0 (Pre-pruning): Query sanitization fixes typos/clarity for Text-to-SQL.
 - Stage 1 (Pre-LLM): Prompt sanitizer blocks in-band SQL injection in natural language.
 - Stage 2 (Post-LLM): SQL AST validator blocks DML/DDL, DoS (benchmark), info disclosure
   (user/version), tautologies (OR 1=1), system schema probing, out-of-scope tables.
 """
 
+import asyncio
 import re
-from typing import Callable, List, Optional, Set
+from typing import Awaitable, Callable, List, Optional, Set
 
 import sqlparse
 from sqlparse.sql import Identifier, IdentifierList
@@ -483,6 +485,52 @@ class GuardrailPipeline:
 
     def __init__(self, validator: Optional[SQLValidator] = None):
         self._validator = validator or SQLValidator()
+
+    @classmethod
+    async def sanitize_query(cls, query: str, agent_generate_fn: Callable[..., Awaitable]) -> str:
+        """
+        Stage 0: Pre-processing for typos and clarity.
+        Uses the LLM to clean up the query before semantic pruning and SQL generation.
+        Falls back to original query on empty response, timeout, or any exception.
+        """
+        if not query or not query.strip():
+            return query
+        sanitization_prompt = (
+            "Rewrite the following database natural language query to fix typos and improve "
+            "clarity for a Text-to-SQL engine. Maintain the original intent exactly. "
+            "Return ONLY the corrected query text.\n\n"
+            f"Query: {query}"
+        )
+        try:
+            response = await asyncio.wait_for(
+                agent_generate_fn(sanitization_prompt, {"system_prompt": "You are a query optimizer."}),
+                timeout=15.0,
+            )
+            result = response.text.strip() if response and response.text else ""
+            return result if result else query
+        except (asyncio.TimeoutError, Exception):
+            return query
+
+    @classmethod
+    def sanitize_query_sync(cls, query: str, agent_generate_fn: Callable) -> str:
+        """
+        Synchronous variant for use in generate_sql (sync path).
+        Falls back to original query on empty response or any exception.
+        """
+        if not query or not query.strip():
+            return query
+        sanitization_prompt = (
+            "Rewrite the following database natural language query to fix typos and improve "
+            "clarity for a Text-to-SQL engine. Maintain the original intent exactly. "
+            "Return ONLY the corrected query text.\n\n"
+            f"Query: {query}"
+        )
+        try:
+            response = agent_generate_fn(sanitization_prompt, {"system_prompt": "You are a query optimizer."})
+            result = response.text.strip() if response and response.text else ""
+            return result if result else query
+        except Exception:
+            return query
 
     @classmethod
     def validate_prompt(cls, user_prompt: str) -> bool:
