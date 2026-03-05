@@ -1230,20 +1230,26 @@ class FormatSqlRequest(BaseModel):
 
 
 @app.post("/api/format-sql")
-async def format_sql(request: FormatSqlRequest, _user: Dict[str, Any] = Depends(get_current_user)):
-    """Rewrite SQL with database qualifications, table qualifications, and aliases."""
+async def format_sql(req: FormatSqlRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    """On-the-fly SQL rewriter for the UI toggles."""
     agent = get_agent()
-    db_name = request.database or agent._current_db or "unknown"
-    if request.database and request.database != agent._current_db:
-        agent.switch_database(request.database)
-    rewritten = await agent.rewrite_sql_async(
-        sql=request.sql,
-        db_qualify=request.db_qualify,
-        table_qualify=request.table_qualify,
-        use_alias=request.use_alias,
+    db_name = req.database
+    if not db_name:
+        config = get_config()
+        db_name = (agent._current_db or (config.default_database if config else "")) or "unknown"
+    elif req.database != agent._current_db:
+        try:
+            agent.switch_database(req.database)
+        except ValueError:
+            pass
+    rewritten_sql = await agent.rewrite_sql_async(
+        sql=req.sql,
+        db_qualify=req.db_qualify,
+        table_qualify=req.table_qualify,
+        use_alias=req.use_alias,
         db_name=db_name,
     )
-    return {"sql": rewritten}
+    return {"sql": rewritten_sql}
 
 
 @app.post("/api/execute")
