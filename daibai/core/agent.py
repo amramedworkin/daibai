@@ -4,6 +4,7 @@ DaiBai Agent - Core AI Database Assistant.
 Orchestrates LLM providers and database connections for natural language SQL generation.
 """
 
+import logging
 import os
 import re
 import json
@@ -843,7 +844,63 @@ Return the SQL in a ```sql code block. Do not execute it."""
                 step_id="sql-generation",
             )
         return sql_result
-    
+
+    async def rewrite_sql_async(
+        self,
+        sql: str,
+        db_qualify: bool,
+        table_qualify: bool,
+        use_alias: bool,
+        db_name: str,
+    ) -> str:
+        """Rewrites an existing SQL query to apply database prefixes, table qualifications, or aliases."""
+        instructions = []
+
+        if db_qualify and db_name:
+            instructions.append(
+                f"Prefix all table names in FROM and JOIN clauses with the database name '{db_name}'. (e.g., {db_name}.table_name)"
+            )
+
+        if use_alias:
+            instructions.append(
+                "Assign a short, logical alias to every table in the FROM/JOIN clauses (e.g., 'v_advertiser_contacts va')."
+            )
+            instructions.append(
+                "Prefix EVERY column name in the SELECT, WHERE, GROUP BY, and ORDER BY clauses with its corresponding table alias."
+            )
+        elif table_qualify:
+            instructions.append("Prefix EVERY column name in the query with its full, exact table name.")
+
+        if not instructions:
+            return sql
+
+        prompt = f"""Rewrite the following SQL query according to these strict rules:
+{chr(10).join(f'- {i}' for i in instructions)}
+
+Return ONLY the raw, formatted SQL code. Do not include markdown formatting blocks (like ```sql), do not include explanations, and do not change the core logic of the query.
+
+Original SQL:
+{sql}
+"""
+
+        try:
+            response = await asyncio.wait_for(
+                self.generate_async(prompt, {"system_prompt": "You are a strict SQL formatting utility."}),
+                timeout=15.0,
+            )
+            rewritten = response.text.strip() if response and response.text else sql
+
+            # Clean up markdown formatting if the LLM disobeys
+            if rewritten.startswith("```sql"):
+                rewritten = rewritten[6:]
+            if rewritten.endswith("```"):
+                rewritten = rewritten[:-3]
+
+            return rewritten.strip()
+        except Exception as e:
+            logging.getLogger(__name__).error("SQL rewrite failed: %s", e)
+            return sql
+
     def _extract_sql(self, text: str) -> str:
         """Extract SQL from response text."""
         if not text:

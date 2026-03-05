@@ -1232,8 +1232,18 @@ class FormatSqlRequest(BaseModel):
 @app.post("/api/format-sql")
 async def format_sql(request: FormatSqlRequest, _user: Dict[str, Any] = Depends(get_current_user)):
     """Rewrite SQL with database qualifications, table qualifications, and aliases."""
-    # TODO: Implement actual rewriting logic per modifiers
-    return {"sql": request.sql}
+    agent = get_agent()
+    db_name = request.database or agent._current_db or "unknown"
+    if request.database and request.database != agent._current_db:
+        agent.switch_database(request.database)
+    rewritten = await agent.rewrite_sql_async(
+        sql=request.sql,
+        db_qualify=request.db_qualify,
+        table_qualify=request.table_qualify,
+        use_alias=request.use_alias,
+        db_name=db_name,
+    )
+    return {"sql": rewritten}
 
 
 @app.post("/api/execute")
