@@ -2488,9 +2488,10 @@ class DaiBaiApp {
 
     async loadSettingsState() {
         try {
-            const [settingsRes, prefs] = await Promise.all([
+            const [settingsRes, prefs, profileRes] = await Promise.all([
                 apiFetch('/api/settings'),
-                Promise.resolve(JSON.parse(localStorage.getItem('daibai_preferences') || '{}'))
+                Promise.resolve(JSON.parse(localStorage.getItem('daibai_preferences') || '{}')),
+                apiFetch('/api/profile').then(r => r.json()).catch(() => null)
             ]);
             const settings = await settingsRes.json();
             const configured = settings.llm_providers || [];
@@ -2500,8 +2501,14 @@ class DaiBaiApp {
                 const c = apiConfigs[p];
                 llm_providers[p] = c ? { api_key: c.api_key, model: c.model, endpoint: c.endpoint, deployment: c.deployment } : {};
             }
+            const profile = profileRes || {};
+            const account = {
+                email: profile.email || profile.username || '',
+                user_id: profile.uid || profile.id || '',
+                plan: profile.plan || 'Free'
+            };
             return {
-                account: { email: '', user_id: '', plan: 'Free' },
+                account,
                 llm: { provider: settings.current_llm || 'gemini' },
                 configured_llm_providers: configured,
                 llm_providers,

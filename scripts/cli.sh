@@ -137,6 +137,7 @@ Commands by Category:
     azurify-phase-2-registry   Phase 2: Container Registry + GitHub Actions Service Principal
     azurify-phase-2-5-github   Phase 2.5: GitHub Actions Integration (workflow + secrets)
     azurify-phase-2-6-gitactions  Phase 2.6: Git add, commit & push to trigger workflow
+    azurify-phase-3-compute      Phase 3: Container Apps, Redis sidecar, RBAC
   ------------------------------------------------------------------------------------------
   AZURE & INFRASTRUCTURE
     my-ip            Show current public IP (curl ifconfig.me)
@@ -562,6 +563,11 @@ cmd_azure_phase2_5_github() {
 cmd_azure_phase2_6_gitactions() {
     print_header "AZURIFY-FOUNDATION: Phase 2.6 Git Commit & Push"
     bash "$SCRIPT_DIR/azure_phase2_6_gitactions.sh"
+}
+
+cmd_azure_phase3_compute() {
+    print_header "AZURIFY-FOUNDATION: Phase 3 Serverless Compute & Security"
+    bash "$SCRIPT_DIR/azure_phase3_compute.sh"
 }
 
 cmd_keyvault_fix_rbac() {
@@ -1746,6 +1752,7 @@ _CLI_WILDCARD_CMDS=(
     "azurify-phase-2-registry:Phase 2 Container Registry + GitHub Actions SP"
     "azurify-phase-2-5-github:Phase 2.5 GitHub Actions Integration"
     "azurify-phase-2-6-gitactions:Phase 2.6 Git add/commit/push to trigger workflow"
+    "azurify-phase-3-compute:Phase 3 Container Apps, Redis, RBAC"
     "redis-create:Create Azure Redis"
     "keyvault-create:Create Key Vault"
     "keyvault-dump:Dump Key Vault secrets (values)"
@@ -1937,6 +1944,9 @@ main() {
             ;;
         azurify-phase-2-6-gitactions)
             cmd_azure_phase2_6_gitactions
+            ;;
+        azurify-phase-3-compute)
+            cmd_azure_phase3_compute
             ;;
         redis-create)
             cmd_redis_create

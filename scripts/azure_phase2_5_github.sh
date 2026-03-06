@@ -42,6 +42,8 @@ env:
   ACR_NAME: ${ACR_NAME}
   ACR_LOGIN_SERVER: ${ACR_NAME}.azurecr.io
   IMAGE_NAME: daibai-api
+  RESOURCE_GROUP: ${AZURE_RG_NAME}
+  CONTAINER_APP_NAME: daibai-api
 
 jobs:
   build-and-push:
@@ -67,6 +69,14 @@ jobs:
           tags: |
             \${{ env.ACR_LOGIN_SERVER }}/\${{ env.IMAGE_NAME }}:\${{ github.sha }}
             \${{ env.ACR_LOGIN_SERVER }}/\${{ env.IMAGE_NAME }}:latest
+
+      # 5. Deploy to Azure Container Apps
+      - name: Deploy to Azure Container Apps
+        run: |
+          az containerapp update \\
+            --name \${{ env.CONTAINER_APP_NAME }} \\
+            --resource-group \${{ env.RESOURCE_GROUP }} \\
+            --image \${{ env.ACR_LOGIN_SERVER }}/\${{ env.IMAGE_NAME }}:\${{ github.sha }}
 EOF
 
 # 3. Handle GitHub Secrets
