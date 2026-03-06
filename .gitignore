@@ -139,3 +139,9 @@ Thumbs.db
 # =============================================================================
 # .code-workspace files contain machine-specific paths — keep out of git
 *.code-workspace
+
+# =============================================================================
+# AZURE DEPLOYMENT SECRETS
+# =============================================================================
+# Service Principal credentials for GitHub Actions — never commit
+scripts/.sp_credentials.json

@@ -132,6 +132,12 @@ Commands by Category:
     cli-launch       Interactive REPL          |  cli-query        Single natural language query
     train            Train DB schema           |  index            Semantic schema index
   ------------------------------------------------------------------------------------------
+  AZURIFY-FOUNDATION (host system onto Azure)
+    azurify-phase-1-foundation  Phase 1: RG, Log Analytics, Cosmos DB, Key Vault (idempotent)
+    azurify-phase-2-registry   Phase 2: Container Registry + GitHub Actions Service Principal
+    azurify-phase-2-5-github   Phase 2.5: GitHub Actions Integration (workflow + secrets)
+    azurify-phase-2-6-gitactions  Phase 2.6: Git add, commit & push to trigger workflow
+  ------------------------------------------------------------------------------------------
   AZURE & INFRASTRUCTURE
     my-ip            Show current public IP (curl ifconfig.me)
     cosmos-role      Setup Cosmos RBAC         |  cosmos-role-sp   Cosmos RBAC for DaiBaiApp (from .env)
@@ -536,6 +542,26 @@ cmd_redis_create() {
 cmd_keyvault_create() {
     print_header "Azure Key Vault Setup"
     bash "$SCRIPT_DIR/setup_keyvault.sh"
+}
+
+cmd_azure_phase1_foundation() {
+    print_header "AZURIFY-FOUNDATION: Phase 1 Production Deployment"
+    bash "$SCRIPT_DIR/azure_phase1_foundation.sh"
+}
+
+cmd_azure_phase2_registry() {
+    print_header "AZURIFY-FOUNDATION: Phase 2 Container Registry & CI/CD Prep"
+    bash "$SCRIPT_DIR/azure_phase2_registry.sh"
+}
+
+cmd_azure_phase2_5_github() {
+    print_header "AZURIFY-FOUNDATION: Phase 2.5 GitHub Actions Integration"
+    bash "$SCRIPT_DIR/azure_phase2_5_github.sh"
+}
+
+cmd_azure_phase2_6_gitactions() {
+    print_header "AZURIFY-FOUNDATION: Phase 2.6 Git Commit & Push"
+    bash "$SCRIPT_DIR/azure_phase2_6_gitactions.sh"
 }
 
 cmd_keyvault_fix_rbac() {
@@ -1716,6 +1742,10 @@ _CLI_WILDCARD_CMDS=(
     "cosmos-role:Setup Cosmos RBAC"
     "cosmos-role-sp:Cosmos RBAC for DaiBaiApp service principal"
     "cosmos-allow-ip:Whitelist current IP"
+    "azurify-phase-1-foundation:Phase 1 Production Foundation (RG, Log, Cosmos, KV)"
+    "azurify-phase-2-registry:Phase 2 Container Registry + GitHub Actions SP"
+    "azurify-phase-2-5-github:Phase 2.5 GitHub Actions Integration"
+    "azurify-phase-2-6-gitactions:Phase 2.6 Git add/commit/push to trigger workflow"
     "redis-create:Create Azure Redis"
     "keyvault-create:Create Key Vault"
     "keyvault-dump:Dump Key Vault secrets (values)"
@@ -1895,6 +1925,18 @@ main() {
             ;;
         verify-azure-auth)
             cmd_verify_azure_auth
+            ;;
+        azurify-phase-1-foundation)
+            cmd_azure_phase1_foundation
+            ;;
+        azurify-phase-2-registry)
+            cmd_azure_phase2_registry
+            ;;
+        azurify-phase-2-5-github)
+            cmd_azure_phase2_5_github
+            ;;
+        azurify-phase-2-6-gitactions)
+            cmd_azure_phase2_6_gitactions
             ;;
         redis-create)
             cmd_redis_create
