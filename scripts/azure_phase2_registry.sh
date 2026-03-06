@@ -33,6 +33,15 @@ CRED_FILE="$SCRIPT_DIR/.sp_credentials.json"
 echo "$SP_CREDENTIALS" > "$CRED_FILE"
 chmod 600 "$CRED_FILE"
 
+echo "  -> Granting SP Contributor access to Resource Group ($AZURE_RG_NAME) for CD pipeline..."
+RG_ID=$(az group show --name "$AZURE_RG_NAME" --query id -o tsv)
+
+# Give Azure AD a few seconds to propagate the newly created Service Principal globally
+sleep 5
+APP_ID=$(az ad sp list --display-name "$SP_NAME" --query "[0].appId" -o tsv)
+
+az role assignment create --assignee "$APP_ID" --role "Contributor" --scope "$RG_ID" -o none 2>/dev/null || echo "     (Role likely already assigned)"
+
 echo "========================================================"
 echo " Phase 2 Complete!"
 echo "========================================================"
