@@ -139,6 +139,7 @@ Commands by Category:
     azurify-phase-2-6-gitactions  Phase 2.6: Git add, commit & push to trigger workflow
     azurify-phase-3-compute      Phase 3: Container Apps, Redis sidecar, RBAC
     azurify-phase-4-domain      Phase 4: Domain, DNS, Managed Certs
+    azurify-diag-domain        Diagnostics: Custom domain & SSL binding state
   ------------------------------------------------------------------------------------------
   AZURE & INFRASTRUCTURE
     my-ip            Show current public IP (curl ifconfig.me)
@@ -574,6 +575,11 @@ cmd_azure_phase3_compute() {
 cmd_azure_phase4_domain() {
     print_header "AZURIFY-FOUNDATION: Phase 4 Edge Networking & Domain"
     bash "$SCRIPT_DIR/azure_phase4_domain.sh"
+}
+
+cmd_azure_diag_domain() {
+    print_header "AZURIFY-FOUNDATION: Custom Domain & SSL Diagnostics"
+    bash "$SCRIPT_DIR/azure_diag_domain.sh"
 }
 
 cmd_keyvault_fix_rbac() {
@@ -1760,6 +1766,7 @@ _CLI_WILDCARD_CMDS=(
     "azurify-phase-2-6-gitactions:Phase 2.6 Git add/commit/push to trigger workflow"
     "azurify-phase-3-compute:Phase 3 Container Apps, Redis, RBAC"
     "azurify-phase-4-domain:Phase 4 Domain, DNS, Managed Certs"
+    "azurify-diag-domain:Diagnostics Custom domain and SSL binding state"
     "redis-create:Create Azure Redis"
     "keyvault-create:Create Key Vault"
     "keyvault-dump:Dump Key Vault secrets (values)"
@@ -1957,6 +1964,9 @@ main() {
             ;;
         azurify-phase-4-domain)
             cmd_azure_phase4_domain
+            ;;
+        azurify-diag-domain)
+            cmd_azure_diag_domain
             ;;
         redis-create)
             cmd_redis_create

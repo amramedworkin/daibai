@@ -56,6 +56,18 @@
         .msg.success { display: block; background: rgba(34, 197, 94, 0.2); color: #4ade80; }
         .msg.error { display: block; background: rgba(239, 68, 68, 0.2); color: #f87171; }
         .no-code { color: #f87171; }
+        .powered-by {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(148, 163, 184, 0.15);
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .powered-by img { height: 18px; width: auto; object-fit: contain; }
     </style>
 </head>
 <body>
@@ -66,6 +78,10 @@
         <p id="noCodeMsg" class="no-code" style="display:none">No verification code found in the URL. Please use the link from your verification email.</p>
         <button type="button" id="verifyBtn" class="btn" style="display:none">Click here to verify email</button>
         <div id="resultMsg" class="msg" role="alert"></div>
+        <div class="powered-by">
+            <img src="/static/it_protects_logo.webp" alt="it protects">
+            <span>Powered by it protects</span>
+        </div>
     </div>
 
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>

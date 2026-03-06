@@ -59,35 +59,43 @@ az network dns record-set txt add-record -g "$AZURE_RG_NAME" -z "$CUSTOM_DOMAIN"
 
 # 4. Bind Domains & Generate Managed Certificates
 echo "[4/4] Checking existing Container App domain bindings..."
-APEX_BOUND=$(az containerapp show --name "daibai-api" --resource-group "$AZURE_RG_NAME" --query "properties.configuration.ingress.customDomains[?name=='$CUSTOM_DOMAIN'].name | [0]" -o tsv)
-WWW_BOUND=$(az containerapp show --name "daibai-api" --resource-group "$AZURE_RG_NAME" --query "properties.configuration.ingress.customDomains[?name=='www.$CUSTOM_DOMAIN'].name | [0]" -o tsv)
 
-if [ "$APEX_BOUND" == "$CUSTOM_DOMAIN" ]; then
-    echo "  -> Apex domain ($CUSTOM_DOMAIN) is already bound. Skipping."
+# Query the exact bindingType (returns SniEnabled, Disabled, or empty if missing)
+APEX_STATE=$(az containerapp show --name "daibai-api" --resource-group "$AZURE_RG_NAME" --query "properties.configuration.ingress.customDomains[?name=='$CUSTOM_DOMAIN'].bindingType | [0]" -o tsv)
+WWW_STATE=$(az containerapp show --name "daibai-api" --resource-group "$AZURE_RG_NAME" --query "properties.configuration.ingress.customDomains[?name=='www.$CUSTOM_DOMAIN'].bindingType | [0]" -o tsv)
+
+# --- Process Apex Domain ---
+if [ "$APEX_STATE" == "SniEnabled" ]; then
+    echo "  -> Apex domain ($CUSTOM_DOMAIN) is already fully bound and secured. Skipping."
 else
-    echo "  -> Waiting 30 seconds for DNS propagation before binding Apex..."
-    sleep 30
-    echo "  -> Binding $CUSTOM_DOMAIN and generating SSL certificate..."
-    az containerapp hostname bind \
-        --hostname "$CUSTOM_DOMAIN" \
-        --resource-group "$AZURE_RG_NAME" \
-        --name "daibai-api" \
-        --environment "$ACA_ENV_NAME" \
-        --validation-method TXT -o none
+    if [ -z "$APEX_STATE" ]; then
+        echo "  -> 1/2: Adding $CUSTOM_DOMAIN to Container App..."
+        az containerapp hostname add --hostname "$CUSTOM_DOMAIN" --resource-group "$AZURE_RG_NAME" --name "daibai-api" -o none
+        echo "  -> Waiting 15 seconds for DNS & platform sync..."
+        sleep 15
+    else
+        echo "  -> Apex domain found in stuck '$APEX_STATE' state. Attempting recovery..."
+    fi
+
+    echo "  -> 2/2: Binding $CUSTOM_DOMAIN and generating SSL certificate (this takes a minute)..."
+    az containerapp hostname bind --hostname "$CUSTOM_DOMAIN" --resource-group "$AZURE_RG_NAME" --name "daibai-api" --environment "$ACA_ENV_NAME" --validation-method TXT -o none
 fi
 
-if [ "$WWW_BOUND" == "www.$CUSTOM_DOMAIN" ]; then
-    echo "  -> WWW subdomain (www.$CUSTOM_DOMAIN) is already bound. Skipping."
+# --- Process WWW Subdomain ---
+if [ "$WWW_STATE" == "SniEnabled" ]; then
+    echo "  -> WWW subdomain (www.$CUSTOM_DOMAIN) is already fully bound and secured. Skipping."
 else
-    echo "  -> Waiting 30 seconds for DNS propagation before binding WWW..."
-    sleep 30
-    echo "  -> Binding www.$CUSTOM_DOMAIN and generating SSL certificate..."
-    az containerapp hostname bind \
-        --hostname "www.$CUSTOM_DOMAIN" \
-        --resource-group "$AZURE_RG_NAME" \
-        --name "daibai-api" \
-        --environment "$ACA_ENV_NAME" \
-        --validation-method CNAME -o none
+    if [ -z "$WWW_STATE" ]; then
+        echo "  -> 1/2: Adding www.$CUSTOM_DOMAIN to Container App..."
+        az containerapp hostname add --hostname "www.$CUSTOM_DOMAIN" --resource-group "$AZURE_RG_NAME" --name "daibai-api" -o none
+        echo "  -> Waiting 15 seconds for DNS & platform sync..."
+        sleep 15
+    else
+        echo "  -> WWW subdomain found in stuck '$WWW_STATE' state. Attempting recovery..."
+    fi
+
+    echo "  -> 2/2: Binding www.$CUSTOM_DOMAIN and generating SSL certificate (this takes a minute)..."
+    az containerapp hostname bind --hostname "www.$CUSTOM_DOMAIN" --resource-group "$AZURE_RG_NAME" --name "daibai-api" --environment "$ACA_ENV_NAME" --validation-method CNAME -o none
 fi
 
 echo "========================================================"

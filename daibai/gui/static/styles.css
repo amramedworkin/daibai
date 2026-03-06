@@ -628,6 +628,39 @@ body {
     border-top: 1px solid var(--border);
 }
 
+.powered-by {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.powered-by img {
+    height: 16px;
+    width: auto;
+    object-fit: contain;
+}
+
+.powered-by-welcome {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.powered-by-welcome img {
+    height: 20px;
+    width: auto;
+    object-fit: contain;
+}
+
 .sidebar-icon {
     display: flex;
     align-items: center;
