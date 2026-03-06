@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# Environments and Secrets
+.env
+.env.*
+infra.env
+scripts/.sp_credentials.json
+daibai.yaml
+
+# Caches and Memory
+.daibai/
+.cache/
+memory/
+exports/
