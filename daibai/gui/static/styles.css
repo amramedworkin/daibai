@@ -591,6 +591,12 @@ body {
     overflow: hidden;
 }
 
+/* Layout both: sidebar + chat + inspector all visible */
+.main-container.layout-both {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) 1fr minmax(var(--inspector-min-width), var(--inspector-width));
+}
+
 /* Sidebar */
 .sidebar {
     width: var(--sidebar-width);

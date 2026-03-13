@@ -1203,6 +1203,7 @@ class DaiBaiApp {
         this.layoutToggleLeftCenter = document.getElementById('layoutToggleLeftCenter');
         this.layoutToggleCenterOnly = document.getElementById('layoutToggleCenterOnly');
         this.layoutToggleCenterRight = document.getElementById('layoutToggleCenterRight');
+        this.layoutToggleBoth = document.getElementById('layout-both-btn');
         this.executionTraceLog = document.getElementById('executionTraceLog');
     }
     
@@ -1344,11 +1345,14 @@ class DaiBaiApp {
 
     /**
      * Update layout mode: toggle .collapsed on #sidebar and #inspectorPane.
-     * @param {string} mode - 'sidebar-main' | 'main-only' | 'main-inspector'
+     * @param {string} mode - 'sidebar-main' | 'main-only' | 'main-inspector' | 'layout-both'
      */
     updateLayout(mode) {
         if (!this.sidebar) return;
         this.layoutMode = mode;
+        const mainContainer = document.querySelector('.main-container');
+        mainContainer?.classList.toggle('layout-both', mode === 'layout-both');
+
         switch (mode) {
             case 'sidebar-main':
                 this.sidebar.classList.remove('collapsed');
@@ -1362,6 +1366,10 @@ class DaiBaiApp {
                 this.sidebar.classList.add('collapsed');
                 this.inspectorPane?.classList.remove('collapsed');
                 break;
+            case 'layout-both':
+                this.sidebar.classList.remove('collapsed');
+                this.inspectorPane?.classList.remove('collapsed');
+                break;
             default:
                 this.sidebar.classList.remove('collapsed');
                 this.inspectorPane?.classList.remove('collapsed');
@@ -1369,6 +1377,7 @@ class DaiBaiApp {
         this.layoutToggleLeftCenter?.classList.toggle('active', mode === 'sidebar-main');
         this.layoutToggleCenterOnly?.classList.toggle('active', mode === 'main-only');
         this.layoutToggleCenterRight?.classList.toggle('active', mode === 'main-inspector');
+        this.layoutToggleBoth?.classList.toggle('active', mode === 'layout-both');
         this.savePreferences();
     }
     
@@ -1377,6 +1386,7 @@ class DaiBaiApp {
         this.layoutToggleLeftCenter?.addEventListener('click', () => this.updateLayout('sidebar-main'));
         this.layoutToggleCenterOnly?.addEventListener('click', () => this.updateLayout('main-only'));
         this.layoutToggleCenterRight?.addEventListener('click', () => this.updateLayout('main-inspector'));
+        this.layoutToggleBoth?.addEventListener('click', () => this.updateLayout('layout-both'));
 
         // Sidebar toggle (flip between sidebar-main and main-only; from main-inspector go to sidebar-main)
         this.sidebarToggle.addEventListener('click', () => {
