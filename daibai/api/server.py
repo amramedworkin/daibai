@@ -382,6 +382,7 @@ class QueryResponse(BaseModel):
 
 class SettingsResponse(BaseModel):
     databases: List[str]
+    databases_detail: Optional[List[Dict[str, Any]]] = None  # [{name, is_playground}] for UI grouping
     llm_providers: List[str]
     llm_provider_configs: Optional[Dict[str, Dict[str, Any]]] = None
     modes: List[str]
@@ -397,6 +398,22 @@ class SettingsUpdate(BaseModel):
     database: Optional[str] = None
     llm: Optional[str] = None
     mode: Optional[str] = None
+
+
+class DatabaseListItem(BaseModel):
+    """Single database entry for Admin > Test Database list."""
+
+    name: str
+    type: str
+    database: str
+    path: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    user: Optional[str] = None
+    password: Optional[str] = None
+    ssl: Optional[bool] = None
+    is_playground: Optional[bool] = None
+    connection: Optional[str] = None
 
 
 class ConfigUpdate(BaseModel):
@@ -653,6 +670,12 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             except Exception:
                 pass  # leave as None; don't break settings response
 
+        playground = getattr(config, "playground_databases", None) or []
+        databases_detail = [
+            {"name": n, "is_playground": n in playground}
+            for n in databases
+        ]
+
         logger.info(
             "[settings] GET after status=ok databases=%s llm_providers=%s current_database=%s current_llm=%s agent_loaded=%s is_indexed=%s",
             databases, llm_providers, current_db, current_llm_val, agent is not None, is_indexed_val,
@@ -668,6 +691,7 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             current_mode="sql",
             is_indexed=is_indexed_val,
             last_indexed_at=last_indexed_at_val,
+            databases_detail=databases_detail,
         )
     except Exception as exc:
         logger.exception("[settings] GET after status=error %s", exc)
@@ -733,6 +757,9 @@ async def admin_get_databases(_user: Dict[str, Any] = Depends(get_current_user))
             entry["user"] = db_config.user
             entry["password"] = _mask_password(db_config.password)
             entry["ssl"] = db_config.ssl
+        if name in getattr(config, "playground_databases", []):
+            entry["is_playground"] = True
+            entry["connection"] = "connected"
         databases.append(entry)
     return {"databases": databases}
 

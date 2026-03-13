@@ -47,13 +47,22 @@ def _sanitize_db_password(pwd: Optional[str]) -> str:
     return "***"
 
 
-def get_index_namespace(config: Optional[DatabaseConfig], fallback: str) -> str:
+def get_index_namespace(
+    config: Optional[DatabaseConfig],
+    fallback: str,
+    playground_databases: Optional[Iterable[str]] = None,
+) -> str:
     """
-    Generate a deterministic hash based on DB connection credentials.
-    Ensures users with the same credentials share the same index,
-    while users with different credentials get isolated indexes.
-    For SQLite, uses the file path.
+    Generate a deterministic namespace for Redis schema cache keys.
+
+    For playground databases (e.g. northwind, chinook), returns the database name
+    so all users share a single global cache — no user_id prefix, saves Redis memory.
+    For other databases, uses a hash of connection credentials to isolate indexes.
+    For SQLite, uses the file path when config is present.
     """
+    db_name = (config.database if config else None) or fallback
+    if playground_databases and db_name in playground_databases:
+        return db_name
     if not config:
         return fallback
     if config.type == "sqlite":
@@ -268,6 +277,7 @@ class SchemaManager:
         cache_manager=None,
         embed_fn: Optional[Callable[[str], Optional[List[float]]]] = None,
         redis_client=None,
+        playground_databases: Optional[Iterable[str]] = None,
     ):
         """
         Initialize SchemaManager.
@@ -280,16 +290,24 @@ class SchemaManager:
             embed_fn: Optional callable(text) -> vector. Used for testing.
             redis_client: Optional Redis client (dict-like get/set/keys).
                          Used for testing when cache_manager is None.
+            playground_databases: Optional list of DB names that are global
+                playground DBs. Their schema cache uses the DB name as namespace
+                (no user_id) so Redis memory is shared across all users.
         """
         self._config = config
         self._execute_fn = execute_fn
         self._cache_manager = cache_manager
         self._embed_fn = embed_fn
         self._redis_client = redis_client
+        self._playground_databases = list(playground_databases) if playground_databases else []
 
     def _get_namespace(self, schema_name: Optional[str] = None) -> str:
         db = schema_name or (self._config.database if self._config else "unknown")
-        return get_index_namespace(self._config, fallback=db)
+        return get_index_namespace(
+            self._config,
+            fallback=db,
+            playground_databases=self._playground_databases or None,
+        )
 
     def _run_query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Execute SQL and return rows as list of dicts."""

@@ -1544,12 +1544,23 @@ class DaiBaiApp {
             const settings = await response.json();
             const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
             
-            // Populate database dropdown
+            // Populate database dropdown with optgroups: "Your Databases" vs "Playground Databases"
             const savedDb = prefs.database && settings.databases.includes(prefs.database) 
                 ? prefs.database : settings.current_database;
-            this.databaseSelect.innerHTML = settings.databases
-                .map(db => `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`)
-                .join('');
+            const detail = settings.databases_detail || settings.databases.map(n => ({ name: n, is_playground: false }));
+            const yourDbs = detail.filter(d => !d.is_playground).map(d => d.name);
+            const playgroundDbs = detail.filter(d => d.is_playground).map(d => d.name);
+            let html = '';
+            if (yourDbs.length) {
+                html += `<optgroup label="Your Databases">${yourDbs.map(db => 
+                    `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`).join('')}</optgroup>`;
+            }
+            if (playgroundDbs.length) {
+                html += `<optgroup label="Playground Databases">${playgroundDbs.map(db => 
+                    `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`).join('')}</optgroup>`;
+            }
+            if (!html) html = `<option value="">— no databases —</option>`;
+            this.databaseSelect.innerHTML = html;
 
             // Populate LLM dropdown
             const savedLlm = prefs.llm && settings.llm_providers.includes(prefs.llm)
@@ -2488,10 +2499,11 @@ class DaiBaiApp {
 
     async loadSettingsState() {
         try {
-            const [settingsRes, prefs, profileRes] = await Promise.all([
+            const [settingsRes, prefs, profileRes, adminDbRes] = await Promise.all([
                 apiFetch('/api/settings'),
                 Promise.resolve(JSON.parse(localStorage.getItem('daibai_preferences') || '{}')),
-                apiFetch('/api/profile').then(r => r.json()).catch(() => null)
+                apiFetch('/api/profile').then(r => r.json()).catch(() => null),
+                apiFetch('/api/admin/databases').then(r => r.json()).catch(() => ({ databases: [] }))
             ]);
             const settings = await settingsRes.json();
             const configured = settings.llm_providers || [];
@@ -2507,6 +2519,7 @@ class DaiBaiApp {
                 user_id: profile.uid || profile.id || '',
                 plan: profile.plan || 'Free'
             };
+            const database_list = adminDbRes?.databases || [];
             return {
                 account,
                 llm: { provider: settings.current_llm || 'gemini' },
@@ -2514,6 +2527,7 @@ class DaiBaiApp {
                 llm_providers,
                 selected_llm_provider: configured[0] || SUPPORTED_LLM_PROVIDERS[0],
                 databases: { type: 'mysql', hostType: 'local', current: settings.current_database },
+                database_list,
                 data_privacy: { save_history: true, query_caching: false },
                 preferences: { theme: 'system', auto_charts: false, ...prefs }
             };
@@ -2657,7 +2671,45 @@ class DaiBaiApp {
         const db = this.settingsState?.databases || { type: 'mysql', hostType: 'local' };
         const dbOptions = ['mysql', 'postgres', 'oracle', 'sqlserver'];
         const dbHtml = this.renderDBTemplate(db.type || 'mysql', db.hostType || 'local', db.cloudProvider || 'aws', db);
+        const list = this.settingsState?.database_list || [];
+        const yourDbs = list.filter(d => !d.is_playground);
+        const playgroundDbs = list.filter(d => d.is_playground);
+        const dbItemRow = (d, showActions) => `
+            <div class="db-list-item ${d.is_playground ? 'db-list-item--playground' : ''}" data-name="${this.escapeHtml(d.name)}">
+                <span class="db-list-item-name">${this.escapeHtml(d.name)}</span>
+                <span class="db-list-item-type">${this.escapeHtml(d.type || 'mysql')}</span>
+                ${d.is_playground ? '<span class="db-list-item-badge">Read-only sandbox</span>' : ''}
+                ${showActions ? `
+                <div class="db-list-item-actions">
+                    <button type="button" class="db-list-item-btn db-edit-btn" title="Edit connection" data-name="${this.escapeHtml(d.name)}" aria-label="Edit ${this.escapeHtml(d.name)}">
+                        <i data-lucide="pencil"></i>
+                    </button>
+                    <button type="button" class="db-list-item-btn db-delete-btn" title="Delete connection" data-name="${this.escapeHtml(d.name)}" aria-label="Delete ${this.escapeHtml(d.name)}">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </div>
+                ` : ''}
+            </div>`;
+        const connectedSection = list.length ? `
+            <div class="settings-group">
+                <div class="settings-group-title">Connected Databases</div>
+                ${yourDbs.length ? `
+                <div class="db-list-section">
+                    <div class="db-list-section-label">Your Databases</div>
+                    ${yourDbs.map(d => dbItemRow(d, true)).join('')}
+                </div>
+                ` : ''}
+                ${playgroundDbs.length ? `
+                <div class="db-list-section">
+                    <div class="db-list-section-label">Playground Databases</div>
+                    <p class="db-list-section-hint">Safe, shared sample databases. Read-only.</p>
+                    ${playgroundDbs.map(d => dbItemRow(d, false)).join('')}
+                </div>
+                ` : ''}
+            </div>
+            ` : '';
         return `
+            ${connectedSection}
             <div class="settings-group">
                 <div class="settings-group-title">Database Type</div>
                 <div class="settings-field">

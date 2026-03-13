@@ -2154,6 +2154,83 @@ kbd {
     margin-bottom: 12px;
 }
 
+/* Connected Databases list (Your DBs vs Playground) */
+.db-list-section {
+    margin-bottom: 16px;
+}
+.db-list-section:last-child {
+    margin-bottom: 0;
+}
+.db-list-section-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+.db-list-section-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+}
+.db-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+}
+.db-list-item:last-child {
+    margin-bottom: 0;
+}
+.db-list-item--playground {
+    border-color: var(--playground-purple-light, rgba(124, 58, 237, 0.2));
+}
+.db-list-item-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.db-list-item-type {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.db-list-item-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    background: var(--playground-purple-light, rgba(124, 58, 237, 0.15));
+    color: var(--playground-purple);
+    border-radius: 4px;
+    margin-left: auto;
+}
+.db-list-item-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+}
+.db-list-item-btn {
+    padding: 6px;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+.db-list-item-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.db-list-item-btn.db-delete-btn:hover {
+    color: var(--error);
+}
+.db-list-item-btn .lucide,
+.db-list-item-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
 .settings-field {
     margin-bottom: 16px;
 }
@@ -2168,6 +2245,77 @@ kbd {
     font-weight: 500;
     color: var(--text-secondary);
     margin-bottom: 6px;
+}
+
+/* Connected Databases list (Your Databases / Playground Databases) */
+.db-list-section {
+    margin-bottom: 16px;
+}
+.db-list-section:last-child {
+    margin-bottom: 0;
+}
+.db-list-section-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+.db-list-section-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: -4px 0 8px;
+}
+.db-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+.db-list-item:last-child {
+    margin-bottom: 0;
+}
+.db-list-item--playground {
+    border-color: var(--playground-purple-light, rgba(124, 58, 237, 0.3));
+}
+.db-list-item-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.db-list-item-type {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.db-list-item-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    background: var(--playground-purple-light, rgba(124, 58, 237, 0.15));
+    color: var(--playground-purple, #7c3aed);
+    border-radius: 4px;
+}
+.db-list-item-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+}
+.db-list-item-btn {
+    padding: 6px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.db-list-item-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.db-list-item-btn i {
+    width: 16px;
+    height: 16px;
 }
 
 .settings-field input[type="text"],

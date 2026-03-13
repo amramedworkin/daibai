@@ -251,12 +251,15 @@ class DaiBaiAgent:
         return self._current_llm
     
     def _get_db_namespace(self, db_name: str) -> str:
-        """Get the deterministic hash for a given database alias."""
+        """Get the deterministic namespace for a given database (cache keys)."""
         if db_name == "playground":
             return "playground"
+        playground_dbs = getattr(self.config, "playground_databases", None) or []
+        if db_name in playground_dbs:
+            return db_name  # Playground DBs: global namespace, no user_id prefix
         try:
             config = self.config.get_database(db_name)
-            return get_index_namespace(config, fallback=db_name)
+            return get_index_namespace(config, fallback=db_name, playground_databases=playground_dbs)
         except ValueError:
             return db_name
 
@@ -282,11 +285,13 @@ class DaiBaiAgent:
             execute_fn = None
             if db_config.type == "sqlite":
                 execute_fn = build_sqlite_execute_fn(db_config._sqlite_path())
+            playground_dbs = getattr(self.config, "playground_databases", None) or []
             self._schema_managers[name] = SchemaManager(
                 config=db_config,
                 execute_fn=execute_fn,
                 cache_manager=cache,
                 redis_client=cache._get_client() if cache else None,
+                playground_databases=playground_dbs,
             )
         return self._schema_managers[name]
 

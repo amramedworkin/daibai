@@ -214,6 +214,17 @@ class LLMProviderConfig:
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
+def _parse_playground_databases() -> List[str]:
+    """
+    Read PLAYGROUND_DATABASES from environment (comma-separated).
+    Default: ["northwind", "chinook"] when unset or empty.
+    """
+    raw = os.environ.get("PLAYGROUND_DATABASES", "northwind,chinook").strip()
+    if not raw:
+        return ["northwind", "chinook"]
+    return [n.strip() for n in raw.split(",") if n.strip()]
+
+
 @dataclass
 class Config:
     """Main configuration object."""
@@ -222,6 +233,10 @@ class Config:
     
     llm_providers: Dict[str, LLMProviderConfig] = field(default_factory=dict)
     default_llm: Optional[str] = None
+    
+    # Playground databases: global read-only sample DBs (e.g. northwind, chinook)
+    # Served from DB_RUNTIME_* when configured.
+    playground_databases: List[str] = field(default_factory=lambda: ["northwind", "chinook"])
     
     # User preferences
     clipboard: bool = True
@@ -486,10 +501,37 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
 
     exports_dir = _resolve_path(config_data.get("exports_dir"), Path.home() / ".daibai" / "exports")
     memory_dir = _resolve_path(config_data.get("memory_dir"), Path.home() / ".daibai" / "memory")
-    
+
+    # Playground databases: from env PLAYGROUND_DATABASES (comma-separated), default northwind, chinook
+    pg_raw = os.environ.get("PLAYGROUND_DATABASES", "northwind,chinook").strip()
+    playground_databases = (
+        [n.strip() for n in pg_raw.split(",") if n.strip()] if pg_raw else ["northwind", "chinook"]
+    )
+
+    # Inject playground DatabaseConfigs from DB_RUNTIME_* when available.
+    # Playground DBs bypass Key Vault; they use system env vars (DB_RUNTIME_*).
+    runtime_host = os.environ.get("DB_RUNTIME_HOST", "").strip()
+    if runtime_host and playground_databases:
+        runtime_user = os.environ.get("DB_RUNTIME_USER", "").strip()
+        runtime_pass = os.environ.get("DB_RUNTIME_PASSWORD", "")
+        runtime_port = int(os.environ.get("DB_RUNTIME_PORT", "3306"))
+        for pg_name in playground_databases:
+            if pg_name not in databases:
+                databases[pg_name] = DatabaseConfig(
+                    name=pg_name,
+                    type="mysql",
+                    host=runtime_host,
+                    port=runtime_port,
+                    user=runtime_user,
+                    password=runtime_pass,
+                    database=pg_name,
+                    ssl=True,
+                )
+
     return Config(
         databases=databases,
         default_database=default_database,
+        playground_databases=playground_databases,
         llm_providers=llm_providers,
         default_llm=default_llm,
         clipboard=config_data.get("clipboard", True),

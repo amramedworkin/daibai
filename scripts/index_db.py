@@ -236,6 +236,7 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         cfg = load_config()
         db_config = cfg.get_database(db_name)
         config_path = get_config_file_path()
+        playground_dbs = getattr(cfg, "playground_databases", None) or []
     except ValueError as e:
         print(f"  ERROR: {e}", file=sys.stderr)
         return 0
@@ -262,7 +263,12 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         return 0
 
     execute_fn = build_sqlite_execute_fn(db_config._sqlite_path()) if db_config.type == "sqlite" else None
-    sm = SchemaManager(config=db_config, execute_fn=execute_fn, cache_manager=cache)
+    sm = SchemaManager(
+        config=db_config,
+        execute_fn=execute_fn,
+        cache_manager=cache,
+        playground_databases=playground_dbs,
+    )
 
     n = sm.index_schema(
         schema_name=db_name,
