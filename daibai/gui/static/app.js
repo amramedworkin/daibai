@@ -25,7 +25,6 @@ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
 const _ui = new firebaseui.auth.AuthUI(firebase.auth());
 let _currentUser             = null;   // firebase.User | null — updated by onAuthStateChanged
 let _pendingVerificationUser = null;   // unverified email user waiting to confirm their address
-let _isPlaygroundActive      = false;  // true when "Query Chinook DB" mode is active
 
 // ── FirebaseUI configuration ───────────────────────────────────────────────
 
@@ -198,176 +197,6 @@ async function checkEmailVerified() {
     }
 }
 
-// ── Playground helpers ─────────────────────────────────────────────────────
-
-/** Show the sandbox reset confirmation toast. */
-function showSandboxConfirmToast() {
-    const toast = document.getElementById('sandboxToast');
-    if (!toast) return;
-    toast.setAttribute('aria-hidden', 'false');
-    toast.classList.add('visible');
-    if (typeof lucide !== 'undefined') lucide.createIcons();
-}
-
-/** Hide the sandbox reset confirmation toast. */
-function hideSandboxConfirmToast() {
-    const toast = document.getElementById('sandboxToast');
-    if (!toast) return;
-    toast.classList.remove('visible');
-    toast.setAttribute('aria-hidden', 'true');
-}
-
-/**
- * Show a brief auto-dismissing status toast.
- * @param {'success'|'error'} type
- * @param {string} message
- */
-function showSandboxStatusToast(type, message) {
-    // Reuse an existing element or create one on the fly.
-    let el = document.getElementById('sandboxStatusToast');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'sandboxStatusToast';
-        el.className = 'sandbox-status-toast';
-        document.body.appendChild(el);
-    }
-    el.textContent = message;
-    el.className   = `sandbox-status-toast ${type}`;
-    // Force reflow so the CSS transition fires even on back-to-back calls.
-    el.offsetHeight; // eslint-disable-line no-unused-expressions
-    el.classList.add('visible');
-    setTimeout(() => el.classList.remove('visible'), 3000);
-}
-
-/** Show the playground guest-quota modal and lock the chat input. */
-function showQuotaModal() {
-    const modal = document.getElementById('quotaModal');
-    if (!modal) return;
-    modal.classList.add('active');
-    if (typeof lucide !== 'undefined') lucide.createIcons();
-
-    // Hard-block the chat input — only restored after a real sign-in.
-    if (window.app) {
-        window.app.promptInput.disabled = true;
-        window.app.promptInput.placeholder = 'Sign in to continue…';
-        window.app.sendBtn.disabled = true;
-    }
-}
-
-/** Hide the playground guest-quota modal. */
-function hideQuotaModal() {
-    document.getElementById('quotaModal')?.classList.remove('active');
-}
-
-/**
- * "Return to Home" action from the quota modal.
- * Exits playground mode visually, then signs out the anonymous Firebase session
- * so the app returns to proper guest/sign-in state with the input locked.
- */
-async function exitPlaygroundFromQuota() {
-    hideQuotaModal();
-
-    // Exit playground mode UI (deactivate toggle button, remove theme, restore dropdowns).
-    const queryChinookBtn = document.getElementById('queryChinookBtn');
-    if (queryChinookBtn) queryChinookBtn.classList.remove('active');
-    document.body.classList.remove('active-playground');
-    window.app?.setPlaygroundMode?.(false);
-
-    // Sign out the anonymous Firebase session so onAuthStateChanged fires with null,
-    // returning the app to an unauthenticated guest state (input stays locked).
-    if (_currentUser?.isAnonymous) {
-        try { await firebase.auth().signOut(); } catch (e) {
-            console.warn('[Quota] anonymous sign-out error:', e);
-        }
-        // Explicitly keep input locked in case onAuthStateChanged fires slowly.
-        if (window.app) {
-            window.app.promptInput.disabled = true;
-            window.app.promptInput.placeholder = 'Sign in to start chatting…';
-            window.app.sendBtn.disabled = true;
-        }
-    }
-}
-
-/**
- * Fetch the caller's playground_count from Cosmos via GET /api/profile.
- * Returns 0 when the profile cannot be read (e.g. anonymous user not yet created).
- */
-async function checkPlaygroundQuota() {
-    try {
-        const res = await apiFetch('/api/profile');
-        if (!res.ok) return 0;
-        const data = await res.json();
-        return typeof data.playground_count === 'number' ? data.playground_count : 0;
-    } catch (e) {
-        if (!e.guestMode) console.warn('[Playground] checkPlaygroundQuota error:', e);
-        return 0;
-    }
-}
-
-/** Timeout (ms) for playground reset — avoids indefinite hang if server is slow. */
-const PLAYGROUND_RESET_TIMEOUT_MS = 30000;
-
-/** Confirm handler — call POST /api/playground/reset with progress modal feedback. */
-async function executePlaygroundReset() {
-    const confirmBtn = document.getElementById('sandboxConfirmBtn');
-    if (confirmBtn) confirmBtn.disabled = true;
-    hideSandboxConfirmToast();
-
-    // ── Open the progress modal as a visual loading indicator ────────────
-    const app = window.app;
-    app?._showIndexingModal?.('playground');
-    app?._updateIndexingProgress?.(0, 'Copying chinook_master.db → playground.db…', null);
-
-    // Animate bar to ~45 % while the network request is in flight.
-    let fakePct = 0;
-    const fakeTimer = setInterval(() => {
-        fakePct = Math.min(fakePct + 9, 45);
-        app?._updateIndexingProgress?.(fakePct, 'Restoring database file…', null);
-    }, 120);
-
-    const controller = new AbortController();
-    const timeoutId  = setTimeout(() => controller.abort(), PLAYGROUND_RESET_TIMEOUT_MS);
-
-    try {
-        const res = await apiFetch('/api/playground/reset', {
-            method:  'POST',
-            signal:  controller.signal,
-        });
-        clearTimeout(timeoutId);
-        clearInterval(fakeTimer);
-
-        if (res.ok) {
-            // Sweep to 100 %, brief pause, then close + toast.
-            app?._updateIndexingProgress?.(100, '✔ Sandbox restored from master', 0);
-            setTimeout(() => {
-                app?._hideIndexingModal?.();
-                showSandboxStatusToast('success', '✔ Sandbox reset — playground.db restored from master.');
-            }, 1200);
-            console.log('[Playground] reset successful');
-        } else {
-            const err = await res.text().catch(() => String(res.status));
-            app?._hideIndexingModal?.();
-            showSandboxStatusToast('error', `Reset failed: ${err}`);
-            console.error('[Playground] reset failed:', err);
-        }
-    } catch (e) {
-        clearTimeout(timeoutId);
-        clearInterval(fakeTimer);
-        app?._hideIndexingModal?.();
-        const msg = e.name === 'AbortError'
-            ? 'Reset timed out — server may be slow or unavailable. Try again.'
-            : `Reset error: ${e.message}`;
-        showSandboxStatusToast('error', msg);
-        console.error('[Playground] reset error:', e);
-    } finally {
-        if (confirmBtn) {
-            confirmBtn.disabled = false;
-            confirmBtn.innerHTML = '<i data-lucide="rotate-ccw"></i> Yes, Reset';
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-        }
-    }
-}
-
 /** Cancel button — sign out fully and return to guest/sign-in state. */
 async function cancelVerification() {
     _pendingVerificationUser = null;
@@ -385,15 +214,34 @@ async function getApiToken() {
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
+/**
+ * Show a brief auto-dismissing status toast.
+ * @param {'success'|'error'} type
+ * @param {string} message
+ */
+function showStatusToast(type, message) {
+    let el = document.getElementById('statusToast');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'statusToast';
+        el.className = 'sandbox-status-toast';
+        document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.className = `sandbox-status-toast ${type}`;
+    el.offsetHeight; // eslint-disable-line no-unused-expressions
+    el.classList.add('visible');
+    setTimeout(() => el.classList.remove('visible'), 3000);
+}
+
 function showAuthGate() { /* no-op */ }
 function hideAuthGate()  { /* no-op */ }
 
 function updateAuthButtons() {
     const hasAccount = isAuthenticated();
-    const isAnonymous = !!(_currentUser?.isAnonymous);
     const el         = (id) => document.getElementById(id);
 
-    // Avatar: guest icon (circle-user) | anonymous icon (ghost) | initials (authenticated)
+    // Avatar: guest icon (circle-user) | initials (authenticated)
     const avatarIcon = el('avatarIcon');
     const avatarInitials = el('avatarInitials');
     if (avatarIcon && avatarInitials) {
@@ -401,11 +249,6 @@ function updateAuthButtons() {
             avatarIcon.style.display = '';
             avatarIcon.setAttribute('data-lucide', 'circle-user');
             avatarIcon.title = 'Sign in';
-            avatarInitials.style.display = 'none';
-        } else if (isAnonymous) {
-            avatarIcon.style.display = '';
-            avatarIcon.setAttribute('data-lucide', 'ghost');
-            avatarIcon.title = 'Anonymous (Playground guest)';
             avatarInitials.style.display = 'none';
         } else {
             avatarIcon.style.display = 'none';
@@ -813,80 +656,12 @@ class DaiBaiApp {
         console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
 
-    /**
-     * Called by the "Query Chinook DB" sidebar button.
-     * Updates the module-level flag and re-enables/disables the chat input for
-     * anonymous users who enter playground mode via guest access.
-     */
-    setPlaygroundMode(active) {
-        _isPlaygroundActive = active;
-
-        // ── Body class for global CSS overrides ──────────────────────────
-        document.body.classList.toggle('playground-active', active);
-
-        if (active) {
-            // ── Lock the nav dropdowns to Chinook / Sandbox LLM ──────────
-            // Save current HTML so we can restore exactly on exit.
-            this._savedDbHtml  = this.databaseSelect.outerHTML.includes('chinook_playground')
-                ? this._savedDbHtml  // already saved from a previous enter
-                : this.databaseSelect.innerHTML;
-            this._savedLlmHtml = this.llmSelect.outerHTML.includes('_sandbox')
-                ? this._savedLlmHtml
-                : this.llmSelect.innerHTML;
-            this._savedDbValue  = this.databaseSelect.value;
-            this._savedLlmValue = this.llmSelect.value;
-
-            this.databaseSelect.innerHTML =
-                '<option value="chinook_playground">Chinook (SQLite)</option>';
-            this.databaseSelect.value    = 'chinook_playground';
-            this.databaseSelect.disabled = true;
-
-            this.llmSelect.innerHTML =
-                '<option value="_sandbox">GPT-4o-Mini (Sandbox)</option>';
-            this.llmSelect.value    = '_sandbox';
-            this.llmSelect.disabled = true;
-
-            // ── Anonymous-guest tooltip ───────────────────────────────────
-            const anonMsg = _currentUser?.isAnonymous
-                ? 'Sign in to connect your own data.'
-                : 'Locked while Playground mode is active.';
-            this.databaseSelect.title = anonMsg;
-            this.llmSelect.title      = anonMsg;
-
-            // ── Re-enable the chat input for anonymous/guest users ────────
-            if (_currentUser?.isAnonymous) {
-                this.promptInput.disabled = false;
-                this.promptInput.placeholder = 'Ask me about the Chinook database…';
-                this.sendBtn.disabled = false;
-            }
-
-        } else {
-            // ── Unlock and restore the nav dropdowns ─────────────────────
-            this.databaseSelect.disabled = false;
-            this.llmSelect.disabled      = false;
-            this.databaseSelect.title    = '';
-            this.llmSelect.title         = '';
-
-            // Reload from server to restore real options & persisted selection.
-            this.loadSettings().catch(() => {
-                // Fallback: restore saved HTML directly if API is unreachable.
-                if (this._savedDbHtml)  this.databaseSelect.innerHTML = this._savedDbHtml;
-                if (this._savedLlmHtml) this.llmSelect.innerHTML      = this._savedLlmHtml;
-                if (this._savedDbValue)  this.databaseSelect.value    = this._savedDbValue;
-                if (this._savedLlmValue) this.llmSelect.value         = this._savedLlmValue;
-            });
-
-        }
-
-        console.log('[Playground] _isPlaygroundActive =', active);
-    }
-
     // ── Schema Index: Auto-index when not indexed, disable inputs until done ──
 
     /** Disable or re-enable all interactive inputs (during indexing). */
     _setInputsEnabledForIndexing(enabled) {
         const disabled = !enabled;
-        const els = [
+        const         els = [
             this.promptInput,
             this.sendBtn,
             this.databaseSelect,
@@ -896,14 +671,13 @@ class DaiBaiApp {
             this.executeCheckbox,
             this.attachBtn,
             this.settingsBtn,
-            document.getElementById('queryChinookBtn'),
             document.getElementById('schemaBtn'),
         ];
         els.forEach(el => {
             if (el) {
                 el.disabled = disabled;
                 if (el === this.promptInput) {
-                    el.placeholder = disabled ? 'Indexing database…' : (_isPlaygroundActive ? 'Ask me about the Chinook database…' : 'Ask me about your database…');
+                    el.placeholder = disabled ? 'Indexing database…' : 'Ask me about your database…';
                 }
             }
         });
@@ -994,7 +768,7 @@ class DaiBaiApp {
                     this._updateIndexingProgress(100, msg.status, 0);
                     const isStartup = dbId === 'all' || dbId === 'startup';
                     if (isStartup) {
-                        showSandboxStatusToast('success', 'Startup indexing complete. All databases ready.');
+                        showStatusToast('success', 'Startup indexing complete. All databases ready.');
                     }
                     setTimeout(() => {
                         this._hideIndexingModal();
@@ -1003,14 +777,14 @@ class DaiBaiApp {
                     }, 1400);
                 } else if (msg.type === 'error') {
                     this._hideIndexingModal();
-                    showSandboxStatusToast('error', `Indexing failed: ${msg.message}`);
+                    showStatusToast('error', `Indexing failed: ${msg.message}`);
                     resolve(); // still re-enable inputs
                 }
             };
 
             ws.onerror = () => {
                 this._hideIndexingModal();
-                showSandboxStatusToast('error', 'Indexing connection failed');
+                showStatusToast('error', 'Indexing connection failed');
                 resolve();
             };
 
@@ -1554,23 +1328,13 @@ class DaiBaiApp {
             const settings = await response.json();
             const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
             
-            // Populate database dropdown with optgroups: "Your Databases" vs "Playground Databases"
-            const savedDb = prefs.database && settings.databases.includes(prefs.database) 
+            // Populate database dropdown
+            const savedDb = prefs.database && settings.databases.includes(prefs.database)
                 ? prefs.database : settings.current_database;
-            const detail = settings.databases_detail || settings.databases.map(n => ({ name: n, is_playground: false }));
-            const yourDbs = detail.filter(d => !d.is_playground).map(d => d.name);
-            const playgroundDbs = detail.filter(d => d.is_playground).map(d => d.name);
-            let html = '';
-            if (yourDbs.length) {
-                html += `<optgroup label="Your Databases">${yourDbs.map(db => 
-                    `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`).join('')}</optgroup>`;
-            }
-            if (playgroundDbs.length) {
-                html += `<optgroup label="Playground Databases">${playgroundDbs.map(db => 
-                    `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`).join('')}</optgroup>`;
-            }
-            if (!html) html = `<option value="">— no databases —</option>`;
-            this.databaseSelect.innerHTML = html;
+            this.databaseSelect.innerHTML = (settings.databases.length
+                ? settings.databases.map(db =>
+                    `<option value="${db}" ${db === savedDb ? 'selected' : ''}>${db}</option>`).join('')
+                : '<option value="">— no databases —</option>');
 
             // Populate LLM dropdown
             const savedLlm = prefs.llm && settings.llm_providers.includes(prefs.llm)
@@ -1844,11 +1608,7 @@ class DaiBaiApp {
 
             case 'error':
                 this.removeLoadingIndicator();
-                if (data.content === 'QUOTA_EXCEEDED') {
-                    showQuotaModal();
-                } else {
-                    this.renderErrorMessage(data.content);
-                }
+                this.renderErrorMessage(data.content || 'An error occurred');
                 break;
 
             case 'trace':
@@ -1893,15 +1653,7 @@ class DaiBaiApp {
     }
 
     async sendMessage() {
-        // In playground mode, anonymous users are allowed (they signed in silently).
-        // Re-check quota on every send so we block mid-session when limit is reached.
-        if (_isPlaygroundActive && _currentUser?.isAnonymous) {
-            const count = await checkPlaygroundQuota();
-            if (count >= 20) {
-                showQuotaModal();
-                return;
-            }
-        } else if (!isAuthenticated()) {
+        if (!isAuthenticated()) {
             signIn();
             return;
         }
@@ -1968,7 +1720,6 @@ class DaiBaiApp {
                 query: query,
                 conversation_id: this.conversationId,
                 execute: this.executeCheckbox.checked,
-                is_playground: _isPlaygroundActive,
                 verbose: !!verbose,
                 database: this.databaseSelect?.value || null,
             };
@@ -1995,21 +1746,15 @@ class DaiBaiApp {
                     query: query,
                     conversation_id: this.conversationId,
                     execute: this.executeCheckbox.checked,
-                    is_playground: _isPlaygroundActive,
                     verbose: !!verbose,
                     database: this.databaseSelect?.value || null,
                 }),
                 signal: this._abortController?.signal,
             });
 
-            // Handle quota-exceeded response from server.
             if (response.status === 403) {
                 const err = await response.json().catch(() => ({}));
                 this.removeLoadingIndicator();
-                if (err.detail === 'QUOTA_EXCEEDED') {
-                    showQuotaModal();
-                    return;
-                }
                 throw new Error(`HTTP 403: ${err.detail || 'Forbidden'}`);
             }
 
@@ -2682,14 +2427,10 @@ class DaiBaiApp {
         const dbOptions = ['mysql', 'postgres', 'oracle', 'sqlserver'];
         const dbHtml = this.renderDBTemplate(db.type || 'mysql', db.hostType || 'local', db.cloudProvider || 'aws', db);
         const list = this.settingsState?.database_list || [];
-        const yourDbs = list.filter(d => !d.is_playground);
-        const playgroundDbs = list.filter(d => d.is_playground);
-        const dbItemRow = (d, showActions) => `
-            <div class="db-list-item ${d.is_playground ? 'db-list-item--playground' : ''}" data-name="${this.escapeHtml(d.name)}">
+        const dbItemRow = (d) => `
+            <div class="db-list-item" data-name="${this.escapeHtml(d.name)}">
                 <span class="db-list-item-name">${this.escapeHtml(d.name)}</span>
                 <span class="db-list-item-type">${this.escapeHtml(d.type || 'mysql')}</span>
-                ${d.is_playground ? '<span class="db-list-item-badge">Read-only sandbox</span>' : ''}
-                ${showActions ? `
                 <div class="db-list-item-actions">
                     <button type="button" class="db-list-item-btn db-edit-btn" title="Edit connection" data-name="${this.escapeHtml(d.name)}" aria-label="Edit ${this.escapeHtml(d.name)}">
                         <i data-lucide="pencil"></i>
@@ -2698,24 +2439,13 @@ class DaiBaiApp {
                         <i data-lucide="trash-2"></i>
                     </button>
                 </div>
-                ` : ''}
             </div>`;
         const connectedSection = list.length ? `
             <div class="settings-group">
                 <div class="settings-group-title">Connected Databases</div>
-                ${yourDbs.length ? `
                 <div class="db-list-section">
-                    <div class="db-list-section-label">Your Databases</div>
-                    ${yourDbs.map(d => dbItemRow(d, true)).join('')}
+                    ${list.map(d => dbItemRow(d)).join('')}
                 </div>
-                ` : ''}
-                ${playgroundDbs.length ? `
-                <div class="db-list-section">
-                    <div class="db-list-section-label">Playground Databases</div>
-                    <p class="db-list-section-hint">Safe, shared sample databases. Read-only.</p>
-                    ${playgroundDbs.map(d => dbItemRow(d, false)).join('')}
-                </div>
-                ` : ''}
             </div>
             ` : '';
         return `
@@ -3301,106 +3031,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── Playground sidebar ──────────────────────────────────────────────────
-
-    // Toggle the Playground submenu open/closed.
-    document.getElementById('playgroundToggle')?.addEventListener('click', () => {
-        const btn     = document.getElementById('playgroundToggle');
-        const submenu = document.getElementById('playgroundSubmenu');
-        const isOpen  = btn.getAttribute('aria-expanded') === 'true';
-        btn.setAttribute('aria-expanded', String(!isOpen));
-        btn.classList.toggle('open', !isOpen);
-        submenu.classList.toggle('open', !isOpen);
-        submenu.setAttribute('aria-hidden', String(isOpen));
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-    });
-
-    // "Query Chinook DB" — activate playground mode (sign in anonymously if needed).
-    document.getElementById('queryChinookBtn')?.addEventListener('click', async () => {
-        const sidebar  = document.getElementById('sidebar');
-        const btn      = document.getElementById('queryChinookBtn');
-        const turningOn = !btn.classList.contains('active');
-
-        const showPlaygroundLoading = () => {
-            btn.disabled = true;
-            btn.classList.add('loading');
-            const orig = btn.innerHTML;
-            btn.dataset.origHtml = orig;
-            btn.innerHTML = `<span class="nav-subitem-loading"><span class="loading-dots"><span></span><span></span><span></span></span><span class="loading-label">Anonymous sign‑in…</span></span>`;
-        };
-        const hidePlaygroundLoading = () => {
-            btn.disabled = false;
-            btn.classList.remove('loading');
-            if (btn.dataset.origHtml) {
-                btn.innerHTML = btn.dataset.origHtml;
-                delete btn.dataset.origHtml;
-            }
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-        };
-
-        if (turningOn) {
-            showPlaygroundLoading();
-            window.app?.showLoadingIndicator?.('Anonymous sign‑in…');
-            try {
-                // Ensure a Firebase session exists (anonymous is fine for guests).
-                if (!_currentUser) {
-                    console.log('[Playground] No session — signing in anonymously…');
-                    const cred = await firebase.auth().signInAnonymously();
-                    _currentUser = cred.user;
-                    console.log('[Playground] Anonymous UID:', cred.user.uid);
-                }
-
-                // Check quota for anonymous (guest) users.
-                if (_currentUser.isAnonymous) {
-                    const count = await checkPlaygroundQuota();
-                    console.log(`[Playground] Guest quota: ${count}/20`);
-                    if (count >= 20) {
-                        showQuotaModal();
-                        window.app?.removeLoadingIndicator?.();
-                        return;
-                    }
-                }
-
-                // Anonymous users skip exitGuestMode() so they never get a WebSocket.
-                // Open one now so playground messages stream instead of falling back to
-                // the slow blocking REST endpoint.
-                if (window.app && (!window.app.ws || window.app.ws.readyState !== WebSocket.OPEN)) {
-                    console.log('[Playground] Opening WebSocket for anonymous session…');
-                    try {
-                        await window.app.connectWebSocket();
-                    } catch (e) {
-                        console.warn('[Playground] WebSocket failed to open — will use REST fallback:', e);
-                    }
-                }
-            } catch (e) {
-                console.error('[Playground] Anonymous sign-in failed:', e);
-                showSandboxStatusToast('error', 'Could not start a guest session — please sign in.');
-                return;
-            } finally {
-                window.app?.removeLoadingIndicator?.();
-                hidePlaygroundLoading();
-            }
-        }
-
-        btn.classList.toggle('active', turningOn);
-        sidebar?.classList.toggle('active-playground', turningOn);
-        window.app?.setPlaygroundMode?.(turningOn);
-        console.log('[Playground] mode:', turningOn ? 'ON' : 'OFF');
-    });
-
-    // "Reset Sandbox" — show confirmation toast.
-    document.getElementById('resetSandboxBtn')?.addEventListener('click', showSandboxConfirmToast);
-    document.getElementById('sandboxCancelBtn')?.addEventListener('click', hideSandboxConfirmToast);
-    document.getElementById('sandboxToastClose')?.addEventListener('click', hideSandboxConfirmToast);
-    document.getElementById('sandboxConfirmBtn')?.addEventListener('click', executePlaygroundReset);
-
-    // Quota modal buttons.
-    document.getElementById('quotaSignupBtn')?.addEventListener('click', () => {
-        hideQuotaModal();
-        signIn();
-    });
-    document.getElementById('quotaReturnBtn')?.addEventListener('click', exitPlaygroundFromQuota);
-
     // Verification modal buttons.
     document.getElementById('checkVerifiedBtn')?.addEventListener('click', checkEmailVerified);
     document.getElementById('resendVerificationBtn')?.addEventListener('click', resendVerificationEmail);
@@ -3466,11 +3096,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 await window.app.exitGuestMode();
             }
 
-        } else if (user?.isAnonymous) {
-            _currentUser = user;
-
         } else {
-            // No session at all.
+            // No session at all (or anonymous — treated as guest).
             const fbKeys = Object.keys(localStorage).filter(k => k.startsWith('firebase:'));
             console.group('[AUTH] No session — guest mode');
             console.log('  firebase localStorage keys:',

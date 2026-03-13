@@ -670,9 +670,8 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             except Exception:
                 pass  # leave as None; don't break settings response
 
-        playground = getattr(config, "playground_databases", None) or []
         databases_detail = [
-            {"name": n, "is_playground": n in playground}
+            {"name": n, "is_playground": False}
             for n in databases
         ]
 
@@ -757,9 +756,6 @@ async def admin_get_databases(_user: Dict[str, Any] = Depends(get_current_user))
             entry["user"] = db_config.user
             entry["password"] = _mask_password(db_config.password)
             entry["ssl"] = db_config.ssl
-        if name in getattr(config, "playground_databases", []):
-            entry["is_playground"] = True
-            entry["connection"] = "connected"
         databases.append(entry)
     return {"databases": databases}
 

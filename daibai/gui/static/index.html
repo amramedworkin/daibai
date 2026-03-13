@@ -194,36 +194,6 @@
                         </div>
                     </div>
                 </div>
-                <!-- EXPLORE navigation group -->
-                <nav class="nav-explore" aria-label="Explore">
-                    <div class="nav-group">
-                        <div class="nav-group-label">EXPLORE</div>
-
-                        <div class="nav-item" id="playgroundNavItem">
-                            <button class="nav-item-header"
-                                    id="playgroundToggle"
-                                    aria-expanded="false"
-                                    aria-controls="playgroundSubmenu"
-                                    title="Playground">
-                                <i data-lucide="flask-conical" class="nav-item-icon"></i>
-                                <span class="nav-item-label">Playground</span>
-                                <i data-lucide="chevron-right" class="nav-chevron"></i>
-                            </button>
-
-                            <div class="nav-submenu" id="playgroundSubmenu" aria-hidden="true">
-                                <button class="nav-subitem" id="queryChinookBtn" title="Switch to Chinook sandbox chat">
-                                    <i data-lucide="terminal-square"></i>
-                                    Query Chinook DB
-                                </button>
-                                <button class="nav-subitem nav-subitem--reset" id="resetSandboxBtn" title="Restore playground.db from master">
-                                    <i data-lucide="rotate-ccw"></i>
-                                    Reset Sandbox
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </nav>
-
                 <div class="nav-footer">
                     <button type="button" id="sidebarSignInBtn" class="sidebar-icon sidebar-signin" title="Sign in to save history and access settings" style="display:none">
                         <i data-lucide="log-in"></i>
@@ -239,24 +209,6 @@
                     </div>
                 </div>
             </aside>
-
-            <!-- Sandbox reset confirmation toast -->
-            <div class="sandbox-toast" id="sandboxToast" role="alertdialog" aria-modal="true" aria-hidden="true">
-                <div class="sandbox-toast-icon"><i data-lucide="triangle-alert"></i></div>
-                <div class="sandbox-toast-body">
-                    <p class="sandbox-toast-title">Reset Sandbox?</p>
-                    <p class="sandbox-toast-msg">This will overwrite <code>playground.db</code> with the original Chinook master. All unsaved changes will be lost.</p>
-                    <div class="sandbox-toast-actions">
-                        <button class="sandbox-toast-btn sandbox-toast-btn--confirm" id="sandboxConfirmBtn">
-                            <i data-lucide="rotate-ccw"></i> Yes, Reset
-                        </button>
-                        <button class="sandbox-toast-btn sandbox-toast-btn--cancel" id="sandboxCancelBtn">Cancel</button>
-                    </div>
-                </div>
-                <button class="sandbox-toast-close" id="sandboxToastClose" aria-label="Dismiss">
-                    <i data-lucide="x"></i>
-                </button>
-            </div>
 
             <!-- Main Chat Area -->
             <main class="chat-area">
@@ -484,30 +436,6 @@
                     <span class="indexing-processing-text">Processing</span>
                 </div>
                 <p class="indexing-status-line" id="indexingStatusLine">Starting…</p>
-            </div>
-        </div>
-
-        <!-- Playground Guest Quota Modal -->
-        <div class="modal quota-modal" id="quotaModal">
-            <div class="modal-content quota-modal-content">
-                <div class="quota-icon">
-                    <i data-lucide="zap-off"></i>
-                </div>
-                <h2 class="quota-title">Guest Limit Reached</h2>
-                <p class="quota-body">
-                    You've used your <strong>20 free Playground queries</strong>.<br>
-                    Sign up to keep your history and keep playing!
-                </p>
-                <div class="quota-actions">
-                    <button class="btn btn-primary quota-btn--signup" id="quotaSignupBtn">
-                        <i data-lucide="user-plus"></i>
-                        Sign Up Now
-                    </button>
-                    <button class="btn btn-secondary quota-btn--return" id="quotaReturnBtn">
-                        <i data-lucide="home"></i>
-                        Return to Home
-                    </button>
-                </div>
             </div>
         </div>
 
