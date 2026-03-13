@@ -69,7 +69,7 @@ if str(_ROOT) not in sys.path:
 
 from daibai.core.cache import CacheManager
 from daibai.core.config import get_redis_connection_string
-from daibai.core.schema import SchemaManager
+from daibai.core.schema import SchemaManager, build_sqlite_execute_fn
 
 logger = logging.getLogger(__name__)
 
@@ -245,10 +245,11 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         return 0
 
     config_src = str(config_path) if config_path else "(config path unknown)"
+    lib = "sqlite3" if db_config.type == "sqlite" else "mysql-connector-python"
     logger.info(
         "[index] about to index db=%s because defined in daibai.yaml | "
-        "config=%s | library=mysql-connector-python",
-        db_name, config_src,
+        "config=%s | library=%s",
+        db_name, config_src, lib,
     )
     logger.info("[index] %s: start (force=%s)", db_name, force)
 
@@ -260,7 +261,8 @@ def index_named_db(db_name: str, *, force: bool = False) -> int:
         )
         return 0
 
-    sm = SchemaManager(config=db_config, cache_manager=cache)
+    execute_fn = build_sqlite_execute_fn(db_config._sqlite_path()) if db_config.type == "sqlite" else None
+    sm = SchemaManager(config=db_config, execute_fn=execute_fn, cache_manager=cache)
 
     n = sm.index_schema(
         schema_name=db_name,

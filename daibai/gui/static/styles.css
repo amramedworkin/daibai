@@ -632,15 +632,16 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 8px;
     margin-top: 12px;
     padding-top: 8px;
-    font-size: 11px;
-    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
 }
 
 .powered-by img {
-    height: 16px;
+    height: 28px;
     width: auto;
     object-fit: contain;
 }
@@ -649,14 +650,15 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 12px;
     margin-bottom: 20px;
-    font-size: 13px;
-    color: var(--text-muted);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-secondary);
 }
 
 .powered-by-welcome img {
-    height: 20px;
+    height: 40px;
     width: auto;
     object-fit: contain;
 }

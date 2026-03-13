@@ -32,7 +32,7 @@ def test_resolve_env_vars():
 
 
 def test_database_config():
-    """Test DatabaseConfig creation."""
+    """Test DatabaseConfig creation (MySQL default)."""
     config = DatabaseConfig(
         name="test",
         host="localhost",
@@ -45,7 +45,25 @@ def test_database_config():
     assert config.name == "test"
     assert config.host == "localhost"
     assert config.port == 3306
+    assert config.type == "mysql"
     assert "mysql://" in config.connection_string()
+
+
+def test_database_config_sqlite():
+    """Test DatabaseConfig for SQLite type."""
+    config = DatabaseConfig(
+        name="local",
+        host="localhost",
+        port=3306,
+        database="mydata.db",
+        user="",
+        password="",
+        type="sqlite",
+    )
+    assert config.type == "sqlite"
+    conn_str = config.connection_string()
+    assert conn_str.startswith("sqlite:///")
+    assert "mydata" in conn_str or "user_sqlite" in conn_str
 
 
 def test_llm_provider_config():

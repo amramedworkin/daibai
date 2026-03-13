@@ -26,6 +26,11 @@
   <em>🌐 Live at <a href="https://daibaichat.com"><strong>daibaichat.com</strong></a></em>
 </p>
 
+<p style="display: flex; align-items: center; justify-content: center; gap: 5px; height: 40px;">
+    <strong><em>Powered by&nbsp; <a href="https://itprotects.com"><img src="./daibai/gui/static/it_protects_logo_white.webp" alt="it protects" height="32" style="vertical-align: middle;"/></a></em></strong>
+</p>
+
+
 ---
 
 DaiBai is an AI-powered natural language database assistant that converts your questions into SQL queries. It supports multiple LLM providers (Gemini, OpenAI, Azure, Anthropic, Ollama) and multiple database connections.

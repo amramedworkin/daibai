@@ -21,7 +21,7 @@ from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_
 from .guardrails import GuardrailPipeline, SQLValidator, SecurityViolation, extract_tables_from_query
 from .cache import CacheManager
 from .metrics import SchemaPruningMetrics
-from .schema import SchemaManager, get_index_namespace
+from .schema import SchemaManager, get_index_namespace, build_sqlite_execute_fn
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
@@ -98,18 +98,24 @@ class DatabaseRunner:
     def _ensure_connection(self):
         """Ensure database connection is established."""
         if self._connection is None:
-            try:
-                import mysql.connector
-                self._connection = mysql.connector.connect(
-                    host=self.config.host,
-                    port=self.config.port,
-                    database=self.config.database,
-                    user=self.config.user,
-                    password=self.config.password,
-                )
-            except ImportError:
-                raise ImportError("MySQL support requires mysql-connector-python")
-    
+            if self.config.type == "sqlite":
+                import sqlite3
+                path = self.config._sqlite_path()
+                self._connection = sqlite3.connect(str(path))
+                self._connection.row_factory = sqlite3.Row
+            else:
+                try:
+                    import mysql.connector
+                    self._connection = mysql.connector.connect(
+                        host=self.config.host,
+                        port=self.config.port,
+                        database=self.config.database,
+                        user=self.config.user,
+                        password=self.config.password,
+                    )
+                except ImportError:
+                    raise ImportError("MySQL support requires mysql-connector-python")
+
     def run_sql(
         self,
         sql: str,
@@ -128,19 +134,30 @@ class DatabaseRunner:
         self._ensure_connection()
 
         try:
-            cursor = self._connection.cursor(dictionary=True)
-            cursor.execute(sql)
-            
-            # Check if this is a SELECT-like query
-            if cursor.description:
-                rows = cursor.fetchall()
-                return pd.DataFrame(rows)
+            if self.config.type == "sqlite":
+                cursor = self._connection.cursor()
+                cursor.execute(sql)
+                if cursor.description:
+                    rows = [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+                    return pd.DataFrame(rows)
+                else:
+                    self._connection.commit()
+                    return pd.DataFrame([{"affected_rows": cursor.rowcount}])
             else:
-                # For INSERT/UPDATE/DELETE, commit and return affected rows
-                self._connection.commit()
-                return pd.DataFrame([{"affected_rows": cursor.rowcount}])
+                cursor = self._connection.cursor(dictionary=True)
+                cursor.execute(sql)
+                if cursor.description:
+                    rows = cursor.fetchall()
+                    return pd.DataFrame(rows)
+                else:
+                    self._connection.commit()
+                    return pd.DataFrame([{"affected_rows": cursor.rowcount}])
         except Exception as e:
-            self._connection.rollback()
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass
             raise e
     
     async def run_sql_async(
@@ -262,8 +279,12 @@ class DaiBaiAgent:
         if name not in self._schema_managers:
             db_config = self.config.get_database(name)
             cache = self._get_cache_manager()
+            execute_fn = None
+            if db_config.type == "sqlite":
+                execute_fn = build_sqlite_execute_fn(db_config._sqlite_path())
             self._schema_managers[name] = SchemaManager(
                 config=db_config,
+                execute_fn=execute_fn,
                 cache_manager=cache,
                 redis_client=cache._get_client() if cache else None,
             )

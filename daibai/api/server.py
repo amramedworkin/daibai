@@ -714,19 +714,26 @@ async def admin_get_databases(_user: Dict[str, Any] = Depends(get_current_user))
     """
     Return daibai.yaml database configs for Admin > Test Database.
     Passwords are masked. Values come from .env / Key Vault (resolved by load_config).
+    Includes type (mysql/sqlite); for SQLite, host/port/user/password are omitted.
     """
     config = get_config()
     databases: List[Dict[str, Any]] = []
     for name, db_config in config.databases.items():
-        databases.append({
+        entry: Dict[str, Any] = {
             "name": name,
-            "host": db_config.host,
-            "port": db_config.port,
+            "type": db_config.type,
             "database": db_config.database,
-            "user": db_config.user,
-            "password": _mask_password(db_config.password),
-            "ssl": db_config.ssl,
-        })
+        }
+        if db_config.type == "sqlite":
+            entry["path"] = str(db_config._sqlite_path())
+            # Omit host, port, user, password for SQLite
+        else:
+            entry["host"] = db_config.host
+            entry["port"] = db_config.port
+            entry["user"] = db_config.user
+            entry["password"] = _mask_password(db_config.password)
+            entry["ssl"] = db_config.ssl
+        databases.append(entry)
     return {"databases": databases}
 
 
@@ -749,23 +756,40 @@ async def admin_test_database(
             detail=f"Database '{db_name}' not found. Available: {list(config.databases.keys())}",
         )
     try:
-        import mysql.connector
         db_config = config.get_database(db_name)
-        conn = mysql.connector.connect(
-            host=db_config.host,
-            port=db_config.port,
-            database=db_config.database,
-            user=db_config.user,
-            password=db_config.password,
-            ssl_disabled=not db_config.ssl,
-        )
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT 1 AS ok")
-            cur.fetchone()
-        finally:
-            conn.close()
-        return {"success": True, "message": f"Connected to {db_name} successfully"}
+        if db_config.type == "sqlite":
+            import sqlite3
+            path = db_config._sqlite_path()
+            conn = sqlite3.connect(str(path))
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT 1 AS ok")
+                cur.fetchone()
+            finally:
+                conn.close()
+            return {"success": True, "message": f"Connected to {db_name} successfully"}
+        elif db_config.type == "mysql":
+            import mysql.connector
+            conn = mysql.connector.connect(
+                host=db_config.host,
+                port=db_config.port,
+                database=db_config.database,
+                user=db_config.user,
+                password=db_config.password,
+                ssl_disabled=not db_config.ssl,
+            )
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT 1 AS ok")
+                cur.fetchone()
+            finally:
+                conn.close()
+            return {"success": True, "message": f"Connected to {db_name} successfully"}
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported database type: {db_config.type}",
+            )
     except Exception as e:
         logger.warning("[admin] test-database %s failed: %s", db_name, e)
         return {"success": False, "message": str(e)}

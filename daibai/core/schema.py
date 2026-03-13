@@ -1,21 +1,24 @@
 """
 Schema discovery for database metadata.
 
-Uses information_schema to extract table names, column names, and data types
-for grounding SQL generation. Supports semantic schema mapping: vectorize
-table DDLs and retrieve only relevant tables for a given query (table pruning).
+Uses information_schema (MySQL) or sqlite_master + PRAGMA (SQLite) to extract
+table names, column names, and data types for grounding SQL generation.
+Supports semantic schema mapping: vectorize table DDLs and retrieve only
+relevant tables for a given query (table pruning).
 
 Phase 3 Step 1: High-precision semantic schema indexing with discover_schema(),
 index_schema(), and search_schema_v1() using schema:v1:* Redis keys.
 """
 
 import hashlib
+import sqlite3
 import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from pathlib import Path
 
 from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
 from .instrumentation import track_start, track_underway, track_passed, track_failed, init_tracker
@@ -49,12 +52,55 @@ def get_index_namespace(config: Optional[DatabaseConfig], fallback: str) -> str:
     Generate a deterministic hash based on DB connection credentials.
     Ensures users with the same credentials share the same index,
     while users with different credentials get isolated indexes.
+    For SQLite, uses the file path.
     """
     if not config:
         return fallback
-    # Create a unique connection string for hashing
-    conn_str = f"{config.host}:{config.port}/{config.database}@{config.user}"
+    if config.type == "sqlite":
+        conn_str = str(config._sqlite_path())
+    else:
+        conn_str = f"{config.host}:{config.port}/{config.database}@{config.user}"
     return hashlib.sha256(conn_str.encode()).hexdigest()[:16]
+
+
+def build_sqlite_execute_fn(db_path: Path) -> Callable[[str, tuple], List[Dict[str, Any]]]:
+    """
+    Return an execute_fn compatible with SchemaManager for SQLite.
+    Queries sqlite_master + PRAGMA table_info and returns rows shaped like
+    MySQL's information_schema.COLUMNS.
+    """
+    def _execute_fn(sql: str, params: tuple) -> List[Dict[str, Any]]:
+        schema_name = params[0] if params else "main"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY name"
+            )
+            table_names = [r["name"] for r in cur.fetchall()]
+            rows: List[Dict[str, Any]] = []
+            for table_name in table_names:
+                cur.execute("PRAGMA table_info(?)", (table_name,))
+                for col in cur.fetchall():
+                    col_type = (col["type"] or "TEXT").upper()
+                    rows.append({
+                        "TABLE_SCHEMA": schema_name,
+                        "TABLE_NAME": table_name,
+                        "COLUMN_NAME": col["name"],
+                        "DATA_TYPE": col_type,
+                        "COLUMN_TYPE": col_type,
+                        "IS_NULLABLE": "NO" if col["notnull"] else "YES",
+                        "COLUMN_KEY": "PRI" if col["pk"] else "",
+                        "COLUMN_DEFAULT": col["dflt_value"],
+                        "EXTRA": "",
+                    })
+            return rows
+        finally:
+            conn.close()
+    return _execute_fn
 
 
 def _log_index_connection(
@@ -79,6 +125,13 @@ def _log_index_connection(
         logger.info(
             "[index] connection: db=%s | type=unknown | no config | redis_target=%s",
             db, redis_target,
+        )
+        return
+    if config.type == "sqlite":
+        path = config._sqlite_path()
+        logger.info(
+            "[index] connection: db=%s | type=SQLite | path=%s | redis_target=%s",
+            db, path, redis_target,
         )
         return
     endpoint = f"{config.host}:{config.port}"

@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
+# SQLite user-managed database storage (resolved at import; created on first use)
+SQLITE_STORAGE_DIR = Path("./data/user_sqlite").resolve()
+
 import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
@@ -150,6 +153,20 @@ def _fetch_secrets_from_keyvault(vault_url: str, secret_names: Optional[List[str
         return {}
 
 
+def _ensure_sqlite_storage_dir() -> Path:
+    """Ensure SQLITE_STORAGE_DIR exists; create if not. Return the path."""
+    SQLITE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return SQLITE_STORAGE_DIR
+
+
+def _sanitize_sqlite_filename(database: str) -> str:
+    """
+    Strip path traversal and use only the base filename.
+    e.g. '../../../etc/passwd' -> 'passwd'
+    """
+    return os.path.basename(database.strip() or "default.db")
+
+
 @dataclass
 class DatabaseConfig:
     """Configuration for a single database connection."""
@@ -160,9 +177,21 @@ class DatabaseConfig:
     user: str
     password: str
     ssl: bool = False
-    
+    type: str = "mysql"  # "mysql" or "sqlite"
+
+    def _sqlite_path(self) -> Path:
+        """Secure path to SQLite file. Sanitizes database name."""
+        _ensure_sqlite_storage_dir()
+        safe = _sanitize_sqlite_filename(self.database)
+        if not safe.lower().endswith(".db") and not safe.lower().endswith(".sqlite"):
+            safe = f"{safe}.db"
+        return SQLITE_STORAGE_DIR / safe
+
     def connection_string(self) -> str:
-        """Return MySQL connection string."""
+        """Return connection string for MySQL or SQLite."""
+        if self.type == "sqlite":
+            path = self._sqlite_path()
+            return f"sqlite:///{path}"
         ssl_param = "?ssl=true" if self.ssl else ""
         return f"mysql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}{ssl_param}"
 
@@ -279,14 +308,17 @@ def _find_config_file() -> Optional[Path]:
 
 def _parse_database_config(name: str, data: Dict[str, Any]) -> DatabaseConfig:
     """Parse a database configuration entry."""
+    db_type = (data.get("type") or "mysql").lower().strip()
+    database = data.get("name", data.get("database", name))
     return DatabaseConfig(
         name=name,
         host=data.get("host", "localhost"),
         port=int(data.get("port", 3306)),
-        database=data.get("name", data.get("database", name)),
+        database=database,
         user=data.get("user", "root"),
         password=data.get("password", ""),
         ssl=data.get("ssl", False),
+        type=db_type,
     )
 
 

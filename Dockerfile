@@ -29,5 +29,8 @@ RUN pip install --no-cache-dir -e ".[gui,gemini]"
 # Expose the port the API runs on (assuming 8000 for standard FastAPI)
 EXPOSE 8000
 
+# Persist user-managed SQLite databases; survives container restarts/updates
+VOLUME ["/app/data"]
+
 # Run the DaiBai API server via uvicorn
 CMD ["uvicorn", "daibai.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
