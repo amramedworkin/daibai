@@ -89,6 +89,17 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
     <script>
         (function() {
+            // Hardcoded Firebase config (matches daibai/gui/static/app.js)
+            var firebaseConfig = {
+                apiKey:            'AIzaSyBw9MKfYGp3_YpuTj2Uz0kO1ksFFzscZmU',
+                authDomain:        'daibai-affb0.firebaseapp.com',
+                projectId:         'daibai-affb0',
+                storageBucket:     'daibai-affb0.firebasestorage.app',
+                messagingSenderId: '483473257515',
+                appId:             '1:483473257515:web:2a9721d068ff5bb0aba66e',
+            };
+            firebase.initializeApp(firebaseConfig);
+
             var oobCode = null;
             var params = new URLSearchParams(window.location.search);
             oobCode = params.get('oobCode') || params.get('oob_code');
@@ -114,22 +125,7 @@
                 resultMsg.textContent = '';
                 console.log('[AUTH] verify-email: user clicked verify, applying action code');
 
-                fetch('/api/auth-config')
-                    .then(function(r) { return r.json(); })
-                    .then(function(config) {
-                        if (!config.firebase_api_key) throw new Error('Firebase config not available');
-                        if (!window.firebase || !window.firebase.apps.length) {
-                            firebase.initializeApp({
-                                apiKey: config.firebase_api_key,
-                                authDomain: config.firebase_auth_domain,
-                                projectId: config.firebase_project_id,
-                                storageBucket: config.firebase_storage_bucket,
-                                messagingSenderId: config.firebase_messaging_sender_id,
-                                appId: config.firebase_app_id
-                            });
-                        }
-                        return firebase.auth().applyActionCode(oobCode);
-                    })
+                firebase.auth().applyActionCode(oobCode)
                     .then(function() {
                         console.log('[AUTH] verify-email: applyActionCode SUCCESS');
                         resultMsg.className = 'msg success';
