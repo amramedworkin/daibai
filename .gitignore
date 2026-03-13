@@ -80,6 +80,7 @@ config/secrets/
 # .db files in data/ are runtime state, not source.
 # chinook_master.db and playground.db are generated at runtime.
 *.db
+data/Worldbank*
 *.sqlite3
 *.sqlite
 exports/
