@@ -334,7 +334,7 @@ def main() -> None:
         print()
         print("  Common causes:")
         print("   • Redis unreachable — verify REDIS_URL in .env")
-        print("     Run:  ./scripts/cli.sh cache-test")
+        print("     Run:  ./scripts/cli.sh verify-cache")
         print("   • Embedding model unavailable — check OPENAI_API_KEY (or")
         print("     whichever provider supplies embeddings in daibai.yaml)")
         print("   • Schema already up-to-date — re-run with --force to override")

@@ -485,9 +485,34 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
         if p_data.get("api_key"):
             provider.api_key = p_data["api_key"]
 
-    # Get defaults
+    # Inject default Azure OpenAI provider from environment variables.
+    # Only endpoint is required; API key can be blank for Managed Identity (DefaultAzureCredential).
+    azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
+    azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
+    azure_deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini").strip()
+
+    if azure_endpoint:
+        if "azure_openai" not in llm_providers:
+            llm_providers["azure_openai"] = LLMProviderConfig(
+                name="azure_openai",
+                provider_type="azure",
+                endpoint=azure_endpoint,
+                api_key=azure_key or None,  # Empty string becomes None for Managed Identity
+                model=azure_deployment,
+            )
+        else:
+            # Only override if not already set by user preferences/yaml
+            provider = llm_providers["azure_openai"]
+            if not provider.endpoint:
+                provider.endpoint = azure_endpoint
+            if not provider.api_key and azure_key:
+                provider.api_key = azure_key
+            if not provider.model:
+                provider.model = azure_deployment
+
+    # Get defaults — default to azure_openai when nothing specified in YAML or preferences
     default_database = db_section.get("default") or (list(databases.keys())[0] if databases else None)
-    default_llm = config_data.get("llm", {}).get("default") or (list(llm_providers.keys())[0] if llm_providers else None)
+    default_llm = (config_data.get("llm") or {}).get("default") or (list(llm_providers.keys())[0] if llm_providers else "azure_openai")
     if prefs.get("llm"):
         default_llm = prefs["llm"]
     

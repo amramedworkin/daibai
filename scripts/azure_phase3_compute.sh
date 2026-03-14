@@ -99,17 +99,23 @@ az containerapp registry set \
     --server "${ACR_NAME}.azurecr.io" \
     --identity system -o none
 
-# Update the container with the real image and inject the secure environment variables
+# Build env vars (no AZURE_OPENAI_API_KEY — container uses Managed Identity)
+SET_ENV=(
+    "COSMOS_ENDPOINT=https://${COSMOS_ACCOUNT_NAME}.documents.azure.com:443/"
+    "COSMOS_DATABASE=daibai-metadata"
+    "KEY_VAULT_URL=https://${KV_NAME}.vault.azure.net/"
+    "REDIS_URL=$REDIS_URL"
+    "ENVIRONMENT=production"
+)
+[[ -n "${AZURE_OPENAI_ENDPOINT:-}" ]] && SET_ENV+=("AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}")
+[[ -n "${AZURE_OPENAI_DEPLOYMENT:-}" ]] && SET_ENV+=("AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT}")
+
+# Update the container with the real image and inject environment variables
 az containerapp update \
     --name "daibai-api" \
     --resource-group "$AZURE_RG_NAME" \
     --image "${ACR_NAME}.azurecr.io/daibai-api:latest" \
-    --set-env-vars \
-        "COSMOS_ENDPOINT=https://${COSMOS_ACCOUNT_NAME}.documents.azure.com:443/" \
-        "COSMOS_DATABASE=daibai-metadata" \
-        "KEY_VAULT_URL=https://${KV_NAME}.vault.azure.net/" \
-        "REDIS_URL=$REDIS_URL" \
-        "ENVIRONMENT=production" \
+    --set-env-vars "${SET_ENV[@]}" \
     -o none
 
 DAIBAI_URL=$(az containerapp show --name "daibai-api" --resource-group "$AZURE_RG_NAME" --query properties.configuration.ingress.fqdn -o tsv)

@@ -703,7 +703,7 @@ handle_redis_menu() {
                 ;;
             4)
                 clear
-                "$SCRIPT_DIR/cli.sh" cache-test
+                "$SCRIPT_DIR/cli.sh" verify-cache
                 echo ""
                 echo "Press Enter to continue..."
                 read -r

@@ -166,7 +166,7 @@ Commands by Category:
   ------------------------------------------------------------------------------------------
   CACHE & REDIS
     cache-stats      Show Redis stats          |  cache-monitor    Live Redis monitor
-    cache-info       Show connection info      |  cache-test       Test connection
+    cache-info       Show connection info      |  verify-cache     Verify Redis connection
     redis-list       List all Redis keys with size and TTL
     redis-delete     Delete Redis key (interactive or pass key)
     redis-clear      Clear ALL Redis keys (--force to skip confirmation)
@@ -184,10 +184,11 @@ Commands by Category:
   ------------------------------------------------------------------------------------------
   DOCUMENTATION & TESTS
     docs             View documentation        |  docs-azure       View Azure guide
-    test             Run unit test suite       |  test-db          Test DB validation
-    test-cosmos      Test Cosmos DB E2E        |  test-redis       Test Redis integration
+    test             Run unit test suite       |  verify-db        Verify DB validation
+    verify-cosmos    Verify Cosmos DB E2E      |  test-redis       Test Redis integration
     test-guardrails  Test SQL guardrails       |  test-cache-connection Test CacheManager
     test-suite       Full test run: venv + pip install -e . + pytest + deactivate
+    verify-azure-llm  Test Azure AI Foundry endpoints and token quota
 
 EOF
 }
@@ -493,7 +494,7 @@ cmd_setup() {
 # AZURE COMMANDS
 # ============================================================================
 
-cmd_test_db() {
+cmd_verify_db() {
     local py
     if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
         py="$PROJECT_DIR/.venv/bin/python"
@@ -506,7 +507,7 @@ cmd_test_db() {
             echo "  source .venv/bin/activate"
             echo "  pip install -e ."
             echo ""
-            echo "  Then run: ./scripts/cli.sh test-db"
+            echo "  Then run: ./scripts/cli.sh verify-db"
             exit 1
         fi
     fi
@@ -515,7 +516,7 @@ cmd_test_db() {
     "$py" "$PROJECT_DIR/test_cosmos.py"
 }
 
-cmd_test_cosmos() {
+cmd_verify_cosmos() {
     load_env
     if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
         print_error "COSMOS_ENDPOINT not set. Add to environment:"
@@ -1014,6 +1015,15 @@ cmd_test_guardrails() {
     run_pytest tests/test_sql_guardrails.py -v -s
 }
 
+cmd_verify_azure_llm() {
+    print_header "Azure AI LLM E2E Test"
+    load_env
+    local py
+    py="$(_resolve_python)"
+    [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    "$py" "$PROJECT_DIR/scripts/test_azure_llm.py"
+}
+
 cmd_cache_stats() {
     local conn
     conn=$(get_redis_connection)
@@ -1119,7 +1129,7 @@ cmd_cache_info() {
     echo "    Options: No decompression | GZIP | LZ4 | SNAPPY | ZSTD | Brotli | PHP GZCompress"
     echo "  Key name format:                     Unicode (recommended) | HEX"
     echo ""
-    echo "Run './scripts/cli.sh cache-test' to verify connectivity before opening the Desktop App."
+    echo "Run './scripts/cli.sh verify-cache' to verify connectivity before opening the Desktop App."
     echo ""
 }
 
@@ -1130,7 +1140,7 @@ cmd_system_reset() {
     exec "$py" "$PROJECT_DIR/scripts/system_reset.py" "$@"
 }
 
-cmd_cache_test() {
+cmd_verify_cache() {
     local conn
     conn=$(get_redis_connection)
 
@@ -1814,7 +1824,7 @@ _CLI_WILDCARD_CMDS=(
     "redis-test:Add dummy key, list, delete, list (full cycle test)"
     "cache-info:Show connection info"
     "cache-monitor:Live Redis monitor"
-    "cache-test:Test connection"
+    "verify-cache:Verify Redis connection"
     "system-reset:Clear all state for fresh testing"
     "setup:Install dependencies"
     "install:Install dependencies"
@@ -1830,11 +1840,12 @@ _CLI_WILDCARD_CMDS=(
     "env-preferences:Show user preferences"
     "test:Run unit test suite"
     "test-suite:Full test run (venv + pip install -e . + pytest)"
-    "test-db:Test DB validation"
-    "test-cosmos:Test Cosmos DB E2E"
+    "verify-db:Verify DB validation"
+    "verify-cosmos:Verify Cosmos DB E2E"
     "test-redis:Test Redis integration"
     "test-guardrails:Test SQL guardrails"
     "test-cache-connection:Test CacheManager"
+    "verify-azure-llm:Test Azure AI Foundry endpoints and token quota"
     "logs-info:Log file location and size"
     "logs-tail:Live tail log"
     "logs-view:Page through log"
@@ -1964,11 +1975,11 @@ main() {
         my-ip)
             cmd_my_ip
             ;;
-        test-db)
-            cmd_test_db
+        verify-db)
+            cmd_verify_db
             ;;
-        test-cosmos)
-            cmd_test_cosmos
+        verify-cosmos)
+            cmd_verify_cosmos
             ;;
         verify-azure-auth)
             cmd_verify_azure_auth
@@ -2064,6 +2075,9 @@ main() {
         test-suite)
             cmd_test_suite "$@"
             ;;
+        verify-azure-llm)
+            cmd_verify_azure_llm
+            ;;
         cache-stats)
             cmd_cache_stats
             ;;
@@ -2089,8 +2103,8 @@ main() {
         cache-info)
             cmd_cache_info
             ;;
-        cache-test)
-            cmd_cache_test
+        verify-cache)
+            cmd_verify_cache
             ;;
         system-reset)
             cmd_system_reset "$@"

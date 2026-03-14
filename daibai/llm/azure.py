@@ -16,51 +16,79 @@ class AzureProvider(BaseLLMProvider):
     
     Supports:
     - Azure OpenAI deployments
-    - Azure AD authentication (optional)
+    - API key authentication (local / dev)
+    - Azure AD / Managed Identity (passwordless when api_key is empty)
     - Region-specific endpoints
     - All GPT-4 / GPT-3.5 features
     """
     
     def __init__(
         self,
-        api_key: str,
-        endpoint: str,
-        deployment: str,
+        endpoint: str = "",
+        deployment: str = "",
+        api_key: Optional[str] = None,
         api_version: str = "2024-02-01",
         temperature: float = 0.7,
         max_tokens: int = 4096,
         **kwargs
     ):
-        self.api_key = api_key
+        # Agent passes model=...; Azure uses it as deployment name
+        self.deployment = (deployment or kwargs.get("model") or "").strip()
+        self.api_key = (api_key or "").strip() or None
         self.endpoint = endpoint
-        self.deployment = deployment
         self.api_version = api_version
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = None
         self._async_client = None
+        self._async_credential = None  # Keep reference for async token provider
     
     def _ensure_client(self):
-        """Lazy initialization of Azure OpenAI client."""
+        """Lazy initialization of Azure OpenAI client (sync + async)."""
         if self._client is None:
             try:
                 from openai import AzureOpenAI, AsyncAzureOpenAI
                 
-                self._client = AzureOpenAI(
-                    api_key=self.api_key,
-                    api_version=self.api_version,
-                    azure_endpoint=self.endpoint,
-                )
-                self._async_client = AsyncAzureOpenAI(
-                    api_key=self.api_key,
-                    api_version=self.api_version,
-                    azure_endpoint=self.endpoint,
-                )
-            except ImportError:
+                if self.api_key:
+                    # API key auth (local / dev)
+                    self._client = AzureOpenAI(
+                        api_key=self.api_key,
+                        api_version=self.api_version,
+                        azure_endpoint=self.endpoint,
+                    )
+                    self._async_client = AsyncAzureOpenAI(
+                        api_key=self.api_key,
+                        api_version=self.api_version,
+                        azure_endpoint=self.endpoint,
+                    )
+                else:
+                    # Passwordless: Managed Identity / DefaultAzureCredential
+                    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+                    from azure.identity.aio import AsyncDefaultAzureCredential
+                    
+                    credential = DefaultAzureCredential()
+                    token_provider = get_bearer_token_provider(
+                        credential, "https://cognitiveservices.azure.com/.default"
+                    )
+                    self._client = AzureOpenAI(
+                        api_version=self.api_version,
+                        azure_endpoint=self.endpoint,
+                        azure_ad_token_provider=token_provider,
+                    )
+                    self._async_credential = AsyncDefaultAzureCredential()
+                    async_token_provider = get_bearer_token_provider(
+                        self._async_credential, "https://cognitiveservices.azure.com/.default"
+                    )
+                    self._async_client = AsyncAzureOpenAI(
+                        api_version=self.api_version,
+                        azure_endpoint=self.endpoint,
+                        azure_ad_token_provider=async_token_provider,
+                    )
+            except ImportError as e:
                 raise ImportError(
-                    "Azure provider requires openai. "
+                    "Azure provider requires openai and azure-identity. "
                     "Install with: pip install daibai[azure]"
-                )
+                ) from e
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         """Generate response using Azure OpenAI."""
