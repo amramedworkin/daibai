@@ -151,7 +151,8 @@ Commands by Category:
     cosmos-role      Setup Cosmos RBAC         |  cosmos-role-sp   Cosmos RBAC for DaiBaiApp (from .env)
     cosmos-allow-ip  Whitelist current IP
     redis-create     Create Azure Redis        |  keyvault-create  Create Key Vault
-    sync-env         Sync Cosmos config        |  verify-azure-auth Verify secretless auth
+    sync-env         Sync Cosmos config (Azure → .env)
+    sync-azure-env   Sync .env to Azure Container App (idempotent, merge) |  verify-azure-auth Verify secretless auth
     sp-create        Get/create DaiBaiApp SP, update AZURE_* in .env
     keyvault-dump    List all Key Vault secrets and values (uses KEY_VAULT_URL)
     keyvault-fix-rbac Grant Key Vault Secrets Officer (fixes Forbidden on migrate)
@@ -1809,7 +1810,8 @@ _CLI_WILDCARD_CMDS=(
     "keyvault-fix-rbac:Grant Key Vault Secrets Officer role"
     "keyvault-migrate:Copy .env API keys to Key Vault"
     "keyvault-migrate-force:Migrate and overwrite existing secrets"
-    "sync-env:Sync Cosmos config"
+    "sync-env:Sync Cosmos config (Azure → .env)"
+    "sync-azure-env:Idempotent sync .env to Azure Container App"
     "verify-azure-auth:Verify secretless auth"
     "sp-create:Get or create DaiBaiApp service principal, update .env"
     "list-users:List Cosmos users"
@@ -2062,6 +2064,9 @@ main() {
             ;;
         sync-env)
             sync_cosmos_env
+            ;;
+        sync-azure-env)
+            bash "$SCRIPT_DIR/azure_sync_env.sh"
             ;;
         test-redis)
             cmd_test_redis
