@@ -712,9 +712,44 @@ async def update_settings(settings: SettingsUpdate, _user: Dict[str, Any] = Depe
 
 @app.put("/api/config")
 async def update_config(config: ConfigUpdate, _user: Dict[str, Any] = Depends(get_current_user)):
-    """Update config (nested JSON matching daibai.yaml structure).
-    Frontend sends complete object; backend persists when Stripe/user storage is ready."""
-    # TODO: Persist full config to per-user storage in Cosmos DB
+    """Update config from UI and persist to user preferences."""
+    from ..core.config import load_user_preferences, save_user_preferences, load_config
+
+    global _config
+
+    prefs = load_user_preferences()
+
+    # 1. Merge LLM Providers safely (ignoring masked passwords from the UI)
+    if config.llm_providers:
+        existing_providers = prefs.get("llm_providers", {})
+        for name, data in config.llm_providers.items():
+            if name not in existing_providers:
+                existing_providers[name] = {}
+            for k, v in data.items():
+                if v:
+                    # Skip masked passwords sent by the frontend placeholder
+                    if k == "api_key" and v in ("••••••", "••••••••", "********"):
+                        continue
+                    existing_providers[name][k] = v
+        prefs["llm_providers"] = existing_providers
+
+    # 2. Update default LLM preference
+    if config.llm and config.llm.get("provider"):
+        prefs["llm"] = config.llm["provider"]
+
+    save_user_preferences(prefs)
+
+    # 3. Reload global config so GET /api/settings sees the changes immediately
+    _config = load_config()
+
+    # 4. Update the running agent in memory
+    agent = get_agent()
+    if config.llm and config.llm.get("provider"):
+        try:
+            agent.switch_llm(config.llm["provider"])
+        except ValueError:
+            pass
+
     return {"status": "ok"}
 
 

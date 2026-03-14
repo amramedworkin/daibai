@@ -466,10 +466,30 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
         for provider_name, provider in llm_providers.items():
             if (provider.provider_type or "").lower() == provider_type.lower() and not provider.api_key:
                 provider.api_key = keyvault_secrets[kv_name]
-    
+
+    # Load UI preferences and merge them over the YAML defaults
+    prefs = load_user_preferences()
+    ui_providers = prefs.get("llm_providers", {})
+    for p_name, p_data in ui_providers.items():
+        if p_name not in llm_providers:
+            llm_providers[p_name] = LLMProviderConfig(
+                name=p_name,
+                provider_type=p_name,
+                model="",
+            )
+        provider = llm_providers[p_name]
+        if p_data.get("model"):
+            provider.model = p_data["model"]
+        if p_data.get("endpoint"):
+            provider.endpoint = p_data["endpoint"]
+        if p_data.get("api_key"):
+            provider.api_key = p_data["api_key"]
+
     # Get defaults
     default_database = db_section.get("default") or (list(databases.keys())[0] if databases else None)
     default_llm = config_data.get("llm", {}).get("default") or (list(llm_providers.keys())[0] if llm_providers else None)
+    if prefs.get("llm"):
+        default_llm = prefs["llm"]
     
     # Parse paths (expanduser so "~" in YAML resolves to home directory).
     # Use Path.home() explicitly for ~/... to avoid creating project/~ when expanduser
