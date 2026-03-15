@@ -159,6 +159,9 @@ Commands by Category:
     my-ip            Show current public IP (curl ifconfig.me)
     cosmos-role      Setup Cosmos RBAC         |  cosmos-role-sp   Cosmos RBAC for DaiBaiApp (from .env)
     cosmos-allow-ip  Whitelist current IP
+    grant-local      Grant Cosmos DB access to local user
+    grant-app        Grant Cosmos DB access to Azure Container App
+    grant-all        Grant Cosmos DB access to both local user and Container App
     redis-create     Create Azure Redis        |  keyvault-create  Create Key Vault
     sync-env         Sync Cosmos config (Azure → .env)
     sync-azure-env   Sync .env to Azure Container App (idempotent, merge) |  verify-azure-auth Verify secretless auth
@@ -1847,6 +1850,9 @@ _CLI_WILDCARD_CMDS=(
     "cosmos-role:Setup Cosmos RBAC"
     "cosmos-role-sp:Cosmos RBAC for DaiBaiApp service principal"
     "cosmos-allow-ip:Whitelist current IP"
+    "grant-local:Grant Cosmos DB access to your local az login profile"
+    "grant-app:Grant Cosmos DB access to the Azure Container App Managed Identity"
+    "grant-all:Grant Cosmos DB access to both local user and Container App"
     "azurify-phase-1-foundation:Phase 1 Production Foundation (RG, Log, Cosmos, KV)"
     "azurify-phase-2-registry:Phase 2 Container Registry + GitHub Actions SP"
     "azurify-phase-2-5-github:Phase 2.5 GitHub Actions Integration"
@@ -2026,6 +2032,19 @@ main() {
             ;;
         cosmos-allow-ip)
             cmd_cosmos_allow_ip
+            ;;
+        grant-local)
+            print_header "Granting Cosmos Access (Local Environment)"
+            bash "$PROJECT_DIR/scripts/azure_grant_cosmos.sh" local
+            ;;
+        grant-app)
+            print_header "Granting Cosmos Access (Azure Container App)"
+            bash "$PROJECT_DIR/scripts/azure_grant_cosmos.sh" app
+            ;;
+        grant-all)
+            print_header "Granting Cosmos Access (Local + Container App)"
+            bash "$PROJECT_DIR/scripts/azure_grant_cosmos.sh" local
+            bash "$PROJECT_DIR/scripts/azure_grant_cosmos.sh" app
             ;;
         my-ip)
             cmd_my_ip

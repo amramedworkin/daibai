@@ -435,12 +435,10 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
             if kv_name in keyvault_secrets and not os.environ.get(env_name):
                 os.environ[env_name] = keyvault_secrets[kv_name]
     
-    if not yaml_path or not yaml_path.exists():
-        # Return empty config if no file found
-        return Config()
-    
-    with open(yaml_path, "r", encoding="utf-8") as f:
-        raw_config = yaml.safe_load(f) or {}
+    raw_config = {}
+    if yaml_path and yaml_path.exists():
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            raw_config = yaml.safe_load(f) or {}
     
     # Resolve environment variables
     config_data = _resolve_env_vars(raw_config)
