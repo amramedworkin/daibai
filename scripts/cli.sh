@@ -44,6 +44,15 @@ load_env_for_redis() {
 }
 load_env() { load_env_for_redis; }
 
+# Show Cosmos DB connection info (COSMOS_ENDPOINT, COSMOS_DATABASE) before Cosmos operations
+_show_cosmos_connection_info() {
+    echo -e "  ${DIM}Using connection (before operation):${NC}"
+    echo -e "    ${DIM}COSMOS_ENDPOINT:${NC} ${COSMOS_ENDPOINT}"
+    echo -e "    ${DIM}COSMOS_DATABASE:${NC} ${COSMOS_DATABASE:-daibai-metadata}"
+    echo -e "    ${DIM}Container:${NC} Users (via conversations store)"
+    echo ""
+}
+
 # Get Redis connection string: prefer Azure primary key, fallback to .env
 # Uses az redis show + az redis list-keys (Authentication -> Show Access Keys -> Primary Key)
 get_redis_connection() {
@@ -513,7 +522,13 @@ cmd_verify_db() {
         fi
     fi
     [[ -z "$py" ]] && { print_error "Python not found"; exit 1; }
+    load_env
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
+        print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
+        exit 1
+    fi
     print_header "Cosmos DB Validation (Golden Ticket)"
+    _show_cosmos_connection_info
     "$py" "$PROJECT_DIR/test_cosmos.py"
 }
 
@@ -527,12 +542,18 @@ cmd_verify_cosmos() {
         exit 1
     fi
     print_header "Cosmos DB E2E (CosmosStore lifecycle)"
+    _show_cosmos_connection_info
     run_pytest tests/test_cosmos_store.py -v -s
 }
 
 cmd_verify_azure_auth() {
     load_env
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
+        print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
+        exit 1
+    fi
     print_header "Verify Secretless Azure Auth (Cosmos DB)"
+    _show_cosmos_connection_info
     local py
     if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
         py="$PROJECT_DIR/.venv/bin/python"
@@ -894,6 +915,36 @@ cmd_firebase_disable_email_enum() {
     echo ""
 }
 
+cmd_integrate_user() {
+    load_env
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
+        print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
+        exit 1
+    fi
+    local id="${1:-}"
+    if [[ -z "$id" ]]; then
+        echo -n "Enter uid or email: "
+        read -r id
+        [[ -z "$id" ]] && { print_error "No uid or email supplied."; exit 1; }
+    fi
+    print_header "Integrate User — Firebase → Cosmos DB"
+    _show_cosmos_connection_info
+    exec "$(_resolve_python)" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" integrate "$id"
+}
+
+cmd_firebase_admin() {
+    load_env
+    if [[ -z "${COSMOS_ENDPOINT:-}" ]]; then
+        print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
+        exit 1
+    fi
+    print_header "Firebase Admin — Auth + Cosmos DB"
+    _show_cosmos_connection_info
+    local py
+    py="$(_resolve_python)"
+    exec "$py" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" "$@"
+}
+
 cmd_list_users() {
     load_env
     print_header "Registered Users (Cosmos DB → Users container)"
@@ -902,6 +953,7 @@ cmd_list_users() {
         print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
         return 1
     fi
+    _show_cosmos_connection_info
 
     local py
     py="$(_resolve_python)"
@@ -953,6 +1005,7 @@ cmd_wait_for_users() {
         print_error "COSMOS_ENDPOINT not set in .env. Run: ./scripts/cli.sh sync-env"
         return 1
     fi
+    _show_cosmos_connection_info
 
     local py
     py="$(_resolve_python)"
@@ -2044,23 +2097,13 @@ main() {
             cmd_firebase_disable_email_enum
             ;;
         integrate-user)
-            load_env
-            local id="${1:-}"
-            if [[ -z "$id" ]]; then
-                echo -n "Enter uid or email: "
-                read -r id
-                [[ -z "$id" ]] && { print_error "No uid or email supplied."; exit 1; }
-            fi
-            exec "$(_resolve_python)" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" integrate "$id"
+            cmd_integrate_user "$@"
             ;;
         wait-for-users)
             cmd_wait_for_users
             ;;
         firebase-admin)
-            load_env
-            local py
-            py="$(_resolve_python)"
-            exec "$py" "$PROJECT_DIR/scripts/firebase_admin_mgr.py" "$@"
+            cmd_firebase_admin "$@"
             ;;
         sync-env)
             sync_cosmos_env
