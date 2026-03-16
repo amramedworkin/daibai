@@ -734,7 +734,8 @@ class DaiBaiApp {
         try {
             await this._runSchemaIndexing(dbId);
         } catch (e) {
-            if (!e.guestMode) console.warn('[Schema] Forced index failed:', e);
+            if (!e.guestMode) console.warn('[Schema] Auto-index failed:', e);
+            showStatusToast('error', `Auto-indexing failed: ${e.message}`);
         } finally {
             this._setInputsEnabledForIndexing(true);
             this._indexingInProgress = false;
@@ -777,19 +778,58 @@ class DaiBaiApp {
                     }, 1400);
                 } else if (msg.type === 'error') {
                     this._hideIndexingModal();
-                    showStatusToast('error', `Indexing failed: ${msg.message}`);
-                    resolve(); // still re-enable inputs
+                    reject(new Error(msg.message || 'Unknown error during indexing.'));
                 }
             };
 
             ws.onerror = () => {
                 this._hideIndexingModal();
-                showStatusToast('error', 'Indexing connection failed');
-                resolve();
+                reject(new Error('WebSocket connection failed during indexing.'));
             };
 
             ws.onclose = () => resolve();
         });
+    }
+
+    async forceIndexDatabase(dbId) {
+        if (!dbId || !isAuthenticated()) return;
+        if (this._indexingInProgress) {
+            showStatusToast('warning', 'Indexing is already in progress.');
+            return;
+        }
+
+        this._indexingInProgress = true;
+        console.log('[DaiBai UI] db=', dbId, '— manual force-indexing triggered');
+        this._setInputsEnabledForIndexing(false);
+        try {
+            await this._runSchemaIndexing(dbId);
+            showStatusToast('success', `Database "${dbId}" indexed successfully.`);
+        } catch (e) {
+            if (!e.guestMode) console.error('[Schema] Manual index failed:', e);
+            this.showDetailedErrorModal(
+                'Indexing Failed',
+                `There was a problem indexing the database "${dbId}".`,
+                e.message || String(e)
+            );
+        } finally {
+            this._setInputsEnabledForIndexing(true);
+            this._indexingInProgress = false;
+        }
+    }
+
+    showDetailedErrorModal(title, message, details) {
+        if (!this.detailedErrorModal) {
+            alert(`${title}\n\n${message}\n\n${details}`);
+            return;
+        }
+        if (this.detailedErrorTitle) this.detailedErrorTitle.textContent = title;
+        if (this.detailedErrorMessage) this.detailedErrorMessage.textContent = message;
+        if (this.detailedErrorDetails) {
+            this.detailedErrorDetails.textContent = details;
+            this.detailedErrorDetails.style.display = details ? 'block' : 'none';
+        }
+        this.detailedErrorModal.classList.add('active');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
     }
 
     loadPreferences() {
@@ -979,6 +1019,13 @@ class DaiBaiApp {
         this.layoutToggleCenterRight = document.getElementById('layoutToggleCenterRight');
         this.layoutToggleBoth = document.getElementById('layout-both-btn');
         this.executionTraceLog = document.getElementById('executionTraceLog');
+        this.forceIndexBtn = document.getElementById('forceIndexBtn');
+        this.detailedErrorModal = document.getElementById('detailedErrorModal');
+        this.detailedErrorTitle = document.getElementById('detailedErrorTitle');
+        this.detailedErrorMessage = document.getElementById('detailedErrorMessage');
+        this.detailedErrorDetails = document.getElementById('detailedErrorDetails');
+        this.detailedErrorModalClose = document.getElementById('detailedErrorModalClose');
+        this.detailedErrorModalOk = document.getElementById('detailedErrorModalOk');
     }
     
     _traceStepCounter = 0;
@@ -1156,6 +1203,24 @@ class DaiBaiApp {
     }
     
     bindEvents() {
+        // Force Index button and error modal
+        if (this.forceIndexBtn) {
+            this.forceIndexBtn.addEventListener('click', () => {
+                const db = this.databaseSelect.value;
+                if (db) {
+                    this.forceIndexDatabase(db);
+                } else {
+                    showStatusToast('error', 'Please select a database first.');
+                }
+            });
+        }
+        if (this.detailedErrorModalClose) {
+            this.detailedErrorModalClose.addEventListener('click', () => this.detailedErrorModal?.classList.remove('active'));
+        }
+        if (this.detailedErrorModalOk) {
+            this.detailedErrorModalOk.addEventListener('click', () => this.detailedErrorModal?.classList.remove('active'));
+        }
+
         // Layout toggles (Inspector Panel)
         this.layoutToggleLeftCenter?.addEventListener('click', () => this.updateLayout('sidebar-main'));
         this.layoutToggleCenterOnly?.addEventListener('click', () => this.updateLayout('main-only'));

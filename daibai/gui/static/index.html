@@ -29,9 +29,14 @@
                 <div class="nav-dropdowns">
                     <div class="dropdown">
                         <label for="databaseSelect">Database</label>
-                        <select id="databaseSelect">
-                            <option value="">Loading...</option>
-                        </select>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <select id="databaseSelect" style="flex: 1;">
+                                <option value="">Loading...</option>
+                            </select>
+                            <button type="button" id="forceIndexBtn" class="icon-btn" title="Force Index Selected Database" style="height: auto; padding: 4px 6px;">
+                                <i data-lucide="database-zap"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="dropdown">
                         <label>LLM</label>
@@ -522,6 +527,23 @@
             </div>
         </div>
     </div>
+
+        <!-- Detailed Error Modal (Force Index failures, etc.) -->
+        <div class="modal" id="detailedErrorModal">
+            <div class="modal-content" style="max-width:600px">
+                <div class="modal-header">
+                    <h2 id="detailedErrorTitle" style="color: var(--error);">Error</h2>
+                    <button class="modal-close" id="detailedErrorModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p id="detailedErrorMessage" style="margin-bottom: 12px; font-weight: 500;"></p>
+                    <pre id="detailedErrorDetails" style="background: var(--bg-alt); padding: 12px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; font-size: 13px; color: var(--error); max-height: 300px; overflow-y: auto;"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="detailedErrorModalOk">Close</button>
+                </div>
+            </div>
+        </div>
 
     <!-- Firebase v10 compat (required by FirebaseUI 6.x) -->
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>

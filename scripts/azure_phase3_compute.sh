@@ -37,6 +37,8 @@ else
         --environment "$ACA_ENV_NAME" \
         --image redis/redis-stack-server:latest \
         --target-port 6379 \
+        --exposed-port 6379 \
+        --transport tcp \
         --ingress internal \
         --cpu 0.5 --memory 1.0Gi \
         --min-replicas 1 -o none
