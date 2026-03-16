@@ -1,0 +1,102 @@
+{"TimeStamp": "2026-03-16T00:36:55.28924", "Log": "Connecting to the container 'daibai-api'..."}
+{"TimeStamp": "2026-03-16T00:36:55.35854", "Log": "Successfully Connected to container: 'daibai-api' [Revision: 'daibai-api--0000020', Replica: 'daibai-api--0000020-7b59f79f54-wgb42']"}
+{"TimeStamp": "2026-03-15T22:15:10.2763298+00:00", "Log": "F 2026-03-15 22:15:10,276 [INFO] daibai.core.schema - [index] connection: db=chinook | type=MySQL | host=buzzmag-mysql.mysql.database.azure.com | port=3306 | database=chinook | user=suitecrm | password=*** | ssl=True | url=mysql://suitecrm:***@buzzmag-mysql.mysql.database.azure.com:3306/chinook?ssl=true | redis_target=redis://daibai-redis.internal.victoriousmeadow-00ded77d.eastus.azurecontainerapps.io:6379"}
+{"TimeStamp": "2026-03-15T22:15:10.2763463+00:00", "Log": "F 2026-03-15 22:15:10,276 [INFO] daibai.instrumentation - [instrumentation] init: Startup Index: chinook"}
+{"TimeStamp": "2026-03-15T22:15:10.2763576+00:00", "Log": "F 2026-03-15 22:15:10,276 [INFO] daibai.instrumentation - [instrumentation] START: Schema Indexing: chinook"}
+{"TimeStamp": "2026-03-15T22:15:15.2822581+00:00", "Log": "F 2026-03-15 22:15:15,282 [WARNING] daibai.instrumentation - [instrumentation] FAILED: Schema Indexing: chinook | Evergreen check failed: Timeout connecting to server"}
+{"TimeStamp": "2026-03-15T22:15:15.5292971+00:00", "Log": "F 2026-03-15 22:15:15,529 [WARNING] daibai.websocket - [index] ws_schema_progress: error db=all \u2014 Timeout connecting to server"}
+{"TimeStamp": "2026-03-15T22:15:15.6642798+00:00", "Log": "F INFO:     connection closed"}
+{"TimeStamp": "2026-03-15T22:15:15.664513+00:00", "Log": "F [auth] WARNING: token signature not verified \u2014 set FIREBASE_SERVICE_ACCOUNT_JSON for production"}
+{"TimeStamp": "2026-03-15T22:15:15.6663885+00:00", "Log": "F 2026-03-15 22:15:15,666 [INFO] daibai.aiohttp - [aiohttp] Session OPEN id=9 tag=[Auth/JIT User Registration]"}
+{"TimeStamp": "2026-03-15T22:15:15.6724317+00:00", "Log": "F 2026-03-15 22:15:15,672 [INFO] daibai.aiohttp - [aiohttp] Session OPEN id=10 tag=[Auth/JIT User Registration]"}
+{"TimeStamp": "2026-03-15T22:15:15.8911125+00:00", "Log": "F 2026-03-15 22:15:15,890 [INFO] daibai.websocket - [settings] GET before"}
+{"TimeStamp": "2026-03-15T22:15:18.8954203+00:00", "Log": "F 2026-03-15 22:15:18,895 [WARNING] daibai.websocket - Schema index status check failed (Redis timeout/unreachable), allowing query: Timeout connecting to server"}
+{"TimeStamp": "2026-03-15T22:15:18.8954608+00:00", "Log": "F 2026-03-15 22:15:18,895 [INFO] daibai.websocket - [settings] GET after status=ok databases=['chinook', 'northwind'] llm_providers=['azure_openai'] current_database=chinook current_llm=azure_openai agent_loaded=True is_indexed=True"}
+{"TimeStamp": "2026-03-15T22:15:18.896121+00:00", "Log": "F INFO:     100.100.0.138:54974 - \"GET /api/settings HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:15:19.0455371+00:00", "Log": "F [auth] WARNING: token signature not verified \u2014 set FIREBASE_SERVICE_ACCOUNT_JSON for production"}
+{"TimeStamp": "2026-03-15T22:15:19.0464309+00:00", "Log": "F 2026-03-15 22:15:19,046 [ERROR] asyncio - Unclosed client session"}
+{"TimeStamp": "2026-03-15T22:15:19.0464698+00:00", "Log": "F client_session: <aiohttp.client.ClientSession object at 0x6ffe79595350>"}
+{"TimeStamp": "2026-03-15T22:15:19.0466515+00:00", "Log": "F 2026-03-15 22:15:19,046 [ERROR] asyncio - Unclosed connector"}
+{"TimeStamp": "2026-03-15T22:15:19.0468582+00:00", "Log": "F connections: ['deque([(<aiohttp.client_proto.ResponseHandler object at 0x6ffe7958b460>, 8463.874258398)])']"}
+{"TimeStamp": "2026-03-15T22:15:19.0468693+00:00", "Log": "F connector: <aiohttp.connector.TCPConnector object at 0x6ffe795f6d90>"}
+{"TimeStamp": "2026-03-15T22:15:19.0469097+00:00", "Log": "F 2026-03-15 22:15:19,046 [ERROR] asyncio - Unclosed client session"}
+{"TimeStamp": "2026-03-15T22:15:19.0469141+00:00", "Log": "F client_session: <aiohttp.client.ClientSession object at 0x6ffe8010d0d0>"}
+{"TimeStamp": "2026-03-15T22:15:19.0469502+00:00", "Log": "F 2026-03-15 22:15:19,046 [ERROR] asyncio - Unclosed connector"}
+{"TimeStamp": "2026-03-15T22:15:19.0470025+00:00", "Log": "F connections: ['deque([(<aiohttp.client_proto.ResponseHandler object at 0x6ffe7958b5b0>, 8464.021857255)])', 'deque([(<aiohttp.client_proto.ResponseHandler object at 0x6ffe7958a270>, 8464.092856817)])']"}
+{"TimeStamp": "2026-03-15T22:15:19.047013+00:00", "Log": "F connector: <aiohttp.connector.TCPConnector object at 0x6ffe795b07d0>"}
+{"TimeStamp": "2026-03-15T22:15:19.0480387+00:00", "Log": "F 2026-03-15 22:15:19,047 [INFO] daibai.aiohttp - [aiohttp] Session OPEN id=11 tag=[Auth/JIT User Registration]"}
+{"TimeStamp": "2026-03-15T22:15:19.053629+00:00", "Log": "F 2026-03-15 22:15:19,053 [INFO] daibai.aiohttp - [aiohttp] Session OPEN id=12 tag=[Auth/JIT User Registration]"}
+{"TimeStamp": "2026-03-15T22:15:19.2627754+00:00", "Log": "F INFO:     100.100.0.138:54974 - \"POST /api/settings HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:15:19.3460218+00:00", "Log": "F [auth] WARNING: token signature not verified \u2014 set FIREBASE_SERVICE_ACCOUNT_JSON for production"}
+{"TimeStamp": "2026-03-15T22:15:19.3473655+00:00", "Log": "F 2026-03-15 22:15:19,347 [INFO] daibai.aiohttp - [aiohttp] Session OPEN id=13 tag=[Auth/JIT User Registration]"}
+{"TimeStamp": "2026-03-15T22:15:19.3513803+00:00", "Log": "F 2026-03-15 22:15:19,351 [INFO] daibai.aiohttp - [aiohttp] Session OPEN id=14 tag=[Auth/JIT User Registration]"}
+{"TimeStamp": "2026-03-15T22:15:19.6389696+00:00", "Log": "F INFO:     100.100.0.138:54974 - \"GET /api/conversations HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:15:19.8784471+00:00", "Log": "F [auth] WARNING: token signature not verified \u2014 set FIREBASE_SERVICE_ACCOUNT_JSON for production"}
+{"TimeStamp": "2026-03-15T22:15:19.8785137+00:00", "Log": "F INFO:     100.100.0.68:50680 - \"WebSocket /ws/chat?token=eyJhbGciOiJSUzI1NiIsImtpZCI6ImEyZGZiOGEzOGI1MmQ5ZjA5ZWRjYWE1MDcwYTBlOGYwYTllMDk4YmEiLCJ0eXAiOiJKV1QifQ.eyJuYW1lIjoiYW1pIGR3b3JraW4iLCJpc3MiOiJodHRwczovL3NlY3VyZXRva2VuLmdvb2dsZS5jb20vZGFpYmFpLWFmZmIwIiwiYXVkIjoiZGFpYmFpLWFmZmIwIiwiYXV0aF90aW1lIjoxNzczNjEyOTA2LCJ1c2VyX2lkIjoiOFlNS3VKUHFwalJMVElmY0t4c29BWTFPYVlxMSIsInN1YiI6IjhZTUt1SlBxcGpSTFRJZmNLeHNvQVkxT2FZcTEiLCJpYXQiOjE3NzM2MTI5MDYsImV4cCI6MTc3MzYxNjUwNiwiZW1haWwiOiJhZHdvcmtpbkBpdHByb3RlY3RzLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJmaXJlYmFzZSI6eyJpZGVudGl0aWVzIjp7ImVtYWlsIjpbImFkd29ya2luQGl0cHJvdGVjdHMuY29tIl19LCJzaWduX2luX3Byb3ZpZGVyIjoicGFzc3dvcmQifX0.kESKxg9-R3SKnWc4OmfRlW-qHcW6CjlNfY1vbv5vvkGrx-fVqz4LDe237wRUu5TXPHmN9GzJsIihbqNAgCbAM_dC7SkwQxDhPr4ev9NKVVfg6DoXny_3-Ys5W8JNxdTueHCX6TjZnYu6Wn9gxHPeat062qr2KyA7XsX7BM8uYpryd1a-PE64HCm0_FurGQszNuadVhDiU4b5tRYM77sDD5o-7GVNdLfZDykW-RvxvYeY3382zlGLAEzUVLsvl79SarmbqGY5r8HlejbJrXtuYLIkiIWKAdElKaHnQ_130KNbtPFDfWrgRmz1zauqcMaW38quxqyFadqKQ4eib34AtQ\" [accepted]"}
+{"TimeStamp": "2026-03-15T22:15:22.888735+00:00", "Log": "F 2026-03-15 22:15:22,888 [WARNING] daibai.websocket - Schema index status check failed (Redis timeout/unreachable), allowing query: Timeout connecting to server"}
+{"TimeStamp": "2026-03-15T22:15:22.8889011+00:00", "Log": "F 2026-03-15 22:15:22,888 [INFO] daibai.websocket - WebSocket connection established"}
+{"TimeStamp": "2026-03-15T22:15:22.8893353+00:00", "Log": "F INFO:     connection open"}
+{"TimeStamp": "2026-03-15T22:15:27.1908319+00:00", "Log": "F 2026-03-15 22:15:27,190 [INFO] daibai.websocket - WebSocket client disconnected normally"}
+{"TimeStamp": "2026-03-15T22:15:27.1909972+00:00", "Log": "F INFO:     connection closed"}
+{"TimeStamp": "2026-03-15T22:15:49.048069+00:00", "Log": "F 2026-03-15 22:15:49,047 [ERROR] asyncio - Future exception was never retrieved"}
+{"TimeStamp": "2026-03-15T22:15:49.0481104+00:00", "Log": "F future: <Future finished exception=ClientConnectionError('Connection lost: SSL shutdown timed out')>"}
+{"TimeStamp": "2026-03-15T22:15:49.0481268+00:00", "Log": "F TimeoutError: SSL shutdown timed out"}
+{"TimeStamp": "2026-03-15T22:15:49.0481295+00:00", "Log": "F"}
+{"TimeStamp": "2026-03-15T22:15:49.0481316+00:00", "Log": "F The above exception was the direct cause of the following exception:"}
+{"TimeStamp": "2026-03-15T22:15:49.0481387+00:00", "Log": "F"}
+{"TimeStamp": "2026-03-15T22:15:49.0481408+00:00", "Log": "F aiohttp.client_exceptions.ClientConnectionError: Connection lost: SSL shutdown timed out"}
+{"TimeStamp": "2026-03-15T22:15:49.0484976+00:00", "Log": "F 2026-03-15 22:15:49,048 [ERROR] asyncio - Future exception was never retrieved"}
+{"TimeStamp": "2026-03-15T22:15:49.0485201+00:00", "Log": "F future: <Future finished exception=ClientConnectionError('Connection lost: SSL shutdown timed out')>"}
+{"TimeStamp": "2026-03-15T22:15:49.0485296+00:00", "Log": "F TimeoutError: SSL shutdown timed out"}
+{"TimeStamp": "2026-03-15T22:15:49.0485314+00:00", "Log": "F"}
+{"TimeStamp": "2026-03-15T22:15:49.0485328+00:00", "Log": "F The above exception was the direct cause of the following exception:"}
+{"TimeStamp": "2026-03-15T22:15:49.048534+00:00", "Log": "F"}
+{"TimeStamp": "2026-03-15T22:15:49.0485355+00:00", "Log": "F aiohttp.client_exceptions.ClientConnectionError: Connection lost: SSL shutdown timed out"}
+{"TimeStamp": "2026-03-15T22:17:53.8941997+00:00", "Log": "F INFO:     100.100.0.68:45178 - \"GET /robots.txt HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:17:54.2907349+00:00", "Log": "F INFO:     100.100.0.68:45178 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:20:47.876268+00:00", "Log": "F INFO:     100.100.0.138:57262 - \"GET /static/styles.css?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:20:52.862265+00:00", "Log": "F INFO:     100.100.0.138:54098 - \"GET /static/app.js?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:22:25.7058554+00:00", "Log": "F INFO:     100.100.0.138:42450 - \"GET /robots.txt HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:22:28.1360958+00:00", "Log": "F INFO:     100.100.0.138:42450 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:22:33.8556549+00:00", "Log": "F INFO:     100.100.0.68:37462 - \"GET /static/app.js?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:22:39.2329009+00:00", "Log": "F INFO:     100.100.0.68:39588 - \"GET /static/styles.css?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:36:11.3787297+00:00", "Log": "F INFO:     100.100.0.68:38410 - \"POST / HTTP/1.1\" 405 Method Not Allowed"}
+{"TimeStamp": "2026-03-15T22:36:11.5865507+00:00", "Log": "F INFO:     100.100.0.68:38410 - \"POST /index.php HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:36:11.7941596+00:00", "Log": "F INFO:     100.100.0.68:38410 - \"POST /admin HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:36:12.0023568+00:00", "Log": "F INFO:     100.100.0.68:38410 - \"POST /api HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:38:38.5361721+00:00", "Log": "F INFO:     100.100.0.138:36800 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:40:44.4789185+00:00", "Log": "F INFO:     100.100.0.68:34518 - \"GET /static/app.js?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:40:45.1618669+00:00", "Log": "F INFO:     100.100.0.68:34522 - \"GET /static/styles.css?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:41:11.7185697+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:41:11.8966247+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:11.9871861+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /xmlrpc.php?rsd HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.0782694+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T22:41:12.1708399+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /blog/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.2615403+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /web/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.3511561+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /wordpress/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.4405033+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /website/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.5304736+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /wp/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.6200643+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /news/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.7094337+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /2018/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.7995107+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /2019/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.888873+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /shop/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:12.9789085+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /wp1/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:13.0688484+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /test/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:13.1583349+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /media/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:13.2489946+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /wp2/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:13.3394027+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /site/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:13.4294059+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /cms/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:41:13.531224+00:00", "Log": "F INFO:     100.100.0.138:44816 - \"GET /sito/wp-includes/wlwmanifest.xml HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-15T22:55:49.0312248+00:00", "Log": "F INFO:     100.100.0.68:42856 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:12:12.6758906+00:00", "Log": "F INFO:     100.100.0.68:35254 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:12:13.461462+00:00", "Log": "F INFO:     100.100.0.68:35254 - \"GET /static/styles.css?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:12:13.4664872+00:00", "Log": "F INFO:     100.100.0.68:35258 - \"GET /static/logo.png HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:12:13.4666976+00:00", "Log": "F INFO:     100.100.0.68:35256 - \"GET /static/app.js?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:12:13.4681263+00:00", "Log": "F INFO:     100.100.0.68:35268 - \"GET /static/it_protects_logo.webp HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:12:14.6468223+00:00", "Log": "F INFO:     100.100.0.68:35258 - \"GET /favicon.ico HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-15T23:48:23.7972052+00:00", "Log": "F INFO:     100.100.0.68:58010 - \"POST /xmlrpc.php HTTP/1.1\" 404 Not Found"}
+{"TimeStamp": "2026-03-16T00:17:24.174012+00:00", "Log": "F INFO:     100.100.0.138:57246 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-16T00:17:44.2936414+00:00", "Log": "F INFO:     100.100.0.138:54684 - \"GET /static/styles.css?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-16T00:17:44.8039042+00:00", "Log": "F INFO:     100.100.0.138:54684 - \"GET /static/app.js?v=3 HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-16T00:36:40.4224048+00:00", "Log": "F INFO:     100.100.0.138:43622 - \"GET / HTTP/1.1\" 200 OK"}
+{"TimeStamp": "2026-03-16T00:36:52.6412397+00:00", "Log": "F INFO:     100.100.0.138:34376 - \"GET / HTTP/1.1\" 200 OK"}

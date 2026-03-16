@@ -38,7 +38,8 @@ else
         --image redis/redis-stack-server:latest \
         --target-port 6379 \
         --ingress internal \
-        --cpu 0.5 --memory 1.0Gi -o none
+        --cpu 0.5 --memory 1.0Gi \
+        --min-replicas 1 -o none
 fi
 
 # Fetch Redis Internal FQDN
