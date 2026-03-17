@@ -64,7 +64,8 @@ class AzureProvider(BaseLLMProvider):
                 else:
                     # Passwordless: Managed Identity / DefaultAzureCredential
                     from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-                    from azure.identity.aio import AsyncDefaultAzureCredential
+                    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+                    from azure.identity.aio import get_bearer_token_provider as get_async_bearer_token_provider
                     
                     credential = DefaultAzureCredential()
                     token_provider = get_bearer_token_provider(
@@ -76,7 +77,7 @@ class AzureProvider(BaseLLMProvider):
                         azure_ad_token_provider=token_provider,
                     )
                     self._async_credential = AsyncDefaultAzureCredential()
-                    async_token_provider = get_bearer_token_provider(
+                    async_token_provider = get_async_bearer_token_provider(
                         self._async_credential, "https://cognitiveservices.azure.com/.default"
                     )
                     self._async_client = AsyncAzureOpenAI(
