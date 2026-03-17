@@ -23,8 +23,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy the rest of the application code
 COPY . .
 
-# Install the DaiBai package with API dependencies (fastapi, uvicorn) and default LLM
-RUN pip install --no-cache-dir -e ".[gui,gemini]"
+# Install the DaiBai package with API dependencies (fastapi, uvicorn), default LLM, and Azure OpenAI
+RUN pip install --no-cache-dir -e ".[gui,gemini,azure]"
 
 # Expose the port the API runs on (assuming 8000 for standard FastAPI)
 EXPOSE 8000
