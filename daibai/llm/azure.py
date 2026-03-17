@@ -84,11 +84,13 @@ class AzureProvider(BaseLLMProvider):
                         azure_endpoint=self.endpoint,
                         azure_ad_token_provider=async_token_provider,
                     )
-            except ImportError as e:
-                raise ImportError(
-                    "Azure provider requires openai and azure-identity. "
-                    "Install with: pip install daibai[azure]"
-                ) from e
+            except Exception as e:
+                import traceback
+                raise RuntimeError(
+                    f"Azure SDK failed to load! The packages exist but are crashing internally.\n"
+                    f"Exact Error: {str(e)}\n\n"
+                    f"Traceback:\n{traceback.format_exc()}"
+                )
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         """Generate response using Azure OpenAI."""
