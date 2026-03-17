@@ -6,6 +6,7 @@ Connects via REDIS_URL or AZURE_REDIS_CONNECTION_STRING from environment.
 
 import hashlib
 import json
+import logging
 from typing import List, Optional
 
 from .config import (
@@ -15,6 +16,18 @@ from .config import (
 
 SEMANTIC_KEY_PREFIX = "semantic:"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+logger = logging.getLogger(__name__)
+
+
+def _mask_redis_url(url: Optional[str]) -> str:
+    """Mask password in Redis URL for safe logging."""
+    if not url:
+        return "(not configured)"
+    if "@" in url:
+        import re
+        return re.sub(r":([^@]+)@", ":***@", url, count=1).split("?")[0]
+    return url.split("?")[0] if url else "(unknown)"
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -52,12 +65,20 @@ class CacheManager:
         conn_str = self._connection_string or get_redis_connection_string()
         if not conn_str:
             return None
+        redis_url_safe = _mask_redis_url(conn_str)
+        logger.info("[INDEX_TRACE] [REDIS_CONNECT] Pinging Redis at %s...", redis_url_safe)
         import redis
-        self._client = redis.Redis.from_url(
-            conn_str,
-            decode_responses=True,
-            socket_connect_timeout=5,
-        )
+        try:
+            self._client = redis.Redis.from_url(
+                conn_str,
+                decode_responses=True,
+                socket_connect_timeout=5,
+            )
+            self._client.ping()
+            logger.info("[INDEX_TRACE] [REDIS_CONNECT_SUCCESS] Redis ping successful.")
+        except Exception as e:
+            logger.error("[INDEX_TRACE] [REDIS_CONNECT_FAILED] Redis connection/ping failed: %s", str(e), exc_info=True)
+            raise
         return self._client
 
     def ping(self) -> bool:

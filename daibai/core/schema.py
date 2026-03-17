@@ -312,11 +312,16 @@ class SchemaManager:
     def _run_query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Execute SQL and return rows as list of dicts."""
         if self._execute_fn is not None:
-            return self._execute_fn(sql, params)
+            logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction (SQLite/custom execute_fn)...")
+            rows = self._execute_fn(sql, params)
+            logger.info("[INDEX_TRACE] [DB_QUERY_SUCCESS] Schema extraction returned %d rows.", len(rows) if rows else 0)
+            return rows
         if self._config is None:
             raise ValueError("SchemaManager requires config or execute_fn")
+        db = self._config.database if self._config else "unknown"
         try:
             import mysql.connector
+            logger.info("[INDEX_TRACE] [DB_CONNECT] Attempting to connect to MySQL for %s at %s:%s...", db, self._config.host, self._config.port)
             conn = mysql.connector.connect(
                 host=self._config.host,
                 port=self._config.port,
@@ -324,10 +329,14 @@ class SchemaManager:
                 user=self._config.user,
                 password=self._config.password,
             )
+            logger.info("[INDEX_TRACE] [DB_CONNECT_SUCCESS] MySQL connection established for %s.", db)
             try:
+                logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction query for %s...", db)
                 cursor = conn.cursor(dictionary=True)
                 cursor.execute(sql, params)
-                return cursor.fetchall()
+                rows = cursor.fetchall()
+                logger.info("[INDEX_TRACE] [DB_QUERY_SUCCESS] Schema query returned %d rows for %s.", len(rows) if rows else 0, db)
+                return rows
             finally:
                 conn.close()
         except ImportError:
@@ -591,16 +600,34 @@ class SchemaManager:
             raise ValueError("schema_name or config.database required")
         namespace = self._get_namespace(schema_name)
 
+        start_time = time.time()
+        logger.info("[INDEX_TRACE] [START] Initiating indexing for database: %s", db)
+
         _log_index_connection(
             db,
             config=self._config,
             is_playground=self._execute_fn is not None,
         )
 
+        try:
+            from .config import get_redis_connection_string
+            redis_url_safe = _sanitize_redis_url(get_redis_connection_string())
+        except Exception:
+            redis_url_safe = "(unknown)"
+        logger.info("[INDEX_TRACE] [REDIS_CONNECT] Pinging Redis at %s...", redis_url_safe)
+
         redis = self._get_redis()
         if redis is None:
             logger.warning("[index] %s: skipped — no Redis client", db)
+            logger.error("[INDEX_TRACE] [REDIS_CONNECT_FAILED] No Redis client for %s. Time elapsed: %.2fs", db, time.time() - start_time)
             return 0
+
+        try:
+            redis.ping()
+            logger.info("[INDEX_TRACE] [REDIS_CONNECT_SUCCESS] Redis ping successful. Time elapsed: %.2fs", time.time() - start_time)
+        except Exception as e:
+            logger.error("[INDEX_TRACE] [REDIS_CONNECT_FAILED] Redis ping failed for %s: %s. Time elapsed: %.2fs", db, str(e), time.time() - start_time, exc_info=True)
+            raise
 
         init_tracker(f"Startup Index: {db}")
         track_start(f"Schema Indexing: {db}")
@@ -609,7 +636,9 @@ class SchemaManager:
         is_indexed_key = f"{SCHEMA_STATUS_IS_INDEXED}:{namespace}"
         try:
             if redis.exists(is_indexed_key):
+                logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction queries for %s (evergreen check)...", db)
                 tables_ddl = self.discover_schema(schema_name)
+                logger.info("[INDEX_TRACE] [DB_QUERY_SUCCESS] Extracted schema data. Time elapsed: %.2fs", time.time() - start_time)
                 if not tables_ddl:
                     logger.info("[index] %s: no tables found (evergreen skip)", db)
                     track_passed(f"Schema Indexing: {db}", "No tables to evergreen.")
@@ -694,7 +723,10 @@ class SchemaManager:
         #     except (ValueError, TypeError):
         #         pass
 
+        logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction queries for %s...", db)
         tables_ddl = self.discover_schema(schema_name)
+        logger.info("[INDEX_TRACE] [DB_QUERY_SUCCESS] Extracted schema data. Time elapsed: %.2fs", time.time() - start_time)
+
         if not tables_ddl:
             logger.info("[index] %s: no tables found", db)
             return 0
@@ -712,6 +744,7 @@ class SchemaManager:
         _recent_times: List[float] = []
 
         try:
+            logger.info("[INDEX_TRACE] [LLM_EMBED] Starting vector embedding generation for %s schema (%d tables)...", db, total)
             for i, (table, ddl) in enumerate(tables_ddl.items()):
                 t0 = time.time()
 
@@ -731,14 +764,18 @@ class SchemaManager:
                 ddl_key  = f"{SCHEMA_V1_DDL_PREFIX}{namespace}:{table}"
                 text_key = f"{SCHEMA_V1_TEXT_PREFIX}{namespace}:{table}"
                 index_key = f"{SCHEMA_V1_INDEX_PREFIX}{namespace}"
+                vector_json = json.dumps(vector)
+                payload_size = len(vector_json.encode("utf-8")) + len(ddl.encode("utf-8"))
+                logger.info("[INDEX_TRACE] [REDIS_EXECUTE] Executing write to Redis for %s table=%s. Payload size: %d bytes...", db, table, payload_size)
                 try:
-                    vector_json = json.dumps(vector)
                     redis.set(ddl_key, vector_json, ex=ttl)
                     redis.set(text_key, ddl, ex=ttl)
                     redis.sadd(index_key, table)
                     stored += 1
                     bytes_written += len(vector_json.encode("utf-8")) + len(ddl.encode("utf-8"))
+                    logger.info("[INDEX_TRACE] [REDIS_EXECUTE_SUCCESS] Redis write completed for %s table=%s. Time elapsed: %.2fs", db, table, time.time() - start_time)
                 except Exception as e:
+                    logger.error("[INDEX_TRACE] [REDIS_EXECUTE_FAILED] Redis write failed for %s table=%s! Error: %s. Time elapsed: %.2fs", db, table, str(e), time.time() - start_time, exc_info=True)
                     logger.warning("[index] %s: failed to store table %s — %s", db, table, e)
 
                 # ── Progress reporting ───────────────────────────────────────
@@ -756,6 +793,8 @@ class SchemaManager:
                         progress_cb(pct, f"Vectorizing: {table}", eta)
                     except Exception:
                         pass   # progress errors must never abort indexing
+
+            logger.info("[INDEX_TRACE] [LLM_EMBED_SUCCESS] Embeddings generated for %d tables. Time elapsed: %.2fs", total, time.time() - start_time)
 
             # ── Global metadata document for meta-questions ("how many tables", etc.) ──
             logger.info("[index] %s: indexing global summary (_global_summary) for %d tables", db, total)
@@ -792,11 +831,14 @@ class SchemaManager:
 
             if stored > 0:
                 now_iso = datetime.now(timezone.utc).isoformat()
+                status_payload_size = 4  # 4 keys
+                logger.info("[INDEX_TRACE] [REDIS_WRITE] Initiating write of status keys to Redis for %s (%d keys)...", db, status_payload_size)
                 try:
                     redis.set(f"{SCHEMA_V1_LAST_INDEXED}:{namespace}",      str(time.time()), ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_IS_INDEXED}:{namespace}",     "1",              ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_LAST_INDEXED_AT}:{namespace}", now_iso,          ex=ttl)
                     redis.set(f"{SCHEMA_STATUS_DDL_HASH}:{namespace}",      ddl_hash,         ex=ttl)
+                    logger.info("[INDEX_TRACE] [REDIS_WRITE_SUCCESS] Status keys committed to Redis. Time elapsed: %.2fs", time.time() - start_time)
                     try:
                         from .config import get_redis_connection_string
                         redis_loc = _sanitize_redis_url(get_redis_connection_string())
@@ -815,13 +857,17 @@ class SchemaManager:
                         f"Schema Indexing: {db}",
                         f"Index completed and loaded to Redis keyed by schema:v1:*:{db}. Size approx {approx_kb:.2f} KB{gmeta_note}",
                     )
+                    logger.info("[INDEX_TRACE] [FINISH] Indexing completely finished for %s. Total time: %.2fs", db, time.time() - start_time)
                 except Exception as e:
+                    logger.error("[INDEX_TRACE] [REDIS_WRITE_FAILED] Status keys write failed for %s: %s. Time elapsed: %.2fs", db, str(e), time.time() - start_time, exc_info=True)
                     logger.warning("[index] %s: failed to write status keys — %s", db, e)
             else:
                 logger.info("[index] %s: complete — 0 tables stored", db)
                 track_passed(f"Schema Indexing: {db}", "Index completed (0 tables stored).")
+                logger.info("[INDEX_TRACE] [FINISH] Indexing finished for %s (0 tables stored). Total time: %.2fs", db, time.time() - start_time)
 
         except Exception as e:
+            logger.error("[INDEX_TRACE] [FATAL_ERROR] Indexing crashed for %s at elapsed time %.2fs. Error type: %s. Details: %s", db, time.time() - start_time, type(e).__name__, str(e), exc_info=True)
             track_failed(f"Schema Indexing: {db}", f"Index failed: {str(e)}")
             logger.critical(
                 "[index] %s: failed — %s: %s; falling back to Lazy Discovery",
