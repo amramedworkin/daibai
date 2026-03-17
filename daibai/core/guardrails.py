@@ -510,9 +510,9 @@ class GuardrailPipeline:
         if not query or not query.strip():
             return query
         sanitization_prompt = (
-            "Rewrite the following database natural language query to fix typos and improve "
+            "Please rewrite the following database natural language query to fix typos and improve "
             "clarity for a Text-to-SQL engine. Maintain the original intent exactly. "
-            "Return ONLY the corrected query text.\n\n"
+            "Please provide just the corrected query text without any explanations.\n\n"
             f"Query: {query}"
         )
         try:
@@ -534,9 +534,9 @@ class GuardrailPipeline:
         if not query or not query.strip():
             return query
         sanitization_prompt = (
-            "Rewrite the following database natural language query to fix typos and improve "
+            "Please rewrite the following database natural language query to fix typos and improve "
             "clarity for a Text-to-SQL engine. Maintain the original intent exactly. "
-            "Return ONLY the corrected query text.\n\n"
+            "Please provide just the corrected query text without any explanations.\n\n"
             f"Query: {query}"
         )
         try:

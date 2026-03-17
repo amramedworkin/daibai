@@ -705,9 +705,9 @@ class DaiBaiAgent:
         sanitized = GuardrailPipeline.sanitize_query_sync(prompt, self.generate)
         self._last_sanitized_query = sanitized
         mode_prompts = {
-            "sql": "Generate ONLY a SELECT query for this request.",
-            "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
-            "crud": "Generate ONLY an INSERT, UPDATE, or DELETE statement for this request. CRITICAL: Always include appropriate WHERE clauses.",
+            "sql": "Please provide a SELECT query for this request.",
+            "ddl": "Please provide the DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
+            "crud": "Please provide an INSERT, UPDATE, or DELETE statement for this request. Please ensure you include appropriate WHERE clauses.",
         }
 
         db_name = self._current_db or "unknown"
@@ -735,10 +735,10 @@ Database: {db_name}
 
 Request: {sanitized}
 
-Return the SQL in a ```sql code block. Do not execute it."""
+Please return the SQL wrapped in a ```sql code block."""
 
         system_prompt = (
-            "You are an expert SQL developer. Generate clean, efficient SQL. "
+            "You are a helpful SQL assistant. Please generate clean, efficient SQL. "
         )
         if table_list_str:
             system_prompt += (
@@ -749,7 +749,7 @@ Return the SQL in a ```sql code block. Do not execute it."""
             "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs."
         )
         if allowed_tables:
-            system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
+            system_prompt += f" Please restrict your query to these tables: {', '.join(sorted(allowed_tables))}."
 
         namespace = self._get_db_namespace(db_name)
         context = {
@@ -793,9 +793,9 @@ Return the SQL in a ```sql code block. Do not execute it."""
                 step_id="query-sanitization",
             )
         mode_prompts = {
-            "sql": "Generate ONLY a SELECT query for this request.",
-            "ddl": "Generate ONLY DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request.",
-            "crud": "Generate ONLY an INSERT, UPDATE, or DELETE statement for this request.",
+            "sql": "Please provide a SELECT query for this request.",
+            "ddl": "Please provide the DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
+            "crud": "Please provide an INSERT, UPDATE, or DELETE statement for this request. Please ensure you include appropriate WHERE clauses.",
         }
 
         db_name = self._current_db or "unknown"
@@ -842,10 +842,10 @@ Database: {db_name}
 
 Request: {sanitized}
 
-Return the SQL in a ```sql code block. Do not execute it."""
+Please return the SQL wrapped in a ```sql code block."""
 
         system_prompt = (
-            "You are an expert SQL developer. Generate clean, efficient SQL. "
+            "You are a helpful SQL assistant. Please generate clean, efficient SQL. "
         )
         if table_list_str:
             system_prompt += (
@@ -856,7 +856,7 @@ Return the SQL in a ```sql code block. Do not execute it."""
             "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs."
         )
         if allowed_tables:
-            system_prompt += f" You may ONLY query these tables: {', '.join(sorted(allowed_tables))}."
+            system_prompt += f" Please restrict your query to these tables: {', '.join(sorted(allowed_tables))}."
 
         namespace = self._get_db_namespace(db_name)
         context: Dict[str, Any] = {
