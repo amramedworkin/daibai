@@ -44,11 +44,6 @@ else
         --min-replicas 1 -o none
 fi
 
-# Fetch Redis Internal FQDN
-REDIS_FQDN=$(az containerapp show --name "daibai-redis" --resource-group "$AZURE_RG_NAME" --query properties.configuration.ingress.fqdn -o tsv)
-REDIS_URL="redis://$REDIS_FQDN:6379"
-echo "  -> Internal Redis URL: $REDIS_URL"
-
 # 4. Deploy DaiBai App (Initial Hello World to establish Identity)
 echo "[4/6] Checking DaiBai API Container App..."
 if az containerapp show --name "daibai-api" --resource-group "$AZURE_RG_NAME" -o none 2>/dev/null; then
@@ -107,7 +102,7 @@ SET_ENV=(
     "COSMOS_ENDPOINT=https://${COSMOS_ACCOUNT_NAME}.documents.azure.com:443/"
     "COSMOS_DATABASE=daibai-metadata"
     "KEY_VAULT_URL=https://${KV_NAME}.vault.azure.net/"
-    "REDIS_URL=$REDIS_URL"
+    "REDIS_URL=redis://daibai-redis:6379"
     "ENVIRONMENT=production"
 )
 [[ -n "${AZURE_OPENAI_ENDPOINT:-}" ]] && SET_ENV+=("AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}")
