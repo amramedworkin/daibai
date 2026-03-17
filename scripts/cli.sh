@@ -127,7 +127,7 @@ Commands by Category:
     chat-bounce-ff   Restart & open in Firefox |  chat-bounce-ff-wipe  Wipe users, restart & open Firefox
     chat-status      Show running status       |  chat-toggle      Toggle start/stop
     status           Alias for chat-status    |  server           Run foreground server
-    chrome           Chrome with remote-debug port 9222 |  chrome-dev  Chrome dev + localhost:8080
+    chrome           Chrome with remote-debug port 9222 |  chrome-dev  Chrome dev + localhost:8000
   ------------------------------------------------------------------------------------------
   LOGGING
     log              Show logs (alias: logs-view) |  log-info       Where are logs (alias: logs-info)
@@ -187,6 +187,10 @@ Commands by Category:
   ------------------------------------------------------------------------------------------
   SYSTEM RESET (testing)
     system-reset     Clear Redis, indexes, Firebase, Cosmos, logs, ~/.daibai — fresh start
+  ------------------------------------------------------------------------------------------
+  LOCAL (Docker Compose)
+    local-up         Start the mirrored local Docker Compose environment
+    local-down       Stop the local Docker Compose environment
   ------------------------------------------------------------------------------------------
   CONFIG & ENVIRONMENT
     setup/install    Install dependencies      |  is-ready         Check env components
@@ -294,32 +298,36 @@ cmd_chrome() {
 }
 
 cmd_chrome_dev() {
-    cmd_chrome "http://localhost:8080"
+    cmd_chrome "http://localhost:8000"
 }
 
 cmd_chat_status() {
     local json=false
     [[ "$1" == "--json" ]] && json=true
+    local port="${DAIBAI_PORT:-8000}"
 
     if $json; then
-        local port="${DAIBAI_PORT:-8080}"
         local running=false
         if chat_service_is_running; then
             running=true
         fi
         echo "{\"running\": $running, \"port\": $port, \"url\": \"http://localhost:$port\"}"
     else
-        print_header "Chat Service Status"
+        print_header "Chat Service Status (Docker)"
         show_chat_service_status_bar --legend
         if chat_service_is_running; then
-            echo "  URL: http://localhost:${DAIBAI_PORT:-8080}"
+            echo "  URL: http://localhost:$port"
+        fi
+        if command -v docker &>/dev/null; then
+            (cd "$PROJECT_DIR" && docker compose ps 2>/dev/null) || true
         fi
         echo ""
     fi
 }
 
 cmd_server() {
-    run_daibai_server "$@"
+    print_header "Starting Local Docker Environment (foreground)"
+    (cd "$PROJECT_DIR" && docker compose up --build)
 }
 
 cmd_chat_toggle() {
@@ -1841,7 +1849,7 @@ _CLI_WILDCARD_CMDS=(
     "chat-toggle:Toggle start/stop"
     "server:Run foreground server"
     "chrome:Chrome with remote-debug port 9222"
-    "chrome-dev:Chrome dev mode with localhost:8080"
+    "chrome-dev:Chrome dev mode with localhost:8000"
     "cli-launch:Interactive REPL"
     "cli-query:Single natural language query"
     "train:Train DB schema"
@@ -1918,6 +1926,8 @@ _CLI_WILDCARD_CMDS=(
     "logs-rotate:Archive and start fresh"
     "log:Show logs"
     "log-info:Where are logs"
+    "local-up:Build and start the local Docker Compose environment"
+    "local-down:Stop and remove the local Docker Compose containers"
 )
 
 cmd_wildcard_search() {
@@ -2248,6 +2258,14 @@ main() {
             ;;
         log-info)
             cmd_logs_info
+            ;;
+        local-up)
+            print_header "Starting Local Docker Environment (background)"
+            (cd "$PROJECT_DIR" && docker compose down 2>/dev/null && docker compose up -d --build)
+            ;;
+        local-down)
+            print_header "Stopping Local Docker Environment"
+            (cd "$PROJECT_DIR" && docker compose down)
             ;;
         help|--help|-h|"")
             show_help

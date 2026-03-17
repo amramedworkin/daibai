@@ -177,8 +177,8 @@ handle_chat_service_menu() {
                 ;;
             6)
                 clear
-                echo -e "${CYAN}Starting daibai-server in foreground (Ctrl+C to stop)...${NC}"
-                run_daibai_server
+                echo -e "${CYAN}Starting Docker Compose in foreground (Ctrl+C to stop)...${NC}"
+                (cd "$PROJECT_DIR" && docker compose up --build)
                 echo ""
                 echo "Press Enter to continue..."
                 read -r
