@@ -20,6 +20,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Force explicit installation of the Azure OpenAI dependencies to prevent silent extra failures
+RUN pip install --no-cache-dir openai azure-identity
+
 # Copy the rest of the application code
 COPY . .
 
