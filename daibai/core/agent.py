@@ -645,6 +645,38 @@ class DaiBaiAgent:
         
         # Return from in-memory cache
         return self._schema_memory.get(name, "")
+
+    def _classify_intent(self, sanitized_prompt: str) -> str:
+        """Categorize the user's intent into one of four buckets."""
+        system_prompt = (
+            "You are an intent classification router. Read the user's prompt and categorize it "
+            "into EXACTLY ONE of these four buckets: READ_DATA (Selects/Reads), WRITE_DATA (Inserts/Updates/Deletes), "
+            "MODIFY_SCHEMA (DDL/Creates/Alters), or GENERAL_QUESTION (Questions about the schema, table counts, or database knowledge). "
+            "Reply with ONLY the exact bucket name."
+        )
+        try:
+            response = self.generate(sanitized_prompt, {"system_prompt": system_prompt})
+            intent = response.text.strip().upper()
+            valid_intents = {"READ_DATA", "WRITE_DATA", "MODIFY_SCHEMA", "GENERAL_QUESTION"}
+            return intent if intent in valid_intents else "READ_DATA"
+        except Exception:
+            return "READ_DATA"
+
+    async def _classify_intent_async(self, sanitized_prompt: str) -> str:
+        """Async categorization of the user's intent."""
+        system_prompt = (
+            "You are an intent classification router. Read the user's prompt and categorize it "
+            "into EXACTLY ONE of these four buckets: READ_DATA (Selects/Reads), WRITE_DATA (Inserts/Updates/Deletes), "
+            "MODIFY_SCHEMA (DDL/Creates/Alters), or GENERAL_QUESTION (Questions about the schema, table counts, or database knowledge). "
+            "Reply with ONLY the exact bucket name."
+        )
+        try:
+            response = await self.generate_async(sanitized_prompt, {"system_prompt": system_prompt})
+            intent = response.text.strip().upper()
+            valid_intents = {"READ_DATA", "WRITE_DATA", "MODIFY_SCHEMA", "GENERAL_QUESTION"}
+            return intent if intent in valid_intents else "READ_DATA"
+        except Exception:
+            return "READ_DATA"
     
     def generate(self, prompt: str, context: Optional[Dict[str, Any]] = None) -> LLMResponse:
         """Generate LLM response for a prompt."""
@@ -684,7 +716,6 @@ class DaiBaiAgent:
     def generate_sql(
         self,
         prompt: str,
-        mode: str = "sql",
         force_tables: Optional[Set[str]] = None,
         execution_mode: str = "read_only",
     ) -> str:
@@ -693,17 +724,21 @@ class DaiBaiAgent:
         Uses semantic schema pruning: only the most relevant tables (Top-K by
         SCHEMA_VECTOR_LIMIT) are injected into the LLM context. When Redis +
         embeddings are available, token usage drops significantly on large databases.
+        Intent (READ_DATA, WRITE_DATA, MODIFY_SCHEMA, GENERAL_QUESTION) is classified
+        automatically; no user-provided mode is required.
         
         Args:
             prompt: Natural language description
-            mode: 'sql' for SELECT, 'ddl' for CREATE/ALTER, 'crud' for INSERT/UPDATE/DELETE
         
         Returns:
-            Generated SQL string
+            Generated SQL string (or conversational reply for GENERAL_QUESTION)
         """
         GuardrailPipeline.validate_prompt(prompt, execution_mode=execution_mode)
         sanitized = GuardrailPipeline.sanitize_query_sync(prompt, self.generate)
         self._last_sanitized_query = sanitized
+        intent = self._classify_intent(sanitized)
+        mode_mapping = {"READ_DATA": "sql", "WRITE_DATA": "crud", "MODIFY_SCHEMA": "ddl"}
+        mapped_mode = mode_mapping.get(intent, "sql")
         mode_prompts = {
             "sql": "Please provide a SELECT query for this request.",
             "ddl": "Please provide the DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
@@ -730,7 +765,7 @@ class DaiBaiAgent:
             except Exception:
                 pass
 
-        enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
+        enhanced_prompt = f"""{mode_prompts.get(mapped_mode, mode_prompts['sql'])}
 Database: {db_name}
 
 Request: {sanitized}
@@ -759,13 +794,16 @@ Please return the SQL wrapped in a ```sql code block."""
             "namespace": namespace,
         }
 
+        if intent == "GENERAL_QUESTION":
+            enhanced_prompt = f"Database: {db_name}\n\nRequest: {sanitized}\n\nPlease answer the user's question conversationally based on the provided database schema context. Do not write SQL."
+            response = self.generate(enhanced_prompt, context)
+            return response.text.strip()
         response = self.generate(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)
     
     async def generate_sql_async(
         self,
         prompt: str,
-        mode: str = "sql",
         history: Optional[List[Dict[str, Any]]] = None,
         force_tables: Optional[Set[str]] = None,
         execution_mode: str = "read_only",
@@ -774,6 +812,8 @@ Please return the SQL wrapped in a ```sql code block."""
         """Generate SQL asynchronously. Optionally pass conversation history for context.
         
         Uses semantic schema pruning when Redis + embeddings are available.
+        Intent (READ_DATA, WRITE_DATA, MODIFY_SCHEMA, GENERAL_QUESTION) is classified
+        automatically; no user-provided mode is required.
         """
         GuardrailPipeline.validate_prompt(prompt, execution_mode=execution_mode)
 
@@ -792,6 +832,9 @@ Please return the SQL wrapped in a ```sql code block."""
                 output_data=sanitized,
                 step_id="query-sanitization",
             )
+        intent = await self._classify_intent_async(sanitized)
+        mode_mapping = {"READ_DATA": "sql", "WRITE_DATA": "crud", "MODIFY_SCHEMA": "ddl"}
+        mapped_mode = mode_mapping.get(intent, "sql")
         mode_prompts = {
             "sql": "Please provide a SELECT query for this request.",
             "ddl": "Please provide the DDL (CREATE VIEW, CREATE TABLE, ALTER, DROP) for this request. Use CREATE OR REPLACE VIEW when creating views.",
@@ -837,7 +880,7 @@ Please return the SQL wrapped in a ```sql code block."""
             except Exception:
                 pass
 
-        enhanced_prompt = f"""{mode_prompts.get(mode, mode_prompts['sql'])}
+        enhanced_prompt = f"""{mode_prompts.get(mapped_mode, mode_prompts['sql'])}
 Database: {db_name}
 
 Request: {sanitized}
@@ -879,8 +922,13 @@ Please return the SQL wrapped in a ```sql code block."""
                 step_id="sql-generation",
             )
         gen_start = time.perf_counter()
-        response = await self.generate_async(enhanced_prompt, context)
-        sql_result = response.sql or self._extract_sql(response.text)
+        if intent == "GENERAL_QUESTION":
+            enhanced_prompt = f"Database: {db_name}\n\nRequest: {sanitized}\n\nPlease answer the user's question conversationally based on the provided database schema context. Do not write SQL."
+            response = await self.generate_async(enhanced_prompt, context)
+            sql_result = response.text.strip()
+        else:
+            response = await self.generate_async(enhanced_prompt, context)
+            sql_result = response.sql or self._extract_sql(response.text)
         if trace_callback:
             gen_ms = (time.perf_counter() - gen_start) * 1000
             await trace_callback(

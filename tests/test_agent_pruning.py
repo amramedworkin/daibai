@@ -216,7 +216,7 @@ def test_generate_sql_injects_only_pruned_tables_into_context(schema_manager_10_
         return MagicMock(sql="SELECT * FROM financial_records", text="")
 
     with patch.object(agent, "generate", side_effect=_capture_generate):
-        agent.generate_sql("Show me total revenue and sales", mode="sql")
+        agent.generate_sql("Show me total revenue and sales")
 
     schema_injected = captured_context.get("schema", "")
     allowed = captured_context.get("allowed_tables")

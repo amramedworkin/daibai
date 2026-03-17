@@ -385,10 +385,8 @@ class SettingsResponse(BaseModel):
     databases_detail: Optional[List[Dict[str, Any]]] = None  # [{name, is_playground}] for UI grouping
     llm_providers: List[str]
     llm_provider_configs: Optional[Dict[str, Dict[str, Any]]] = None
-    modes: List[str]
     current_database: Optional[str]
     current_llm: Optional[str]
-    current_mode: str
     # Index status for current_database — enables auto-index when not_indexed
     is_indexed: Optional[bool] = None
     last_indexed_at: Optional[str] = None
@@ -397,7 +395,6 @@ class SettingsResponse(BaseModel):
 class SettingsUpdate(BaseModel):
     database: Optional[str] = None
     llm: Optional[str] = None
-    mode: Optional[str] = None
 
 
 class DatabaseListItem(BaseModel):
@@ -684,10 +681,8 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             databases=databases,
             llm_providers=llm_providers,
             llm_provider_configs=llm_configs,
-            modes=["sql", "ddl", "crud"],
             current_database=current_db,
             current_llm=current_llm_val,
-            current_mode="sql",
             is_indexed=is_indexed_val,
             last_indexed_at=last_indexed_at_val,
             databases_detail=databases_detail,
@@ -1213,7 +1208,7 @@ async def query(
             sql = None
             try:
                 sql = await asyncio.wait_for(
-                    agent.generate_sql_async(request.query, "sql", history=history),
+                    agent.generate_sql_async(request.query, history=history),
                     timeout=_PLAYGROUND_LLM_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -1232,7 +1227,7 @@ async def query(
                     try:
                         sql = await asyncio.wait_for(
                             agent.generate_sql_async(
-                                request.query, "sql", history=history, force_tables=missing_tables
+                                request.query, history=history, force_tables=missing_tables
                             ),
                             timeout=_PLAYGROUND_LLM_TIMEOUT,
                         )
@@ -2083,7 +2078,7 @@ async def websocket_chat(websocket: WebSocket):
                     try:
                         sql = await asyncio.wait_for(
                             agent.generate_sql_async(
-                                query, "sql", history=history, trace_callback=emit_trace
+                                query, history=history, trace_callback=emit_trace
                             ),
                             timeout=_PLAYGROUND_LLM_TIMEOUT,
                         )
@@ -2115,7 +2110,6 @@ async def websocket_chat(websocket: WebSocket):
                                 sql = await asyncio.wait_for(
                                     agent.generate_sql_async(
                                         query,
-                                        "sql",
                                         history=history,
                                         force_tables=missing_tables,
                                         trace_callback=_wrap_trace_for_recovery(emit_trace),

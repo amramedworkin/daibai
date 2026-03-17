@@ -56,7 +56,6 @@ class ChatAgent:
         prefs = load_user_preferences()
         self.current_db = prefs.get("database") or self.config.default_database
         self.current_llm = prefs.get("llm") or self.config.default_llm
-        self.mode = prefs.get("mode", "sql")
         self.clipboard = prefs.get("clipboard", True)
         
         # Apply preferences to agent
@@ -88,7 +87,6 @@ class ChatAgent:
         save_user_preferences({
             "database": self.current_db,
             "llm": self.current_llm,
-            "mode": self.mode,
             "clipboard": self.clipboard,
         })
     
@@ -240,14 +238,14 @@ class ChatAgent:
         # 5. SQL Generation
         print(f"\n{Colors.YELLOW}5. SQL Generation{Colors.END}")
         try:
-            sql = await self.agent.generate_sql_async("count all records in the first table", "sql")
+            sql = await self.agent.generate_sql_async("count all records in the first table")
             has_select = sql and "SELECT" in sql.upper()
             report("Generate SELECT", has_select, sql[:40] if sql else "No SQL")
         except Exception as e:
             report("Generate SELECT", False, str(e)[:40])
         
         try:
-            sql = await self.agent.generate_sql_async("create a view for active records", "ddl")
+            sql = await self.agent.generate_sql_async("create a view for active records")
             has_create = sql and "CREATE" in sql.upper()
             report("Generate DDL", has_create, sql[:40] if sql else "No SQL")
         except Exception as e:
@@ -268,19 +266,8 @@ class ChatAgent:
         except Exception as e:
             report("SHOW TABLES", False, str(e)[:40])
         
-        # 7. Mode Switching
-        print(f"\n{Colors.YELLOW}7. Mode Switching{Colors.END}")
-        for mode in ["sql", "ddl", "crud"]:
-            try:
-                old_mode = self.mode
-                self.mode = mode
-                report(f"Switch to {mode} mode", self.mode == mode)
-                self.mode = old_mode
-            except Exception as e:
-                report(f"Switch to {mode} mode", False, str(e)[:40])
-        
-        # 8. Database Switching
-        print(f"\n{Colors.YELLOW}8. Database Switching{Colors.END}")
+        # 7. Database Switching
+        print(f"\n{Colors.YELLOW}7. Database Switching{Colors.END}")
         for db_name in self.config.list_databases():
             try:
                 self.agent.switch_database(db_name)
@@ -292,8 +279,8 @@ class ChatAgent:
         if original_db:
             self.agent.switch_database(original_db)
         
-        # 9. Clipboard (optional)
-        print(f"\n{Colors.YELLOW}9. Utilities{Colors.END}")
+        # 8. Clipboard (optional)
+        print(f"\n{Colors.YELLOW}8. Utilities{Colors.END}")
         try:
             copied = self._copy_to_clipboard("smoke test")
             report("Clipboard", copied or not self.clipboard, "disabled" if not self.clipboard else "")
@@ -336,11 +323,6 @@ class ChatAgent:
   {Colors.GREEN}@llm <name>{Colors.END}   - Switch LLM provider (gemini, openai, azure, anthropic)
   {Colors.GREEN}@databases{Colors.END}    - List available databases
   {Colors.GREEN}@providers{Colors.END}    - List available LLM providers
-
-{Colors.YELLOW}Operation Modes:{Colors.END}
-  {Colors.GREEN}@sql{Colors.END}          - SQL mode: Generate SELECT queries (default)
-  {Colors.GREEN}@ddl{Colors.END}          - DDL mode: Generate CREATE/ALTER/DROP statements
-  {Colors.GREEN}@crud{Colors.END}         - CRUD mode: Generate INSERT/UPDATE/DELETE
 
 {Colors.YELLOW}Safety Features:{Colors.END}
   {Colors.GREEN}@dry-run{Colors.END}      - Toggle dry-run mode (currently: {dry_run_status})
@@ -430,14 +412,8 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
     def get_prompt(self) -> str:
         """Build the colorized prompt."""
         db_indicator = f"{Colors.CYAN}{self.current_db or 'none'}{Colors.END}"
-        
-        mode_colors = {"sql": Colors.GREEN, "ddl": Colors.BLUE, "crud": Colors.RED}
-        mode_color = mode_colors.get(self.mode, Colors.GREEN)
-        mode_indicator = f"{mode_color}{self.mode}{Colors.END}"
-        
         llm_indicator = f"{Colors.YELLOW}{self.current_llm or 'none'}{Colors.END}"
-        
-        return f"{Colors.BOLD}[{db_indicator}:{mode_indicator}:{llm_indicator}{Colors.BOLD}]{Colors.END} > "
+        return f"{Colors.BOLD}[{db_indicator}:{llm_indicator}{Colors.BOLD}]{Colors.END} > "
     
     def handle_command(self, user_input: str) -> bool:
         """Handle @ commands. Returns True if command was handled."""
@@ -482,22 +458,8 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
                 print(f"  {Colors.GREEN}{p}{Colors.END}{marker}")
             return True
         
-        elif base_cmd == "@sql":
-            self.mode = "sql"
-            self._save_state()
-            print(f"{Colors.GREEN}✓ Mode: SQL (SELECT queries){Colors.END}")
-            return True
-        
-        elif base_cmd == "@ddl":
-            self.mode = "ddl"
-            self._save_state()
-            print(f"{Colors.BLUE}✓ Mode: DDL (CREATE/ALTER/DROP){Colors.END}")
-            return True
-        
-        elif base_cmd == "@crud":
-            self.mode = "crud"
-            self._save_state()
-            print(f"{Colors.RED}✓ Mode: CRUD (INSERT/UPDATE/DELETE){Colors.END}")
+        elif base_cmd in ("@sql", "@ddl", "@crud"):
+            print(f"{Colors.GREEN}✓ Intent is now classified automatically — no mode selection needed.{Colors.END}")
             return True
         
         elif base_cmd in ("@dry-run", "@dryrun"):
@@ -715,15 +677,12 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
     
     async def handle_query(self, user_input: str) -> None:
         """Handle a natural language query."""
-        # Check for inline mode prefixes
+        # Strip legacy inline mode prefixes (agent classifies intent automatically)
         if user_input.startswith("@ddl "):
-            self.mode = "ddl"
             user_input = user_input[5:]
         elif user_input.startswith("@crud "):
-            self.mode = "crud"
             user_input = user_input[6:]
         elif user_input.startswith("@sql "):
-            self.mode = "sql"
             user_input = user_input[5:]
         
         wants_results, output_format = self._wants_results(user_input)
@@ -732,7 +691,7 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
             print(f"\n{Colors.CYAN}Thinking...{Colors.END}")
         
         try:
-            sql = await self.agent.generate_sql_async(user_input, self.mode)
+            sql = await self.agent.generate_sql_async(user_input)
             
             if sql:
                 print(f"\n{Colors.CYAN}Generated SQL:{Colors.END}")
@@ -743,13 +702,7 @@ Type {Colors.CYAN}@examples{Colors.END} for usage examples.
                 
                 is_destructive = self.agent.is_destructive(sql)
                 
-                if self.mode == "ddl":
-                    if self.interactive:
-                        choice = input(f"\n{Colors.CYAN}Execute DDL? (y/n): {Colors.END}").strip().lower()
-                        if choice == 'y':
-                            await self.execute_sql(sql)
-                
-                elif self.mode == "crud" or is_destructive:
+                if is_destructive:
                     if self.interactive and wants_results:
                         choice = input(f"\n{Colors.RED}Execute destructive SQL? (y/n): {Colors.END}").strip().lower()
                         if choice == 'y':

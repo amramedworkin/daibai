@@ -666,7 +666,6 @@ class DaiBaiApp {
             this.sendBtn,
             this.databaseSelect,
             this.llmSelect,
-            this.modeSelect,
             this.newChatBtn,
             this.executeCheckbox,
             this.attachBtn,
@@ -866,8 +865,7 @@ class DaiBaiApp {
             layoutMode: this.layoutMode || 'sidebar-main',
             sidebarCollapsed: this.sidebar.classList.contains('collapsed'),
             database: this.databaseSelect.value,
-            llm: this.llmSelect.value,
-            mode: this.modeSelect.value
+            llm: this.llmSelect.value
         };
         this.verboseMode = prefs.verbose;
         localStorage.setItem('daibai_preferences', JSON.stringify(prefs));
@@ -974,7 +972,6 @@ class DaiBaiApp {
         this.sidebar = document.getElementById('sidebar');
         this.databaseSelect = document.getElementById('databaseSelect');
         this.llmSelect = document.getElementById('llmSelect');
-        this.modeSelect = document.getElementById('modeSelect');
         this.autoCopyCheckbox = document.getElementById('autoCopyCheckbox');
         this.autoCsvCheckbox = document.getElementById('autoCsvCheckbox');
         this.schemaBtn = document.getElementById('schemaBtn');
@@ -1242,7 +1239,6 @@ class DaiBaiApp {
             this.updateSettings();
             this.savePreferences();
         });
-        this.modeSelect.addEventListener('change', () => this.savePreferences());
         this.autoCopyCheckbox.addEventListener('change', () => this.savePreferences());
         this.autoCsvCheckbox.addEventListener('change', () => this.savePreferences());
         this.executeCheckbox.addEventListener('change', () => this.savePreferences());
@@ -1408,9 +1404,6 @@ class DaiBaiApp {
                 .map(llm => `<option value="${llm}" ${llm === savedLlm ? 'selected' : ''}>${llm}</option>`)
                 .join('');
             
-            // Set mode from preferences or default
-            this.modeSelect.value = prefs.mode || settings.current_mode || 'sql';
-            
             // Always sync settings to server to ensure database/LLM is correct
             await this.updateSettings();
         } catch (error) {
@@ -1425,8 +1418,7 @@ class DaiBaiApp {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     database: this.databaseSelect.value,
-                    llm: this.llmSelect.value,
-                    mode: this.modeSelect.value
+                    llm: this.llmSelect.value
                 })
             });
         } catch (error) {
@@ -1621,23 +1613,21 @@ class DaiBaiApp {
                 break;
 
             case 'sql': {
-                // "Thinking…" phase is done — show the generated SQL.
                 this.removeLoadingIndicator();
-                this.lastGeneratedSql = data.content;
+                const isSql = this._looksLikeSql(data.content);
+                this.lastGeneratedSql = isSql ? data.content : null;
                 const assistantMsg = {
                     role: 'assistant',
                     content: data.content,
-                    sql: data.content,
+                    sql: isSql ? data.content : null,
                     timestamp: new Date().toISOString(),
                 };
                 this.sessionMessages.push(assistantMsg);
                 this.renderAssistantMessage(data.content, null, this.sessionMessages.length - 1);
-                this.copyToClipboard(data.content);
+                if (isSql) this.copyToClipboard(data.content);
                 this.updatePromptsList(this.sessionMessages);
 
-                // If the server will execute the SQL, show a contextual indicator
-                // for the data-retrieval / data-write phase that follows.
-                if (this.executeCheckbox.checked && data.content) {
+                if (isSql && this.executeCheckbox.checked && data.content) {
                     const label = this._isWriteSql(data.content)
                         ? 'Modifying data…'
                         : 'Getting data…';
@@ -1827,12 +1817,21 @@ class DaiBaiApp {
             
             this.removeLoadingIndicator();
             this.conversationId = data.conversation_id;
-            this.lastGeneratedSql = data.sql;
-            
-            const assistantMsg = { role: 'assistant', content: data.sql, sql: data.sql, results: data.results, timestamp: new Date().toISOString() };
+
+            const responseText = data.sql || data.explanation || '';
+            const isSql = this._looksLikeSql(responseText);
+            this.lastGeneratedSql = isSql ? responseText : null;
+
+            const assistantMsg = {
+                role: 'assistant',
+                content: responseText,
+                sql: isSql ? responseText : null,
+                results: data.results,
+                timestamp: new Date().toISOString(),
+            };
             this.sessionMessages.push(assistantMsg);
-            this.renderAssistantMessage(data.sql, data.results, this.sessionMessages.length - 1);
-            this.copyToClipboard(data.sql);
+            this.renderAssistantMessage(responseText, data.results, this.sessionMessages.length - 1);
+            if (isSql) this.copyToClipboard(responseText);
             this.saveToCsv(data.results);
             this.updatePromptsList(this.sessionMessages);
             
@@ -1902,10 +1901,11 @@ class DaiBaiApp {
                 </div>
             `;
         } else {
-            const sqlBlock = msg.sql != null ? this.renderSqlBlock(msg.sql) : null;
-            const textBlock = !sqlBlock && msg.content
-                ? `<div class="message-text">${this.escapeHtml(msg.content).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}</div>`
-                : (sqlBlock || this.renderSqlBlock(msg.content));
+            const rawContent = msg.sql ?? msg.content ?? '';
+            const isSql = this._looksLikeSql(rawContent);
+            const bodyHtml = isSql
+                ? this.renderSqlBlock(rawContent)
+                : this.renderTextBlock(rawContent || 'No response');
             messageEl.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
                 <div class="message-content">
@@ -1913,7 +1913,7 @@ class DaiBaiApp {
                         <span class="message-role">${roleName}</span>
                         <span class="message-time">${time}</span>
                     </div>
-                    ${textBlock}
+                    ${bodyHtml}
                     ${msg.results ? this.renderResults(msg.results) : ''}
                 </div>
             `;
@@ -1930,12 +1930,17 @@ class DaiBaiApp {
         this.scrollToBottom();
     }
     
-    renderAssistantMessage(sql, results = null, msgIndex = -1) {
+    renderAssistantMessage(content, results = null, msgIndex = -1) {
         const messageEl = document.createElement('div');
         messageEl.className = 'message assistant';
         messageEl.id = 'lastAssistantMessage';
         if (msgIndex >= 0) messageEl.dataset.msgIndex = msgIndex;
-        
+
+        const isSql = this._looksLikeSql(content);
+        const bodyHtml = isSql
+            ? this.renderSqlBlock(content)
+            : this.renderTextBlock(content || 'No response');
+
         messageEl.innerHTML = `
             <div class="message-avatar">D</div>
             <div class="message-content">
@@ -1943,7 +1948,7 @@ class DaiBaiApp {
                     <span class="message-role">DaiBai</span>
                     <span class="message-time">${this.formatTime(new Date().toISOString())}</span>
                 </div>
-                ${this.renderSqlBlock(sql)}
+                ${bodyHtml}
                 ${results ? this.renderResults(results) : ''}
             </div>
         `;
@@ -1951,14 +1956,28 @@ class DaiBaiApp {
         this.messagesContainer.appendChild(messageEl);
         this.scrollToBottom();
         
-        // Bind copy, run, modifier checkboxes, and export buttons
-        const sqlBlock = messageEl.querySelector('.sql-block');
-        if (sqlBlock) {
-            this.bindSqlActions(messageEl, sql);
+        if (isSql) {
+            const sqlBlock = messageEl.querySelector('.sql-block');
+            if (sqlBlock) {
+                this.bindSqlActions(messageEl, content);
+            }
         }
         this.bindExportCsvButtons(messageEl);
     }
     
+    _looksLikeSql(text) {
+        if (!text || typeof text !== 'string') return false;
+        const stripped = text.trim().replace(/^--.*$/gm, '').trim();
+        return /^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH|SHOW|DESCRIBE|EXPLAIN|SET|USE|GRANT|REVOKE|TRUNCATE|MERGE|REPLACE|CALL|EXEC)\b/i.test(stripped);
+    }
+
+    renderTextBlock(text) {
+        const escaped = this.escapeHtml(text)
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n/g, '<br>');
+        return `<div class="message-text">${escaped}</div>`;
+    }
+
     renderSqlBlock(sql) {
         if (!sql) return '<div class="message-text">Could not generate SQL</div>';
         
