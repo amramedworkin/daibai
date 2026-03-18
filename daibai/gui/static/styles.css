@@ -2957,3 +2957,112 @@ kbd {
         display: none;
     }
 }
+
+/* =========================================
+   GRID.JS OVERRIDES — Dark Theme
+   ========================================= */
+
+.daibai-datagrid-container .gridjs-container {
+    color: var(--text-primary) !important;
+}
+
+.daibai-datagrid-container .gridjs-wrapper {
+    border-color: var(--border) !important;
+    box-shadow: none !important;
+}
+
+.daibai-datagrid-container .gridjs-table {
+    background-color: transparent !important;
+}
+
+/* Header cells */
+.daibai-datagrid-container th.gridjs-th {
+    background-color: var(--bg-tertiary) !important;
+    color: var(--text-secondary) !important;
+    border-color: var(--border) !important;
+    padding-right: 25px !important;
+}
+
+.daibai-datagrid-container th.gridjs-th-sort:hover,
+.daibai-datagrid-container th.gridjs-th-sort:focus {
+    background-color: var(--bg-hover) !important;
+}
+
+/* Sort icon visibility on dark bg */
+.daibai-datagrid-container button.gridjs-sort {
+    filter: invert(1);
+}
+
+/* Odd rows */
+.daibai-datagrid-container .gridjs-tr:nth-child(odd) .gridjs-td {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border) !important;
+}
+
+/* Even rows — subtle stripe */
+.daibai-datagrid-container .gridjs-tr:nth-child(even) .gridjs-td {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border) !important;
+}
+
+/* Hover */
+.daibai-datagrid-container .gridjs-tr:hover .gridjs-td {
+    background-color: var(--bg-hover) !important;
+    transition: background-color 0.15s ease;
+}
+
+/* Footer (pagination) */
+.daibai-datagrid-container .gridjs-footer {
+    background-color: var(--bg-secondary) !important;
+    border-color: var(--border) !important;
+    box-shadow: none !important;
+    color: var(--text-secondary) !important;
+}
+
+.daibai-datagrid-container .gridjs-pagination .gridjs-pages button {
+    background-color: var(--bg-tertiary) !important;
+    color: var(--text-secondary) !important;
+    border-color: var(--border) !important;
+}
+
+.daibai-datagrid-container .gridjs-pagination .gridjs-pages button:hover {
+    background-color: var(--bg-hover) !important;
+    color: var(--text-primary) !important;
+}
+
+.daibai-datagrid-container .gridjs-pagination .gridjs-pages button.gridjs-currentPage {
+    background-color: var(--bg-active) !important;
+    color: var(--text-primary) !important;
+    font-weight: 700;
+}
+
+.daibai-datagrid-container .gridjs-pagination .gridjs-summary {
+    color: var(--text-muted) !important;
+}
+
+/* Search input */
+.daibai-datagrid-container .gridjs-head {
+    background-color: transparent !important;
+}
+
+.daibai-datagrid-container input.gridjs-input {
+    background-color: var(--bg-tertiary) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border) !important;
+}
+
+.daibai-datagrid-container input.gridjs-input:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.25) !important;
+}
+
+/* Loading & messages */
+.daibai-datagrid-container .gridjs-loading-bar {
+    background-color: var(--bg-primary) !important;
+}
+
+.daibai-datagrid-container .gridjs-message {
+    color: var(--text-muted) !important;
+}

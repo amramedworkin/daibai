@@ -1095,9 +1095,7 @@ Original SQL:
                 if df is None:
                     df = pd.DataFrame()
 
-                if intent == "GENERAL_QUESTION":
-                    return self._format_metadata_response(df, current_sql)
-                return f"{df.to_string(index=False)}\n\n**Source Query:**\n```sql\n{current_sql}\n```"
+                return self._format_data_response(df, current_sql)
 
             except Exception as e:
                 error_msg = str(e)
@@ -1155,18 +1153,28 @@ Original SQL:
             f"**Last SQL Attempt:**\n```sql\n{current_sql}\n```"
         )
 
-    def _format_metadata_response(self, df: pd.DataFrame, sql: str) -> str:
-        """Formats the DB result with Markdown fences to trigger frontend highlighting."""
+    def _format_data_response(self, df: pd.DataFrame, sql: str) -> str:
+        """Formats the DB result, returning scalars as text and tables as Grid.js JSON."""
         if df is None or df.empty:
             return "No results found."
 
-        sql_markdown = f"```sql\n{sql}\n```"
+        sql_block = f"\n\n**Source Query:**\n```sql\n{sql}\n```"
 
+        # If scalar (1x1), return raw string
         if df.shape == (1, 1):
-            raw_val = str(df.iloc[0, 0])
-            return f"{raw_val}\n\n**Source Query:**\n{sql_markdown}"
+            raw_val = df.iloc[0, 0]
+            raw_val = "N/A" if pd.isna(raw_val) else str(raw_val)
+            return f"{raw_val}{sql_block}"
 
-        return f"{df.to_string(index=False)}\n\n**Source Query:**\n{sql_markdown}"
+        # For tables, serialize to JSON using Pandas 'split' orientation
+        # orient="split" provides {"columns": [...], "data": [[...], ...]}
+        # default_handler=str ensures dates/decimals don't break json.dumps
+        json_payload = df.to_json(orient="split", date_format="iso", default_handler=str)
+
+        # Wrap in our custom interceptor fence
+        grid_block = f"```datagrid\n{json_payload}\n```"
+
+        return f"{grid_block}{sql_block}"
 
     def _extract_sql(self, text: str) -> str:
         """Extract SQL from response text."""

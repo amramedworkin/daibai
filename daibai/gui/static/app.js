@@ -620,13 +620,12 @@ class DaiBaiApp {
             return;
         }
 
-        // Start WebSocket immediately so it's ready when the user sends a query.
-        this._setLoadingStep('Connecting to backend…');
-        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
-
-        // Authenticated: check/refresh database index (evergreen or full index), then load UI.
+        // Authenticated: check/refresh database index first, then connect chat WebSocket.
+        // Deferring WebSocket until after indexing avoids competing connections during startup.
         this._setLoadingStep('Checking database index…');
         await this.ensureDatabaseIndexed('all');
+        this._setLoadingStep('Connecting to backend…');
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
         this._setLoadingStep('Loading settings…');
         await this.loadSettings();
         this._setLoadingStep('Loading conversations…');
@@ -673,10 +672,10 @@ class DaiBaiApp {
         this.promptInput.placeholder = 'Ask me about your database…';
 
         // Load the full feature set (startup indexing, then settings).
-        this._setLoadingStep('Connecting to backend…');
-        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
         this._setLoadingStep('Checking database index…');
         await this.ensureDatabaseIndexed('all');
+        this._setLoadingStep('Connecting to backend…');
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
         this._setLoadingStep('Loading settings…');
         await this.loadSettings();
         this._setLoadingStep('Loading conversations…');
@@ -1648,7 +1647,12 @@ class DaiBaiApp {
                 resolve();
             };
             const onError = (e) => {
-                if (attempt <= 2) console.warn('[DaiBai] WebSocket connection failed — server may be offline');
+                const errMsg = (e && (e.message || e.reason)) ? String(e.message || e.reason) : 'connection failed';
+                if (attempt === 1) {
+                    console.log('[DaiBai] WebSocket initial connect failed, will retry:', errMsg);
+                } else if (attempt <= 3) {
+                    console.warn('[DaiBai] WebSocket connection failed (attempt ' + attempt + '):', errMsg);
+                }
                 this.ws.removeEventListener('open', onOpen);
                 this.ws.removeEventListener('error', onError);
                 reject(e);
@@ -1662,7 +1666,7 @@ class DaiBaiApp {
                 this.handleWebSocketMessage(data);
             };
 
-            this.ws.onclose = () => {
+            this.ws.onclose = (ev) => {
                 this.ws = null;
                 if (this._wsKeepalive) { clearInterval(this._wsKeepalive); this._wsKeepalive = null; }
                 // Show toast on 3rd+ failure; cap at 30s between retries to reduce spam
@@ -1670,8 +1674,10 @@ class DaiBaiApp {
                 if (attempt >= 3 && attempt <= 4) {
                     showSandboxStatusToast('error', 'Server offline — retrying… Make sure the DaiBai server is running.');
                 }
-                if (attempt <= 3 || attempt % 5 === 0) {
-                    console.warn(`[DaiBai] WebSocket disconnected (attempt ${attempt}), reconnecting in ${delay/1000}s…`);
+                if (attempt === 1) {
+                    console.log('[DaiBai] WebSocket closed (initial), reconnecting in ' + (delay / 1000) + 's…');
+                } else if (attempt <= 3 || attempt % 5 === 0) {
+                    console.warn('[DaiBai] WebSocket disconnected (attempt ' + attempt + '), reconnecting in ' + (delay / 1000) + 's…');
                 }
                 this._wsReconnectTimer = setTimeout(() => this.connectWebSocket().catch(() => {}), delay);
             };
@@ -1755,7 +1761,12 @@ class DaiBaiApp {
                 break;
 
             case 'trace':
-                if (data.content) this.renderTraceStep(data.content);
+                if (data.content) {
+                    this.renderTraceStep(data.content);
+                    if (data.content.status === 'running' && data.content.step_name) {
+                        this.updateLoadingLabel(data.content.step_name);
+                    }
+                }
                 break;
 
             case 'done':
@@ -1844,8 +1855,8 @@ class DaiBaiApp {
         this.renderAttachedFiles();
         this.autoResizeTextarea();
         
-        // Show contextual loading indicator — "Thinking…" while the LLM works.
-        this.showLoadingIndicator('Thinking…');
+        // Show loading indicator — label updates to actual step (Query Sanitization, Semantic Pruning, etc.) via trace events.
+        this.showLoadingIndicator('Preparing…');
         
         // Prefer WebSocket so Inspector Panel receives trace events.
         // If WS is dead, attempt a reconnect before falling back to REST.
@@ -1998,6 +2009,8 @@ class DaiBaiApp {
         const avatar = msg.role === 'user' ? 'U' : 'D';
         const roleName = msg.role === 'user' ? 'You' : 'DaiBai';
         const time = this.formatTime(msg.timestamp);
+
+        let allGridDataList = [];
         
         if (msg.role === 'user') {
             messageEl.innerHTML = `
@@ -2013,9 +2026,20 @@ class DaiBaiApp {
         } else {
             const rawContent = msg.sql ?? msg.content ?? '';
             const isSql = this._looksLikeSql(rawContent);
-            const bodyHtml = isSql
-                ? this.renderSqlBlock(rawContent)
+            const bodyResult = isSql
+                ? { html: this.renderSqlBlock(rawContent), gridDataList: [] }
                 : this.renderTextBlock(rawContent || 'No response');
+            const bodyHtml = typeof bodyResult === 'string' ? bodyResult : bodyResult.html;
+            const gridDataList = typeof bodyResult === 'string' ? [] : bodyResult.gridDataList;
+            allGridDataList = [...gridDataList];
+
+            let resultsHtml = '';
+            if (msg.results) {
+                const r = this.renderResults(msg.results);
+                resultsHtml = r.html;
+                allGridDataList = [...allGridDataList, ...r.gridDataList];
+            }
+
             messageEl.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
                 <div class="message-content">
@@ -2024,14 +2048,19 @@ class DaiBaiApp {
                         <span class="message-time">${time}</span>
                     </div>
                     ${bodyHtml}
-                    ${msg.results ? this.renderResults(msg.results) : ''}
+                    ${resultsHtml}
                 </div>
             `;
         }
         
         this.messagesContainer.appendChild(messageEl);
-        if (typeof hljs !== 'undefined') hljs.highlightAll();
+        if (typeof hljs !== 'undefined') {
+            messageEl.querySelectorAll('pre code').forEach((block) => {
+                hljs.highlightElement(block);
+            });
+        }
         if (msg.role === 'assistant') {
+            this._renderDatagrids(messageEl, allGridDataList);
             const sqlBlock = messageEl.querySelector('.sql-block');
             if (sqlBlock) {
                 this.bindSqlActions(messageEl, msg.sql ?? msg.content ?? '');
@@ -2040,7 +2069,7 @@ class DaiBaiApp {
         }
         this.scrollToBottom();
     }
-    
+
     renderAssistantMessage(content, results = null, msgIndex = -1) {
         const messageEl = document.createElement('div');
         messageEl.className = 'message assistant';
@@ -2048,9 +2077,19 @@ class DaiBaiApp {
         if (msgIndex >= 0) messageEl.dataset.msgIndex = msgIndex;
 
         const isSql = this._looksLikeSql(content);
-        const bodyHtml = isSql
-            ? this.renderSqlBlock(content)
+        const bodyResult = isSql
+            ? { html: this.renderSqlBlock(content), gridDataList: [] }
             : this.renderTextBlock(content || 'No response');
+        const bodyHtml = typeof bodyResult === 'string' ? bodyResult : bodyResult.html;
+        const gridDataList = typeof bodyResult === 'string' ? [] : bodyResult.gridDataList;
+
+        let resultsHtml = '';
+        let resultsGridDataList = [];
+        if (results) {
+            const r = this.renderResults(results);
+            resultsHtml = r.html;
+            resultsGridDataList = r.gridDataList;
+        }
 
         messageEl.innerHTML = `
             <div class="message-avatar">D</div>
@@ -2060,14 +2099,19 @@ class DaiBaiApp {
                     <span class="message-time">${this.formatTime(new Date().toISOString())}</span>
                 </div>
                 ${bodyHtml}
-                ${results ? this.renderResults(results) : ''}
+                ${resultsHtml}
             </div>
         `;
-        
+
         this.messagesContainer.appendChild(messageEl);
-        if (typeof hljs !== 'undefined') hljs.highlightAll();
+        if (typeof hljs !== 'undefined') {
+            messageEl.querySelectorAll('pre code').forEach((block) => {
+                hljs.highlightElement(block);
+            });
+        }
+        this._renderDatagrids(messageEl, [...gridDataList, ...resultsGridDataList]);
         this.scrollToBottom();
-        
+
         if (isSql) {
             const sqlBlock = messageEl.querySelector('.sql-block');
             if (sqlBlock) {
@@ -2076,7 +2120,7 @@ class DaiBaiApp {
         }
         this.bindExportCsvButtons(messageEl);
     }
-    
+
     _looksLikeSql(text) {
         if (!text || typeof text !== 'string') return false;
         const stripped = text.trim().replace(/^--.*$/gm, '').trim();
@@ -2084,14 +2128,56 @@ class DaiBaiApp {
     }
 
     renderTextBlock(text) {
+        const rawMessage = text || '';
+        const gridDataList = [];
+
+        // 1. Intercept the custom datagrid blocks
+        const processedMessage = rawMessage.replace(/```datagrid\n([\s\S]*?)\n```/g, (match, jsonString) => {
+            const gridId = 'grid-' + Math.random().toString(36).substring(2, 11);
+            try {
+                const parsedData = JSON.parse(jsonString);
+                gridDataList.push({ id: gridId, payload: parsedData });
+                return `<div id="${gridId}" class="daibai-datagrid-container" style="margin-top: 15px; margin-bottom: 15px;"></div>`;
+            } catch (e) {
+                console.error('Failed to parse datagrid JSON', e);
+                return '<div class="error">Error rendering data table.</div>';
+            }
+        });
+
+        // 2. Parse the remaining markdown (which now contains our placeholder divs)
         if (typeof marked !== 'undefined') {
-            const html = marked.parse(text || '');
-            return `<div class="message-text markdown-body">${html}</div>`;
+            const htmlContent = marked.parse(processedMessage);
+            const html = `<div class="message-text markdown-body">${htmlContent}</div>`;
+            return { html, gridDataList };
         }
-        const escaped = this.escapeHtml(text)
+        const escaped = this.escapeHtml(processedMessage)
             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
             .replace(/\n/g, '<br>');
-        return `<div class="message-text">${escaped}</div>`;
+        return { html: `<div class="message-text">${escaped}</div>`, gridDataList };
+    }
+
+    _renderDatagrids(messageEl, gridDataList) {
+        if (!gridDataList || gridDataList.length === 0) return;
+        if (typeof gridjs === 'undefined') return;
+        gridDataList.forEach((item) => {
+            const el = messageEl.querySelector('#' + item.id);
+            if (el) {
+                const columns = (item.payload.columns || []).map((c) =>
+                    typeof c === 'string'
+                        ? { name: c, sort: true }
+                        : { ...c, sort: c.sort !== false }
+                );
+                new gridjs.Grid({
+                    columns,
+                    data: item.payload.data,
+                    pagination: { limit: 10 },
+                    search: true,
+                    sort: true,
+                    resizable: true,
+                    style: { table: { width: '100%' } },
+                }).render(el);
+            }
+        });
     }
 
     renderSqlBlock(sql) {
@@ -2122,40 +2208,37 @@ class DaiBaiApp {
     
     renderResults(results) {
         if (!results || results.length === 0) {
-            return '<div class="results-container"><p>No results</p></div>';
+            return { html: '<div class="results-container"><p>No results</p></div>', gridDataList: [] };
         }
-        
+
         const columns = Object.keys(results[0]);
+        const data = results.map(row => columns.map(col => row[col] ?? ''));
+        const gridId = 'results-grid-' + Math.random().toString(36).substring(2, 11);
         const resultsId = 'results-' + Date.now() + '-' + Math.random().toString(36).slice(2);
         this.resultsCache[resultsId] = results;
-        
-        return `
+
+        const gridDataList = [{ id: gridId, payload: { columns, data } }];
+
+        const html = `
             <div class="results-container" data-results-id="${resultsId}">
                 <div class="results-header">
                     <span>${results.length} row(s) returned</span>
                     <button class="export-csv-btn" data-results-id="${resultsId}" title="Export to CSV">Export CSV</button>
                 </div>
-                <table class="results-table">
-                    <thead>
-                        <tr>${columns.map(col => `<th>${this.escapeHtml(col)}</th>`).join('')}</tr>
-                    </thead>
-                    <tbody>
-                        ${results.slice(0, 100).map(row => `
-                            <tr>${columns.map(col => `<td>${this.escapeHtml(String(row[col] ?? ''))}</td>`).join('')}</tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                ${results.length > 100 ? `<p style="margin-top: 8px; color: var(--text-muted);">Showing first 100 of ${results.length} rows</p>` : ''}
+                <div id="${gridId}" class="daibai-datagrid-container" style="margin-top: 8px;"></div>
             </div>
         `;
+
+        return { html, gridDataList };
     }
     
     appendResultsToLastMessage(data) {
         const lastMessage = document.getElementById('lastAssistantMessage');
         if (lastMessage) {
             const content = lastMessage.querySelector('.message-content');
-            const resultsHtml = this.renderResults(data.content);
-            content.insertAdjacentHTML('beforeend', resultsHtml);
+            const { html, gridDataList } = this.renderResults(data.content);
+            content.insertAdjacentHTML('beforeend', html);
+            this._renderDatagrids(lastMessage, gridDataList);
             this.bindExportCsvButtons(lastMessage);
             this.scrollToBottom();
         }
