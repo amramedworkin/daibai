@@ -260,6 +260,19 @@ class DaiBaiAgent:
         except ValueError:
             return db_name
 
+    def _get_db_dialect(self, db_name: str) -> str:
+        """Get the SQL dialect for the active database (MySQL, PostgreSQL, SQLite)."""
+        try:
+            db_config = self.config.get_database(db_name)
+            t = (db_config.type or "mysql").lower().strip()
+            if t == "sqlite":
+                return "SQLite"
+            if t in ("postgresql", "postgres"):
+                return "PostgreSQL"
+            return "MySQL"
+        except (ValueError, AttributeError):
+            return "MySQL"
+
     def _get_cache_manager(self) -> Optional[CacheManager]:
         """Lazy-init CacheManager for schema pruning (Redis + embeddings)."""
         if self._cache_manager is not None:
@@ -760,9 +773,25 @@ Request: {sanitized}
 
 Please return the SQL wrapped in a ```sql code block."""
 
+        dialect = self._get_db_dialect(db_name)
+        dialect_rules = (
+            f"CRITICAL ENVIRONMENT RULES: You are writing SQL for a {dialect} database. "
+            f"You MUST write {dialect}-compliant SQL.\n\n"
+            "NEVER query sqlite_master if the dialect is MySQL (use information_schema instead).\n\n"
+            "In MySQL, EVERY derived table or subquery MUST have its own alias "
+            "(e.g., SELECT * FROM (SELECT id FROM users) AS subquery_alias)."
+        )
+        if dialect == "SQLite":
+            meta_rule = "you must generate a query against sqlite_master."
+        elif dialect == "PostgreSQL":
+            meta_rule = "you must generate a query against pg_catalog or information_schema."
+        else:
+            meta_rule = "you must generate a query against information_schema.tables (NEVER sqlite_master)."
+
         system_prompt = (
             "You are a helpful SQL assistant. Please generate clean, efficient SQL. "
         )
+        system_prompt += dialect_rules + "\n\n"
         if table_list_str:
             system_prompt += (
                 f"The active database contains the following tables: {table_list_str}. "
@@ -771,8 +800,14 @@ Please return the SQL wrapped in a ```sql code block."""
         system_prompt += (
             "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs. "
             "STRICT RULE: If the user asks for a specific count or item (e.g., 'How many tables'), "
-            "you must generate a query against information_schema.tables (MySQL) or sqlite_master (SQLite). "
+            f"{meta_rule} "
             "Return ONLY the raw result value. No narrative, no markdown, no 'Here is the count'. Just the value."
+        )
+        system_prompt += (
+            " STRICT COLUMN PROJECTION RULE: If the user uses language that indicates they want results shown "
+            "(e.g., 'show', 'include', 'add', 'provide', 'list', 'display') and mentions specific metrics, you MUST "
+            "include those metrics in your SELECT clause. Do not merely use them in the WHERE clause. Your SELECT "
+            "must reflect all requested data points."
         )
         if allowed_tables and intent != "GENERAL_QUESTION":
             system_prompt += f" Please restrict your query to these tables: {', '.join(sorted(allowed_tables))}."
@@ -786,8 +821,9 @@ Please return the SQL wrapped in a ```sql code block."""
         }
 
         if intent == "GENERAL_QUESTION":
+            meta_source = "sqlite_master" if dialect == "SQLite" else ("pg_catalog or information_schema" if dialect == "PostgreSQL" else "information_schema")
             enhanced_prompt = (
-                f"Please provide a SELECT query against information_schema (MySQL) or sqlite_master (SQLite) "
+                f"Please provide a SELECT query against {meta_source} "
                 f"to answer this question.\n"
                 f"Database: {db_name}\n\n"
                 f"Request: {sanitized}\n\n"
@@ -796,12 +832,8 @@ Please return the SQL wrapped in a ```sql code block."""
             response = self.generate(enhanced_prompt, context)
             meta_sql = response.sql or self._extract_sql(response.text)
             if meta_sql:
-                try:
-                    df = self.run_sql(meta_sql)
-                    return self._format_metadata_response(df, meta_sql)
-                except Exception as e:
-                    logger.warning("[agent] GENERAL_QUESTION SQL execution failed: %s", e)
-            return meta_sql or response.text.strip()
+                return self._execute_with_reflection(sanitized, meta_sql, intent)
+            return response.text.strip()
         response = self.generate(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)
     
@@ -891,9 +923,25 @@ Request: {sanitized}
 
 Please return the SQL wrapped in a ```sql code block."""
 
+        dialect = self._get_db_dialect(db_name)
+        dialect_rules = (
+            f"CRITICAL ENVIRONMENT RULES: You are writing SQL for a {dialect} database. "
+            f"You MUST write {dialect}-compliant SQL.\n\n"
+            "NEVER query sqlite_master if the dialect is MySQL (use information_schema instead).\n\n"
+            "In MySQL, EVERY derived table or subquery MUST have its own alias "
+            "(e.g., SELECT * FROM (SELECT id FROM users) AS subquery_alias)."
+        )
+        if dialect == "SQLite":
+            meta_rule = "you must generate a query against sqlite_master."
+        elif dialect == "PostgreSQL":
+            meta_rule = "you must generate a query against pg_catalog or information_schema."
+        else:
+            meta_rule = "you must generate a query against information_schema.tables (NEVER sqlite_master)."
+
         system_prompt = (
             "You are a helpful SQL assistant. Please generate clean, efficient SQL. "
         )
+        system_prompt += dialect_rules + "\n\n"
         if table_list_str:
             system_prompt += (
                 f"The active database contains the following tables: {table_list_str}. "
@@ -902,8 +950,14 @@ Please return the SQL wrapped in a ```sql code block."""
         system_prompt += (
             "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs. "
             "STRICT RULE: If the user asks for a specific count or item (e.g., 'How many tables'), "
-            "you must generate a query against information_schema.tables (MySQL) or sqlite_master (SQLite). "
+            f"{meta_rule} "
             "Return ONLY the raw result value. No narrative, no markdown, no 'Here is the count'. Just the value."
+        )
+        system_prompt += (
+            " STRICT COLUMN PROJECTION RULE: If the user uses language that indicates they want results shown "
+            "(e.g., 'show', 'include', 'add', 'provide', 'list', 'display') and mentions specific metrics, you MUST "
+            "include those metrics in your SELECT clause. Do not merely use them in the WHERE clause. Your SELECT "
+            "must reflect all requested data points."
         )
         if allowed_tables and intent != "GENERAL_QUESTION":
             system_prompt += f" Please restrict your query to these tables: {', '.join(sorted(allowed_tables))}."
@@ -930,8 +984,9 @@ Please return the SQL wrapped in a ```sql code block."""
             )
         gen_start = time.perf_counter()
         if intent == "GENERAL_QUESTION":
+            meta_source = "sqlite_master" if dialect == "SQLite" else ("pg_catalog or information_schema" if dialect == "PostgreSQL" else "information_schema")
             enhanced_prompt = (
-                f"Please provide a SELECT query against information_schema (MySQL) or sqlite_master (SQLite) "
+                f"Please provide a SELECT query against {meta_source} "
                 f"to answer this question.\n"
                 f"Database: {db_name}\n\n"
                 f"Request: {sanitized}\n\n"
@@ -940,12 +995,9 @@ Please return the SQL wrapped in a ```sql code block."""
             response = await self.generate_async(enhanced_prompt, context)
             meta_sql = response.sql or self._extract_sql(response.text)
             if meta_sql:
-                try:
-                    df = await asyncio.to_thread(self.run_sql, meta_sql)
-                    sql_result = self._format_metadata_response(df, meta_sql)
-                except Exception as e:
-                    logger.warning("[agent] GENERAL_QUESTION SQL execution failed: %s", e)
-                    sql_result = meta_sql
+                sql_result = await asyncio.to_thread(
+                    self._execute_with_reflection, sanitized, meta_sql, intent
+                )
             else:
                 sql_result = response.text.strip()
         else:
@@ -1019,6 +1071,89 @@ Original SQL:
         except Exception as e:
             logger.error("SQL rewrite failed: %s", e)
             return sql
+
+    def _execute_with_reflection(
+        self,
+        original_prompt: str,
+        generated_sql: str,
+        intent: str,
+        max_retries: int = 2,
+    ) -> str:
+        """Executes SQL and uses an LLM reflection loop to fix errors."""
+        current_sql = generated_sql.strip()
+        error_history: List[str] = []
+        db_name = self._current_db or "unknown"
+        dialect = self._get_db_dialect(db_name)
+
+        for attempt in range(max_retries + 1):
+            try:
+                df = self.run_sql(
+                    current_sql,
+                    db_name=db_name,
+                    allowed_tables=self._last_allowed_tables,
+                )
+                if df is None:
+                    df = pd.DataFrame()
+
+                if intent == "GENERAL_QUESTION":
+                    return self._format_metadata_response(df, current_sql)
+                return f"{df.to_string(index=False)}\n\n**Source Query:**\n```sql\n{current_sql}\n```"
+
+            except Exception as e:
+                error_msg = str(e)
+                error_history.append(
+                    f"Attempt {attempt + 1} SQL:\n{current_sql}\nError: {error_msg}"
+                )
+
+                if attempt == max_retries:
+                    history_text = "\n\n".join(error_history)
+                    return (
+                        f"I encountered an error I couldn't resolve after {max_retries + 1} attempts.\n\n"
+                        f"**Last Error:** {error_msg}\n\n"
+                        f"**Last SQL Attempt:**\n```sql\n{current_sql}\n```"
+                    )
+
+                pruned_schema, allowed_tables = self._get_pruned_schema(
+                    original_prompt or (getattr(self, "_last_sanitized_query", "") or ""),
+                    db_name=db_name,
+                    force_tables=self._last_allowed_tables,
+                )
+                repair_system = (
+                    f"You are a SQL debugging assistant. The database is {dialect}. "
+                    "Fix the SQL based on the exact error message. "
+                    "Return ONLY the corrected SQL code. No markdown fences, no narrative, no explanation."
+                )
+                repair_prompt = (
+                    f"You previously generated SQL that resulted in an error.\n"
+                    f"Original User Request: {original_prompt}\n\n"
+                    f"History of Attempts and Errors:\n" + "\n\n".join(error_history) + "\n\n"
+                    "CRITICAL INSTRUCTIONS:\n"
+                    "1. Analyze the exact error message from the database engine.\n"
+                    "2. Fix the SQL (e.g., add missing aliases to derived tables, correct schema/table names).\n"
+                    "3. Return ONLY the raw, corrected SQL code. No markdown formatting, no narrative."
+                )
+                context: Dict[str, Any] = {
+                    "system_prompt": repair_system,
+                    "schema": pruned_schema,
+                    "allowed_tables": allowed_tables or set(),
+                    "namespace": self._get_db_namespace(db_name),
+                }
+                response = self.generate(repair_prompt, context)
+                repaired = response.sql or self._extract_sql(response.text or "")
+                if repaired:
+                    current_sql = repaired.strip()
+                    logger.info(
+                        "[agent] reflection attempt %d: repaired SQL for retry",
+                        attempt + 1,
+                    )
+                else:
+                    break
+
+        return (
+            f"I couldn't generate a valid repair after {max_retries + 1} attempts.\n\n"
+            f"**Last Error:** {error_history[-1].split('Error:')[-1].strip() if error_history else 'Unknown'}\n\n"
+            f"**Last SQL Attempt:**\n```sql\n{current_sql}\n```"
+        )
 
     def _format_metadata_response(self, df: pd.DataFrame, sql: str) -> str:
         """Formats the DB result with Markdown fences to trigger frontend highlighting."""

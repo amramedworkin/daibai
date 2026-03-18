@@ -1576,6 +1576,10 @@ async def ws_schema_progress(websocket: WebSocket):
 
     except Exception as e:
         logger.exception("[index] ws_schema_progress: unexpected error db=%s — %s", target_db, e)
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
 
     finally:
         try:

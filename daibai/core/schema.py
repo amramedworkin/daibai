@@ -558,6 +558,11 @@ class SchemaManager:
         is_indexed_key = f"{SCHEMA_STATUS_IS_INDEXED}:{namespace}"
         try:
             if redis.exists(is_indexed_key):
+                if progress_cb:
+                    try:
+                        progress_cb(0, "Evergreening index (extending TTL to 24h)", 5)
+                    except Exception:
+                        pass
                 logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction queries for %s (evergreen check)...", db)
                 tables_ddl = self.discover_schema(schema_name)
                 logger.info("[INDEX_TRACE] [DB_QUERY_SUCCESS] Extracted schema data. Time elapsed: %.2fs", time.time() - start_time)
@@ -595,6 +600,11 @@ class SchemaManager:
                 ]:
                     if redis.exists(status_key):
                         redis.expire(status_key, 86400)
+                if progress_cb:
+                    try:
+                        progress_cb(100, "Evergreened (TTL extended to 24h)", 0)
+                    except Exception:
+                        pass
                 track_passed(
                     f"Schema Indexing: {db}",
                     f"Database already in Redis. Evergreened TTL back to 24 hours for schema:v1:ddl/text keys and schema:status:*:{db}",

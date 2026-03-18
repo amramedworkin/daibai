@@ -624,8 +624,8 @@ class DaiBaiApp {
         this._setLoadingStep('Connecting to backend…');
         this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
 
-        // Authenticated: run one-time startup indexing (blocks until complete), then load UI.
-        this._setLoadingStep('Indexing databases…');
+        // Authenticated: check/refresh database index (evergreen or full index), then load UI.
+        this._setLoadingStep('Checking database index…');
         await this.ensureDatabaseIndexed('all');
         this._setLoadingStep('Loading settings…');
         await this.loadSettings();
@@ -675,7 +675,7 @@ class DaiBaiApp {
         // Load the full feature set (startup indexing, then settings).
         this._setLoadingStep('Connecting to backend…');
         this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
-        this._setLoadingStep('Indexing databases…');
+        this._setLoadingStep('Checking database index…');
         await this.ensureDatabaseIndexed('all');
         this._setLoadingStep('Loading settings…');
         await this.loadSettings();
@@ -730,14 +730,17 @@ class DaiBaiApp {
     /** Open the indexing progress modal for the given database. */
     _showIndexingModal(dbId) {
         const modal = document.getElementById('indexingModal');
+        const titleEl = document.querySelector('#indexingModal .indexing-title');
         const label = document.getElementById('indexingDbLabel');
         const statusLine = document.getElementById('indexingStatusLine');
         if (!modal) return;
         const isStartup = dbId === 'all' || dbId === 'startup';
         if (isStartup) {
-            if (label) label.textContent = 'Startup System Indexing Underway…';
-            if (statusLine) statusLine.textContent = 'This is a one-time process to prepare all connected databases. The system will start once indexing is complete.';
+            if (titleEl) titleEl.textContent = 'Checking database index…';
+            if (label) label.textContent = 'Index may be refreshed (evergreened) or built from scratch.';
+            if (statusLine) statusLine.textContent = 'Preparing…';
         } else {
+            if (titleEl) titleEl.textContent = 'Indexing Schema';
             if (label) label.textContent = dbId || 'Preparing…';
             if (statusLine) statusLine.textContent = 'Starting…';
         }
@@ -754,6 +757,7 @@ class DaiBaiApp {
 
     /**
      * Update the status line during indexing (progress bar removed; animated dots indicate activity).
+     * When status indicates evergreening, updates the modal title and label to reflect that.
      * @param {number} pct      0–100 (unused; kept for WebSocket API compatibility)
      * @param {string} status   Status message from the server
      * @param {number|null} eta Seconds remaining (unused; kept for API compatibility)
@@ -761,41 +765,24 @@ class DaiBaiApp {
     _updateIndexingProgress(pct, status, eta) {
         const statEl = document.getElementById('indexingStatusLine');
         if (statEl) statEl.textContent = status || 'Processing…';
+        const isEvergreen = (status || '').toLowerCase().includes('evergreen');
+        if (isEvergreen) {
+            const titleEl = document.querySelector('#indexingModal .indexing-title');
+            const labelEl = document.getElementById('indexingDbLabel');
+            if (titleEl) titleEl.textContent = 'Refreshing index';
+            if (labelEl) labelEl.textContent = 'Extending TTL to 24 hours…';
+        }
     }
 
     /**
-     * Force re-index whenever a database comes into focus (load, select).
-     * No status check — always indexes. UI disabled until complete.
+     * Ensure DB schema is indexed (or evergreened) whenever a database comes into focus.
+     * Always runs the index flow so the backend can evergreen (extend TTL to 24h) when
+     * already indexed. Skipping when indexed would prevent evergreening and cause keys
+     * to expire, leading to full re-index on next load.
      */
     async ensureDatabaseIndexed(dbId) {
         if (!dbId || !isAuthenticated()) return;
         if (this._indexingInProgress) return;
-
-        // Skip if already indexed (check via settings API)
-        if (dbId !== 'all' && dbId !== 'startup') {
-            try {
-                const resp = await apiFetch('/api/settings');
-                if (resp.ok) {
-                    const settings = await resp.json();
-                    if (settings.is_indexed === true) {
-                        console.log('[DaiBai UI] db=', dbId, '— already indexed, skipping');
-                        return;
-                    }
-                }
-            } catch (_) { /* proceed to index */ }
-        } else {
-            // For "all" startup: check index status for the default DB
-            try {
-                const resp = await apiFetch('/api/settings');
-                if (resp.ok) {
-                    const settings = await resp.json();
-                    if (settings.is_indexed === true) {
-                        console.log('[DaiBai UI] startup — default DB already indexed, skipping bulk re-index');
-                        return;
-                    }
-                }
-            } catch (_) { /* proceed to index */ }
-        }
 
         this._indexingInProgress = true;
         console.log('[DaiBai UI] db=', dbId, '— auto-indexing triggered');
@@ -829,6 +816,8 @@ class DaiBaiApp {
         return new Promise((resolve, reject) => {
             const ws = new WebSocket(wsUrl);
             let completed = false;
+            let receivedDone = false;
+            let sawEvergreen = false;
 
             const finish = (fn) => {
                 if (completed) return;
@@ -842,12 +831,15 @@ class DaiBaiApp {
                 let msg;
                 try { msg = JSON.parse(data); } catch { return; }
                 if (msg.type === 'progress') {
+                    if ((msg.status || '').toLowerCase().includes('evergreen')) sawEvergreen = true;
                     this._updateIndexingProgress(msg.pct, msg.status, msg.eta);
                 } else if (msg.type === 'done') {
+                    receivedDone = true;  // Prevent onclose from treating normal completion as error
+                    if ((msg.status || '').toLowerCase().includes('evergreen')) sawEvergreen = true;
                     this._updateIndexingProgress(100, msg.status, 0);
                     const isStartup = dbId === 'all' || dbId === 'startup';
                     if (isStartup) {
-                        showStatusToast('success', 'Startup indexing complete. All databases ready.');
+                        showStatusToast('success', sawEvergreen ? 'Index refreshed (evergreened). All databases ready.' : 'Indexing complete. All databases ready.');
                     }
                     setTimeout(() => finish(() => resolve()), 1400);
                 } else if (msg.type === 'error') {
@@ -859,9 +851,11 @@ class DaiBaiApp {
                 finish(() => reject(new Error('WebSocket connection failed during indexing.')));
             };
 
-            ws.onclose = () => {
-                if (!completed) {
-                    finish(() => reject(new Error('Indexing connection closed unexpectedly. Check server logs.')));
+            ws.onclose = (ev) => {
+                if (!completed && !receivedDone) {
+                    const hint = ev.reason || (ev.code === 1006 ? 'Connection dropped (no close frame)' : `code=${ev.code}`);
+                    console.warn('[Schema] WebSocket closed before done:', { code: ev.code, reason: ev.reason });
+                    finish(() => reject(new Error(`Indexing failed: ${hint}. Check server logs for details.`)));
                 }
             };
         });
@@ -1756,8 +1750,8 @@ class DaiBaiApp {
                 break;
 
             case 'error':
-                this.removeLoadingIndicator();
                 this.renderErrorMessage(data.content || 'An error occurred');
+                this._resetAfterError(this._pendingQuery || '');
                 break;
 
             case 'trace':
@@ -1798,6 +1792,19 @@ class DaiBaiApp {
         this.autoResizeTextarea();
         this.updateSendButton();
         this.updatePromptsList(this.sessionMessages);
+        this.promptInput.focus();
+    }
+
+    /**
+     * Reset prompt area and icon after an error. Restores the failed request
+     * to the text area so the user can edit or resubmit.
+     */
+    _resetAfterError(query) {
+        this.removeLoadingIndicator();
+        this.isLoading = false;
+        this.promptInput.value = query || this._pendingQuery || '';
+        this.autoResizeTextarea();
+        this.updateSendButton();
         this.promptInput.focus();
     }
 
@@ -1940,12 +1947,12 @@ class DaiBaiApp {
             
             await this.loadConversations();
         } catch (error) {
-            this.removeLoadingIndicator();
             if (error.name === 'AbortError') {
                 this._resetAfterStop();
                 return;
             }
             this.renderErrorMessage(error.message);
+            this._resetAfterError(query);
         } finally {
             this.isLoading = false;
             this.updateSendButton();
