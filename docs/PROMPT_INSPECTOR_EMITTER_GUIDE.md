@@ -135,7 +135,7 @@ async def query\_stream\_endpoint(req: QueryRequest, user: dict \= Depends(get\_
 
 ### **3.2. Backend Complications & Mitigations**
 
-* **Branching Logic:** The run\_agent\_pipeline must accurately handle playground mode, meta-tables, and standard production paths, guaranteeing a terminal {"type": "done"} event is always emitted so the HTTP connection closes cleanly.  
+* **Branching Logic:** The run\_agent\_pipeline must accurately handle meta-tables and standard production paths, guaranteeing a terminal {"type": "done"} event is always emitted so the HTTP connection closes cleanly.  
 * **Exceptions:** If the LLM times out or the database connection drops mid-stream, the exception handler must catch it and inject {"type": "error", "content": "..."}\\n{"type": "done"}\\n into the queue before the generator closes.
 
 ## ---

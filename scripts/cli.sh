@@ -151,9 +151,7 @@ Commands by Category:
     azurify-diag-domain        Diagnostics: Custom domain & SSL binding state
   ------------------------------------------------------------------------------------------
   DATABASE (Sample data load → Azure MySQL DB_RUNTIME_*)
-    chinook-load    Load data/Chinook_MySql.sql into Azure MySQL
     northwind-load  Load data/Northwind_MySql.sql into Azure MySQL
-    load-both       Load both Chinook and Northwind into Azure MySQL
   ------------------------------------------------------------------------------------------
   AZURE & INFRASTRUCTURE
     my-ip            Show current public IP (curl ifconfig.me)
@@ -381,7 +379,7 @@ cmd_train() {
 
 cmd_index() {
     load_env
-    local target="${1:-playground}"
+    local target="${1:-}"
     local extra_args=()
     shift || true
     # Pass remaining flags (e.g. --force) straight through to the Python script.
@@ -581,22 +579,10 @@ cmd_redis_create() {
     bash "$SCRIPT_DIR/setup_redis.sh"
 }
 
-cmd_chinook_load() {
-    print_header "Load Chinook (data/Chinook_MySql.sql) into Azure MySQL (DB_RUNTIME_*)"
-    load_env
-    exec "$(_resolve_python)" "$PROJECT_DIR/scripts/mysql_load_sample.py" chinook runtime
-}
-
 cmd_northwind_load() {
     print_header "Load Northwind (data/Northwind_MySql.sql) into Azure MySQL (DB_RUNTIME_*)"
     load_env
     exec "$(_resolve_python)" "$PROJECT_DIR/scripts/mysql_load_sample.py" northwind runtime
-}
-
-cmd_load_both() {
-    print_header "Load Both Chinook and Northwind into Azure MySQL (DB_RUNTIME_*)"
-    load_env
-    exec "$(_resolve_python)" "$PROJECT_DIR/scripts/mysql_load_sample.py" both runtime
 }
 
 cmd_keyvault_create() {
@@ -1869,9 +1855,7 @@ _CLI_WILDCARD_CMDS=(
     "azurify-phase-4-domain:Phase 4 Domain, DNS, Managed Certs"
     "azurify-diag-domain:Diagnostics Custom domain and SSL binding state"
     "redis-create:Create Azure Redis"
-    "chinook-load:Load data/Chinook_MySql.sql into Azure MySQL (DB_RUNTIME)"
     "northwind-load:Load data/Northwind_MySql.sql into Azure MySQL (DB_RUNTIME)"
-    "load-both:Load Chinook and Northwind into Azure MySQL (DB_RUNTIME)"
     "keyvault-create:Create Key Vault"
     "keyvault-dump:Dump Key Vault secrets (values)"
     "keyvault-fix-rbac:Grant Key Vault Secrets Officer role"
@@ -2092,14 +2076,8 @@ main() {
         redis-create)
             cmd_redis_create
             ;;
-        chinook-load)
-            cmd_chinook_load
-            ;;
         northwind-load)
             cmd_northwind_load
-            ;;
-        load-both)
-            cmd_load_both
             ;;
         keyvault-create)
             cmd_keyvault_create

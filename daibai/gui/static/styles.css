@@ -66,10 +66,7 @@
     --error: #ef4444;
     --warning: #f59e0b;
     --success: #10b981;
-    --playground-purple: #7c3aed;
-    --playground-purple-hover: #6d28d9;
-    --playground-purple-light: rgba(124, 58, 237, 0.15);
-    
+
     /* Spacing */
     --sidebar-width: 260px;
     --inspector-width: 25vw;
@@ -1875,91 +1872,6 @@ body {
 
 .verification-cancel:hover { opacity: 1; }
 
-/* ── Playground Guest Quota Modal ────────────────────────────────────────── */
-
-.quota-modal {
-    background: rgba(0, 0, 0, 0.80);
-}
-
-.quota-modal-content {
-    width: 90%;
-    max-width: 400px;
-    padding: 40px 32px 36px;
-    border-radius: 16px;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0;
-}
-
-.quota-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
-    background: rgba(139, 92, 246, 0.15);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 20px;
-    color: var(--playground-purple, #8b5cf6);
-}
-
-.quota-icon svg {
-    width: 30px;
-    height: 30px;
-    stroke: currentColor;
-}
-
-.quota-title {
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin: 0 0 12px;
-    color: var(--text-primary);
-}
-
-.quota-body {
-    font-size: 0.9375rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin: 0 0 28px;
-}
-
-.quota-body strong {
-    color: var(--playground-purple, #8b5cf6);
-}
-
-.quota-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
-}
-
-.quota-btn--signup {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    background: var(--playground-purple, #8b5cf6);
-    border-color: var(--playground-purple, #8b5cf6);
-}
-
-.quota-btn--signup:hover {
-    background: var(--playground-purple-hover, #7c3aed);
-    border-color: var(--playground-purple-hover, #7c3aed);
-}
-
-.quota-btn--signup svg {
-    width: 15px;
-    height: 15px;
-}
-
-.quota-btn--return {
-    width: 100%;
-}
-
 .btn-primary {
     padding: 8px 20px;
     font-size: 14px;
@@ -2204,7 +2116,7 @@ kbd {
     margin-bottom: 12px;
 }
 
-/* Connected Databases list (Your DBs vs Playground) */
+/* Connected Databases list */
 .db-list-section {
     margin-bottom: 16px;
 }
@@ -2235,9 +2147,6 @@ kbd {
 .db-list-item:last-child {
     margin-bottom: 0;
 }
-.db-list-item--playground {
-    border-color: var(--playground-purple-light, rgba(124, 58, 237, 0.2));
-}
 .db-list-item-name {
     font-weight: 500;
     color: var(--text-primary);
@@ -2245,14 +2154,6 @@ kbd {
 .db-list-item-type {
     font-size: 12px;
     color: var(--text-muted);
-}
-.db-list-item-badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    background: var(--playground-purple-light, rgba(124, 58, 237, 0.15));
-    color: var(--playground-purple);
-    border-radius: 4px;
-    margin-left: auto;
 }
 .db-list-item-actions {
     display: flex;
@@ -2297,7 +2198,7 @@ kbd {
     margin-bottom: 6px;
 }
 
-/* Connected Databases list (Your Databases / Playground Databases) */
+/* Connected Databases list */
 .db-list-section {
     margin-bottom: 16px;
 }
@@ -2328,9 +2229,6 @@ kbd {
 .db-list-item:last-child {
     margin-bottom: 0;
 }
-.db-list-item--playground {
-    border-color: var(--playground-purple-light, rgba(124, 58, 237, 0.3));
-}
 .db-list-item-name {
     font-weight: 500;
     color: var(--text-primary);
@@ -2338,13 +2236,6 @@ kbd {
 .db-list-item-type {
     font-size: 12px;
     color: var(--text-muted);
-}
-.db-list-item-badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    background: var(--playground-purple-light, rgba(124, 58, 237, 0.15));
-    color: var(--playground-purple, #7c3aed);
-    border-radius: 4px;
 }
 .db-list-item-actions {
     margin-left: auto;
@@ -2630,48 +2521,9 @@ kbd {
 
 /* Active state when a sub-item is selected */
 .nav-subitem.active {
-    background: var(--playground-purple-light);
-    color: var(--playground-purple);
+    background: var(--accent-light);
+    color: var(--accent);
     font-weight: 600;
-}
-
-/* ── Active-Playground theme override ───────────────────────────────────── */
-
-/* When playground mode is active, switch accent to Sandbox Purple. */
-.sidebar.active-playground .nav-item-header.open {
-    color: var(--playground-purple);
-}
-
-.sidebar.active-playground #queryChinookBtn.active {
-    background: var(--playground-purple-light);
-    color: var(--playground-purple);
-}
-
-/* Query Chinook DB — loading state (Firebase sign-in + WebSocket) */
-#queryChinookBtn.loading {
-    cursor: wait;
-}
-#queryChinookBtn.loading .nav-subitem-loading {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.9rem;
-}
-#queryChinookBtn .nav-subitem-loading .loading-dots span {
-    width: 5px;
-    height: 5px;
-}
-
-/* Conversation items keep the normal accent; the purple lives only in the
-   Explore section so existing UI isn't jarring. */
-.sidebar.active-playground .nav-item-header:hover {
-    background: var(--playground-purple-light);
-    color: var(--playground-purple);
-}
-
-/* Playground mode indicator badge on the Playground header button */
-.sidebar.active-playground .nav-item-header .nav-item-icon {
-    color: var(--playground-purple);
 }
 
 /* ── Sandbox Reset Confirmation Toast ───────────────────────────────────── */
@@ -2692,7 +2544,7 @@ kbd {
     padding: 16px 18px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-light);
-    border-left: 4px solid var(--playground-purple);
+    border-left: 4px solid var(--accent);
     border-radius: 10px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     transition: opacity 200ms ease, transform 200ms ease;
@@ -2739,7 +2591,7 @@ kbd {
     background: var(--bg-tertiary);
     padding: 1px 5px;
     border-radius: 4px;
-    color: var(--playground-purple);
+    color: var(--accent);
 }
 
 .sandbox-toast-actions {
@@ -2764,7 +2616,7 @@ kbd {
     display: flex;
     align-items: center;
     gap: 5px;
-    background: var(--playground-purple);
+    background: var(--accent);
     color: #fff;
 }
 
@@ -2821,7 +2673,7 @@ kbd {
 }
 
 .sandbox-status-toast.success {
-    background: var(--playground-purple);
+    background: var(--accent);
     color: #fff;
 }
 
@@ -3081,29 +2933,6 @@ kbd {
     font-family: var(--font-mono);
     min-height: 1.5em;
     word-break: break-all;
-}
-
-/* ── Playground-active body overrides ──────────────────────────────────────── */
-
-/* Tint the Database label purple while locked */
-body.playground-active .nav-dropdowns .dropdown:first-child > label {
-    color: var(--playground-purple);
-}
-
-/* Give locked selects a subtle purple border so users notice the override */
-body.playground-active .nav-dropdowns select:disabled {
-    border-color: rgba(111, 66, 193, 0.45);
-    color: var(--text-secondary);
-    cursor: not-allowed;
-    opacity: 1;               /* override browser default dim */
-}
-
-/* Tooltip hint that appears via the native `title` on hover — reinforce with a
-   small lock icon injected by CSS next to the disabled Database label */
-body.playground-active .nav-dropdowns .dropdown:first-child > label::after {
-    content: ' 🔒';
-    font-size: 0.65em;
-    opacity: 0.6;
 }
 
 /* Responsive */

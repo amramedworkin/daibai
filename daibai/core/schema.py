@@ -1,24 +1,19 @@
 """
 Schema discovery for database metadata.
 
-Uses information_schema (MySQL) or sqlite_master + PRAGMA (SQLite) to extract
-table names, column names, and data types for grounding SQL generation.
+Uses information_schema (MySQL) to extract table names, column names, and
+data types for grounding SQL generation.
 Supports semantic schema mapping: vectorize table DDLs and retrieve only
 relevant tables for a given query (table pruning).
-
-Phase 3 Step 1: High-precision semantic schema indexing with discover_schema(),
-index_schema(), and search_schema_v1() using schema:v1:* Redis keys.
 """
 
 import hashlib
-import sqlite3
 import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
-from pathlib import Path
 
 from .config import DatabaseConfig, get_schema_refresh_interval, get_schema_vector_limit
 from .instrumentation import track_start, track_underway, track_passed, track_failed, init_tracker
@@ -50,72 +45,23 @@ def _sanitize_db_password(pwd: Optional[str]) -> str:
 def get_index_namespace(
     config: Optional[DatabaseConfig],
     fallback: str,
-    playground_databases: Optional[Iterable[str]] = None,
 ) -> str:
     """
     Generate a deterministic namespace for Redis schema cache keys.
 
-    For playground databases (e.g. northwind, chinook), returns the database name
-    so all users share a single global cache — no user_id prefix, saves Redis memory.
-    For other databases, uses a hash of connection credentials to isolate indexes.
-    For SQLite, uses the file path when config is present.
+    Uses a hash of connection credentials to isolate indexes per database.
     """
     db_name = (config.database if config else None) or fallback
-    if playground_databases and db_name in playground_databases:
-        return db_name
     if not config:
         return fallback
-    if config.type == "sqlite":
-        conn_str = str(config._sqlite_path())
-    else:
-        conn_str = f"{config.host}:{config.port}/{config.database}@{config.user}"
+    conn_str = f"{config.host}:{config.port}/{config.database}@{config.user}"
     return hashlib.sha256(conn_str.encode()).hexdigest()[:16]
 
-
-def build_sqlite_execute_fn(db_path: Path) -> Callable[[str, tuple], List[Dict[str, Any]]]:
-    """
-    Return an execute_fn compatible with SchemaManager for SQLite.
-    Queries sqlite_master + PRAGMA table_info and returns rows shaped like
-    MySQL's information_schema.COLUMNS.
-    """
-    def _execute_fn(sql: str, params: tuple) -> List[Dict[str, Any]]:
-        schema_name = params[0] if params else "main"
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
-                "ORDER BY name"
-            )
-            table_names = [r["name"] for r in cur.fetchall()]
-            rows: List[Dict[str, Any]] = []
-            for table_name in table_names:
-                cur.execute("PRAGMA table_info(?)", (table_name,))
-                for col in cur.fetchall():
-                    col_type = (col["type"] or "TEXT").upper()
-                    rows.append({
-                        "TABLE_SCHEMA": schema_name,
-                        "TABLE_NAME": table_name,
-                        "COLUMN_NAME": col["name"],
-                        "DATA_TYPE": col_type,
-                        "COLUMN_TYPE": col_type,
-                        "IS_NULLABLE": "NO" if col["notnull"] else "YES",
-                        "COLUMN_KEY": "PRI" if col["pk"] else "",
-                        "COLUMN_DEFAULT": col["dflt_value"],
-                        "EXTRA": "",
-                    })
-            return rows
-        finally:
-            conn.close()
-    return _execute_fn
 
 
 def _log_index_connection(
     db: str,
     config: Optional[DatabaseConfig] = None,
-    is_playground: bool = False,
 ) -> None:
     """Log full database connection details at index start (passwords masked)."""
     try:
@@ -123,24 +69,10 @@ def _log_index_connection(
         redis_target = _sanitize_redis_url(get_redis_connection_string())
     except Exception:
         redis_target = "(unknown)"
-    if is_playground:
-        logger.info(
-            "[index] connection: db=%s | type=SQLite | source=data/playground.db | "
-            "library=sqlite3 | redis_target=%s",
-            db, redis_target,
-        )
-        return
     if not config:
         logger.info(
             "[index] connection: db=%s | type=unknown | no config | redis_target=%s",
             db, redis_target,
-        )
-        return
-    if config.type == "sqlite":
-        path = config._sqlite_path()
-        logger.info(
-            "[index] connection: db=%s | type=SQLite | path=%s | redis_target=%s",
-            db, path, redis_target,
         )
         return
     endpoint = f"{config.host}:{config.port}"
@@ -214,7 +146,7 @@ def index_all_startup(
     progress_cb: Optional[Callable[[float, str, float], None]] = None,
 ) -> int:
     """
-    Index all managed databases at startup (daibai.yaml DBs + playground).
+    Index all managed databases at startup (daibai.yaml).
 
     For each database, calls get_schema_manager(db_name) to obtain a SchemaManager,
     then invokes index_schema which implements evergreening (TTL refresh if
@@ -232,7 +164,7 @@ def index_all_startup(
     from .config import load_config
 
     config = load_config()
-    databases = list(config.databases.keys()) + ["playground"]
+    databases = list(config.databases.keys())
     total_dbs = len(databases)
     total_tables = 0
     logger.info(
@@ -277,7 +209,6 @@ class SchemaManager:
         cache_manager=None,
         embed_fn: Optional[Callable[[str], Optional[List[float]]]] = None,
         redis_client=None,
-        playground_databases: Optional[Iterable[str]] = None,
     ):
         """
         Initialize SchemaManager.
@@ -290,29 +221,24 @@ class SchemaManager:
             embed_fn: Optional callable(text) -> vector. Used for testing.
             redis_client: Optional Redis client (dict-like get/set/keys).
                          Used for testing when cache_manager is None.
-            playground_databases: Optional list of DB names that are global
-                playground DBs. Their schema cache uses the DB name as namespace
-                (no user_id) so Redis memory is shared across all users.
         """
         self._config = config
         self._execute_fn = execute_fn
         self._cache_manager = cache_manager
         self._embed_fn = embed_fn
         self._redis_client = redis_client
-        self._playground_databases = list(playground_databases) if playground_databases else []
 
     def _get_namespace(self, schema_name: Optional[str] = None) -> str:
         db = schema_name or (self._config.database if self._config else "unknown")
         return get_index_namespace(
             self._config,
             fallback=db,
-            playground_databases=self._playground_databases or None,
         )
 
     def _run_query(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Execute SQL and return rows as list of dicts."""
         if self._execute_fn is not None:
-            logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction (SQLite/custom execute_fn)...")
+            logger.info("[INDEX_TRACE] [DB_QUERY] Executing schema extraction (custom execute_fn)...")
             rows = self._execute_fn(sql, params)
             logger.info("[INDEX_TRACE] [DB_QUERY_SUCCESS] Schema extraction returned %d rows.", len(rows) if rows else 0)
             return rows
@@ -603,11 +529,7 @@ class SchemaManager:
         start_time = time.time()
         logger.info("[INDEX_TRACE] [START] Initiating indexing for database: %s", db)
 
-        _log_index_connection(
-            db,
-            config=self._config,
-            is_playground=self._execute_fn is not None,
-        )
+        _log_index_connection(db, config=self._config)
 
         try:
             from .config import get_redis_connection_string
@@ -687,16 +609,16 @@ class SchemaManager:
             f"About to index {db} because it is a managed database. Indexing using SentenceTransformer (local) to target Redis instance.",
         )
 
-        db_library = "sqlite3 (custom execute_fn)" if self._execute_fn else "mysql-connector-python"
+        db_library = "custom execute_fn" if self._execute_fn else "mysql-connector-python"
         embed_source = (
             "sentence_transformers (all-MiniLM-L6-v2)"
             if self._cache_manager
             else ("custom embed_fn" if self._embed_fn else "none")
         )
         config_loc = (
-            "daibai.yaml databases"
+            "daibai.yaml"
             if self._config
-            else "project data/playground.db"
+            else "custom execute_fn"
         )
         try:
             from .config import get_redis_connection_string
@@ -709,7 +631,7 @@ class SchemaManager:
         )
         logger.info("[index] %s: start (force=%s)", db, force)
 
-        # Refresh-interval check removed: always re-index on focus (app load, dropdown, playground).
+        # Refresh-interval check removed: always re-index on focus (app load, dropdown).
         # if not force:
         #     last_key = f"{SCHEMA_V1_LAST_INDEXED}:{db}"
         #     try:

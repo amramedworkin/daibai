@@ -109,6 +109,21 @@ databases:
     user: root
     password: ${DB_DEV_PASSWORD}
 
+  # MySQL sample databases (load via scripts/mysql_load_sample.py)
+  chinook:
+    host: ${DB_RUNTIME_HOST:-localhost}
+    port: 3306
+    name: chinook
+    user: ${DB_RUNTIME_USER:-root}
+    password: ${DB_RUNTIME_PASSWORD}
+
+  northwind:
+    host: ${DB_RUNTIME_HOST:-localhost}
+    port: 3306
+    name: northwind
+    user: ${DB_RUNTIME_USER:-root}
+    password: ${DB_RUNTIME_PASSWORD}
+
 # Optional settings
 clipboard: true
 # Paths support ~ for home directory (e.g. ~/.daibai/exports)

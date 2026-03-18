@@ -23,7 +23,7 @@ from .config import Config, load_config, DatabaseConfig, LLMProviderConfig, get_
 from .guardrails import GuardrailPipeline, SQLValidator, SecurityViolation, extract_tables_from_query
 from .cache import CacheManager
 from .metrics import SchemaPruningMetrics
-from .schema import SchemaManager, get_index_namespace, build_sqlite_execute_fn
+from .schema import SchemaManager, get_index_namespace
 from ..llm import get_provider_class, create_provider
 from ..llm.base import BaseLLMProvider, LLMResponse, SemanticCache, CachedLLMProvider
 
@@ -254,14 +254,9 @@ class DaiBaiAgent:
     
     def _get_db_namespace(self, db_name: str) -> str:
         """Get the deterministic namespace for a given database (cache keys)."""
-        if db_name == "playground":
-            return "playground"
-        playground_dbs = getattr(self.config, "playground_databases", None) or []
-        if db_name in playground_dbs:
-            return db_name  # Playground DBs: global namespace, no user_id prefix
         try:
             config = self.config.get_database(db_name)
-            return get_index_namespace(config, fallback=db_name, playground_databases=playground_dbs)
+            return get_index_namespace(config, fallback=db_name)
         except ValueError:
             return db_name
 
@@ -285,15 +280,11 @@ class DaiBaiAgent:
             db_config = self.config.get_database(name)
             cache = self._get_cache_manager()
             execute_fn = None
-            if db_config.type == "sqlite":
-                execute_fn = build_sqlite_execute_fn(db_config._sqlite_path())
-            playground_dbs = getattr(self.config, "playground_databases", None) or []
             self._schema_managers[name] = SchemaManager(
                 config=db_config,
                 execute_fn=execute_fn,
                 cache_manager=cache,
                 redis_client=cache._get_client() if cache else None,
-                playground_databases=playground_dbs,
             )
         return self._schema_managers[name]
 

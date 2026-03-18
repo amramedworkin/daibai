@@ -180,22 +180,6 @@ def _clear_local_state() -> tuple[bool, str]:
     return True, f"Cleared: {', '.join(cleared) or 'nothing'}"
 
 
-def _reset_playground_db() -> tuple[bool, str]:
-    """Reset playground.db from chinook_master.db (sandbox)."""
-    data_dir = _ROOT / "data"
-    play_db = data_dir / "playground.db"
-    master_db = data_dir / "chinook_master.db"
-    if not master_db.exists():
-        return False, "chinook_master.db not found"
-    try:
-        if play_db.exists():
-            play_db.unlink()
-        shutil.copy2(master_db, play_db)
-        return True, "playground.db reset from chinook_master.db"
-    except OSError as e:
-        return False, str(e)
-
-
 def main() -> None:
     import argparse
     p = argparse.ArgumentParser(
@@ -216,11 +200,6 @@ def main() -> None:
         "--skip-local",
         action="store_true",
         help="Skip clearing ~/.daibai (memory, exports, uploads, preferences)",
-    )
-    p.add_argument(
-        "--playground",
-        action="store_true",
-        help="Also reset playground.db from chinook_master.db",
     )
     args = p.parse_args()
 
@@ -243,8 +222,6 @@ def main() -> None:
         print("    5. Clear ~/.daibai (memory, exports, uploads, preferences)")
     else:
         print("    5. (Skip local state)")
-    if args.playground:
-        print("    6. Reset playground.db from chinook_master.db")
     print()
     print("  This action CANNOT be undone.")
     print()
@@ -278,11 +255,6 @@ def main() -> None:
         results.append(("Local ~/.daibai", ok, msg))
     else:
         results.append(("Local ~/.daibai", None, "skipped"))
-
-    # 6. Playground (optional)
-    if args.playground:
-        ok, msg = _reset_playground_db()
-        results.append(("Playground DB", ok, msg))
 
     # Report
     print()

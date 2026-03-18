@@ -107,14 +107,6 @@ from ..core.guardrails import SecurityViolation, extract_tables_from_query
 from .database import CosmosConversationStore
 from . import auth
 from .auth import get_current_user
-from ..core import playground_manager
-from ..core.playground_manager import (
-    get_chinook_schema,
-    execute_playground_query,
-    reset_playground,
-    PlaygroundError,
-    QueryTimeoutError,
-)
 
 
 def get_store(request: Request) -> CosmosConversationStore:
@@ -148,131 +140,13 @@ def _dataframe_to_json_safe(df) -> List[Dict[str, Any]]:
     return out
 
 
-def _playground_rows_to_records(
-    columns: list, rows: list
-) -> List[Dict[str, Any]]:
-    """Convert execute_playground_query output (rows as lists) to list-of-dicts."""
-    return [dict(zip(columns, row)) for row in rows]
-
-
 def _is_anonymous_user(claims: Dict[str, Any]) -> bool:
-    """Return True when the Firebase token belongs to an anonymous (signInAnonymously) session.
-
-    get_current_user wraps raw token claims inside {"uid": …, "email": …, "claims": {…}}.
-    This helper handles both that wrapper and raw claim dicts.
-    """
+    """Return True when the Firebase token belongs to an anonymous (signInAnonymously) session."""
     raw = claims.get("claims", claims)
     return raw.get("firebase", {}).get("sign_in_provider") == "anonymous"
 
 
-# Chinook-specific system prompt injected when is_playground=True.
-_CHINOOK_SYSTEM_PROMPT = (
-    "You are a SQL expert for the Chinook music store sample database (SQLite dialect).\n"
-    "The database has 11 tables: Artist, Album, Track, MediaType, Genre, Employee, "
-    "Customer, Invoice, InvoiceLine, Playlist, PlaylistTrack.\n"
-    "Use only standard SQLite syntax. Do NOT use SHOW TABLES or INFORMATION_SCHEMA.\n"
-    "Return ONLY a SQL query inside a ```sql … ``` code block — no prose, no explanation.\n\n"
-    "Schema:\n"
-)
-_CHINOOK_SYSTEM_PROMPT += get_chinook_schema()
-
-
-_PLAYGROUND_LLM_TIMEOUT: float = 60.0   # seconds before we give up on the LLM
-
-
-async def _generate_playground_sql(
-    agent: DaiBaiAgent,
-    user_query: str,
-    history: Optional[List[Dict[str, Any]]] = None,
-) -> str:
-    """Use the LLM to generate SQL targeted at the Chinook SQLite playground."""
-    enhanced_prompt = (
-        "Generate ONLY a SQL query (SELECT by default unless the user explicitly asks "
-        "to insert/update/delete) for this request.\n"
-        f"Database: Chinook (SQLite)\n\n"
-        f"Request: {user_query}\n\n"
-        "Return the SQL in a ```sql code block. Do not execute it."
-    )
-    context: Dict[str, Any] = {
-        "system_prompt": _CHINOOK_SYSTEM_PROMPT,
-        "schema": get_chinook_schema(),
-    }
-    if history:
-        context["messages"] = [
-            {"role": m.get("role"), "content": m.get("content", "")}
-            for m in history
-        ]
-    try:
-        response = await asyncio.wait_for(
-            agent.generate_async(enhanced_prompt, context),
-            timeout=_PLAYGROUND_LLM_TIMEOUT,
-        )
-    except asyncio.TimeoutError:
-        raise PlaygroundError(
-            f"SQL generation timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f} s. "
-            "Please try a simpler question."
-        )
-    return response.sql or agent._extract_sql(response.text)
-
-
-async def _run_playground(
-    agent: DaiBaiAgent,
-    user_query: str,
-    execute: bool,
-    history: Optional[List[Dict[str, Any]]] = None,
-    trace_callback: Optional[Any] = None,
-) -> tuple:
-    """
-    Generate SQL via the Chinook system prompt, then optionally execute it
-    against playground.db.  Returns (sql, results, row_count).
-    """
-    llm_tech = agent._current_llm or "LLM"
-    if trace_callback:
-        await trace_callback(step_name="SQL Generation", status="running", tech=llm_tech, step_id="sql-generation")
-    gen_start = time.perf_counter()
-    sql = await _generate_playground_sql(agent, user_query, history)
-    if trace_callback:
-        gen_ms = (time.perf_counter() - gen_start) * 1000
-        await trace_callback(
-            step_name="SQL Generation",
-            status="success",
-            tech=llm_tech,
-            duration_ms=gen_ms,
-            input_data=user_query,
-            output_data=sql,
-            step_id="sql-generation",
-        )
-    results = None
-    row_count = None
-    if execute and sql and _looks_like_sql(sql):
-        if trace_callback:
-            await trace_callback(step_name="SQL Execution", status="running", step_id="sql-execution")
-        exec_start = time.perf_counter()
-        # execute_playground_query is synchronous (uses threading.Timer); run in
-        # a thread so we don't block the async event loop.
-        try:
-            raw = await asyncio.to_thread(execute_playground_query, sql)
-        except FileNotFoundError:
-            # playground.db hasn't been created yet — auto-reset from master.
-            logger.warning(
-                "playground.db missing — auto-initialising from chinook_master.db",
-                extra={"action": "auto_reset_playground"},
-            )
-            await asyncio.to_thread(reset_playground)
-            raw = await asyncio.to_thread(execute_playground_query, sql)
-        results = _playground_rows_to_records(raw["columns"], raw["rows"])
-        row_count = raw["row_count"]
-        if trace_callback:
-            exec_ms = (time.perf_counter() - exec_start) * 1000
-            await trace_callback(
-                step_name="SQL Execution",
-                status="success",
-                duration_ms=exec_ms,
-                input_data=sql,
-                output_data={"row_count": row_count},
-                step_id="sql-execution",
-            )
-    return sql, results, row_count
+_LLM_TIMEOUT: float = 60.0
 
 
 @asynccontextmanager
@@ -389,7 +263,6 @@ class QueryRequest(BaseModel):
     query: str
     conversation_id: Optional[str] = None
     execute: bool = False
-    is_playground: bool = False
     verbose: bool = False
     database: Optional[str] = None  # Client's selected DB; syncs agent before processing
 
@@ -404,7 +277,6 @@ class QueryResponse(BaseModel):
 
 class SettingsResponse(BaseModel):
     databases: List[str]
-    databases_detail: Optional[List[Dict[str, Any]]] = None  # [{name, is_playground}] for UI grouping
     llm_providers: List[str]
     llm_provider_configs: Optional[Dict[str, Dict[str, Any]]] = None
     current_database: Optional[str]
@@ -431,7 +303,6 @@ class DatabaseListItem(BaseModel):
     user: Optional[str] = None
     password: Optional[str] = None
     ssl: Optional[bool] = None
-    is_playground: Optional[bool] = None
     connection: Optional[str] = None
 
 
@@ -615,30 +486,8 @@ async def get_profile(
     uid = current_user["uid"]
     record = await store.get_user(oid=uid)
     if record is None:
-        record = {"id": uid, "uid": uid, "playground_count": 0}
+        record = {"id": uid, "uid": uid}
     return record
-
-
-_PLAYGROUND_RESET_TIMEOUT = 15.0  # seconds — file copy is sub-second; this is a safety net
-
-@app.post("/api/playground/reset")
-async def playground_reset(_user: Dict[str, Any] = Depends(get_current_user)):
-    """Restore playground.db from the read-only chinook_master.db."""
-    try:
-        path = await asyncio.wait_for(
-            asyncio.to_thread(reset_playground),
-            timeout=_PLAYGROUND_RESET_TIMEOUT,
-        )
-        return {"status": "ok", "path": str(path)}
-    except asyncio.TimeoutError:
-        raise HTTPException(
-            status_code=504,
-            detail="Reset timed out — file copy took too long.",
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/health")
@@ -675,7 +524,11 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
 
         databases = config.list_databases()
         llm_providers = config.list_llm_providers()
-        llm_configs = config.get_llm_provider_configs_for_ui()
+        try:
+            llm_configs = config.get_llm_provider_configs_for_ui()
+        except Exception as e:
+            logger.warning("[settings] get_llm_provider_configs_for_ui failed: %s", e)
+            llm_configs = {}
 
         # Index status for current_database — triggers auto-index when not_indexed
         is_indexed_val = None
@@ -684,15 +537,10 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             try:
                 redis_key = _normalize_db_id_for_redis(current_db)
                 idx_status = _get_schema_index_status(redis_key)
-                is_indexed_val = idx_status["is_indexed"]
+                is_indexed_val = idx_status.get("is_indexed")
                 last_indexed_at_val = idx_status.get("last_indexed_at")
-            except Exception:
-                pass  # leave as None; don't break settings response
-
-        databases_detail = [
-            {"name": n, "is_playground": False}
-            for n in databases
-        ]
+            except Exception as e:
+                logger.warning("[settings] index status check failed (Redis/DB unreachable): %s", e)
 
         logger.info(
             "[settings] GET after status=ok databases=%s llm_providers=%s current_database=%s current_llm=%s agent_loaded=%s is_indexed=%s",
@@ -707,8 +555,9 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             current_llm=current_llm_val,
             is_indexed=is_indexed_val,
             last_indexed_at=last_indexed_at_val,
-            databases_detail=databases_detail,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("[settings] GET after status=error %s", exc)
         raise
@@ -1103,15 +952,14 @@ async def query(
     _user: Dict[str, Any] = Depends(get_current_user),
     store: CosmosConversationStore = Depends(get_store),
 ):
-    """Process a natural language query (production DB or Chinook playground)."""
+    """Process a natural language query."""
     conv_id = request.conversation_id or str(uuid.uuid4())
     uid     = _user.get("uid", "")
     logger.info(
-        "[request] REST /api/query | query=%r conv_id=%s uid=%s is_playground=%s",
+        "[request] REST /api/query | query=%r conv_id=%s uid=%s",
         (request.query[:80] + "…") if len(request.query) > 80 else request.query,
         conv_id[:8] + "…" if len(conv_id) > 8 else conv_id,
         uid[:8] + "…" if uid else "(anon)",
-        request.is_playground,
     )
 
     from daibai.core.instrumentation import init_tracker, track_start, track_underway, track_passed, track_failed
@@ -1125,17 +973,6 @@ async def query(
     # Sync agent to client's selected database when provided
     if request.database and request.database in (agent.config.list_databases() or []):
         agent.switch_database(request.database)
-
-    # ── Quota gate: anonymous users are limited to 20 playground queries ───────
-    if request.is_playground and _is_anonymous_user(_user):
-        try:
-            profile = await store.get_user(oid=uid) or {}
-            if int(profile.get("playground_count", 0)) >= 20:
-                raise HTTPException(status_code=403, detail="QUOTA_EXCEEDED")
-        except HTTPException:
-            raise
-        except Exception:
-            pass  # non-fatal — allow request if Cosmos is unreachable
 
     try:
         history = await store.get_history(conv_id)
@@ -1153,7 +990,7 @@ async def query(
     try:
         # Meta-table query: answer table count/list from Redis (no DB hit)
         if _is_meta_table_query(request.query):
-            db_id = "chinook_playground" if request.is_playground else agent._current_db
+            db_id = agent._current_db
             if db_id:
                 redis_key = _normalize_db_id_for_redis(db_id)
                 status = _get_schema_index_status(redis_key)
@@ -1192,7 +1029,7 @@ async def query(
 
         # Index interrogation: answer schema-status questions directly
         if _is_index_interrogation_query(request.query):
-            db_id = "chinook_playground" if request.is_playground else get_agent()._current_db
+            db_id = agent._current_db
             if db_id:
                 status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
                 ddl_changed = None
@@ -1228,69 +1065,56 @@ async def query(
                     conversation_id=conv_id,
                 )
 
-        if request.is_playground:
-            db_id = "chinook_playground"
+        db_id = agent._current_db
+        if db_id:
             status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
             if not status["is_indexed"]:
-                logger.info("[index] REST query: forcing index before execution (db=%s, playground)", db_id)
-                await _trigger_index_background(db_id, reason="REST query (playground) not_indexed")
+                logger.info("[index] REST query: forcing index before execution (db=%s)", db_id)
+                await _trigger_index_background(db_id, reason="REST query not_indexed")
 
-            # ── Playground path: Chinook system prompt + SQLite execution ──────
-            sql, results, row_count = await _run_playground(
-                agent, request.query, execute=request.execute, history=history
+        sql = None
+        try:
+            sql = await asyncio.wait_for(
+                agent.generate_sql_async(request.query, history=history),
+                timeout=_LLM_TIMEOUT,
             )
-        else:
-            db_id = agent._current_db
-            if db_id:
-                status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
-                if not status["is_indexed"]:
-                    logger.info("[index] REST query: forcing index before execution (db=%s, production)", db_id)
-                    await _trigger_index_background(db_id, reason="REST query (production) not_indexed")
-
-            # ── Production path: user's configured database ───────────────────
-            sql = None
-            try:
-                sql = await asyncio.wait_for(
-                    agent.generate_sql_async(request.query, history=history),
-                    timeout=_PLAYGROUND_LLM_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
-                sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
-            # Multi-pass recovery: check for missing tables immediately after generation
-            if sql and agent._last_allowed_tables is not None:
-                attempted_tables = extract_tables_from_query(sql)
-                allowed_lower = {t.lower() for t in agent._last_allowed_tables}
-                missing_tables = {t for t in attempted_tables if t.lower() not in allowed_lower}
-                if missing_tables:
-                    logger.info(
-                        "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
-                        sorted(missing_tables),
-                    )
-                    try:
-                        sql = await asyncio.wait_for(
-                            agent.generate_sql_async(
-                                request.query, history=history, force_tables=missing_tables
-                            ),
-                            timeout=_PLAYGROUND_LLM_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Recovery pass timed out")
-            sanitized = getattr(agent, "_last_sanitized_query", None) or request.query
-            if sanitized != request.query:
+        except asyncio.TimeoutError:
+            logger.warning("LLM timed out after %.0fs", _LLM_TIMEOUT)
+            sql = f"-- Timed out after {_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
+        # Multi-pass recovery: check for missing tables immediately after generation
+        if sql and agent._last_allowed_tables is not None:
+            attempted_tables = extract_tables_from_query(sql)
+            allowed_lower = {t.lower() for t in agent._last_allowed_tables}
+            missing_tables = {t for t in attempted_tables if t.lower() not in allowed_lower}
+            if missing_tables:
                 logger.info(
-                    "[request] REST /api/query | query sanitized | original=%r sanitized=%r",
-                    (request.query[:80] + "…") if len(request.query) > 80 else request.query,
-                    (sanitized[:80] + "…") if len(sanitized) > 80 else sanitized,
+                    "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
+                    sorted(missing_tables),
                 )
-            results   = None
-            row_count = None
-            is_sql = _looks_like_sql(sql) if sql else False
-            if request.execute and sql and is_sql:
-                df = agent.run_sql(sql)
-                if df is not None:
-                    results   = _dataframe_to_json_safe(df)
-                    row_count = len(df)
+                try:
+                    sql = await asyncio.wait_for(
+                        agent.generate_sql_async(
+                            request.query, history=history, force_tables=missing_tables
+                        ),
+                        timeout=_LLM_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Recovery pass timed out")
+        sanitized = getattr(agent, "_last_sanitized_query", None) or request.query
+        if sanitized != request.query:
+            logger.info(
+                "[request] REST /api/query | query sanitized | original=%r sanitized=%r",
+                (request.query[:80] + "…") if len(request.query) > 80 else request.query,
+                (sanitized[:80] + "…") if len(sanitized) > 80 else sanitized,
+            )
+        results   = None
+        row_count = None
+        is_sql = _looks_like_sql(sql) if sql else False
+        if request.execute and sql and is_sql:
+            df = agent.run_sql(sql)
+            if df is not None:
+                results   = _dataframe_to_json_safe(df)
+                row_count = len(df)
 
         assistant_msg = {
             "role": "assistant",
@@ -1305,36 +1129,14 @@ async def query(
         except Exception as save_err:
             logger.warning("[request] REST: Cosmos upsert_history failed (non-fatal): %s", save_err)
 
-        # Increment playground quota counter *after* a successful response.
-        if request.is_playground and uid:
-            try:
-                profile   = await store.get_user(oid=uid) or {}
-                new_count = int(profile.get("playground_count", 0)) + 1
-                await store.patch_user(uid, {"playground_count": new_count})
-            except Exception as exc:
-                logger.warning(
-                    "playground_count increment skipped",
-                    extra={"error": str(exc), "uid": uid},
-                )
-
         track_passed("Chat request", "success")
         return QueryResponse(
             sql=sql if is_sql else None,
-            explanation=sql if not is_sql else ("Chinook playground query" if request.is_playground else "Generated SQL query"),
+            explanation=sql if not is_sql else "Generated SQL query",
             results=results,
             row_count=row_count,
             conversation_id=conv_id,
         )
-
-    except (PlaygroundError, QueryTimeoutError) as e:
-        track_failed("Chat request", str(e))
-        error_msg = str(e)
-        updated = history + [user_msg, {"role": "assistant", "content": f"Playground error: {error_msg}", "timestamp": datetime.now().isoformat()}]
-        try:
-            await store.upsert_history(conv_id, updated)
-        except Exception:
-            pass
-        raise HTTPException(status_code=422, detail=error_msg)
 
     except Exception as e:
         track_failed("Chat request", str(e))
@@ -1451,31 +1253,19 @@ async def _trigger_index_background(db_id: str, reason: str = "background") -> N
     redis_key_id = _normalize_db_id_for_redis(db_id)
     from ..core.config import get_config_file_path
     config_path = get_config_file_path()
-    if redis_key_id == "playground":
-        config_src = "data/playground.db (Chinook SQLite)"
-    else:
-        config_src = f"daibai.yaml at {config_path}" if config_path else "daibai.yaml (path not found)"
+    config_src = f"daibai.yaml at {config_path}" if config_path else "daibai.yaml (path not found)"
     logger.info(
         "[index] about to index db=%s because %s | source=%s",
         db_id, reason, config_src,
     )
     try:
-        if redis_key_id == "playground":
-            root = Path(__file__).resolve().parent.parent.parent
-            import sys
-            if str(root) not in sys.path:
-                sys.path.insert(0, str(root))
-            from scripts.index_db import index_playground
-            await asyncio.to_thread(index_playground, "playground", force=True)
+        agent = get_agent()
+        sm = agent._get_schema_manager(db_id)
+        if sm:
+            await asyncio.to_thread(sm.index_schema, schema_name=db_id, force=True)
             logger.info("[index] background: done db_id=%s", db_id)
         else:
-            agent = get_agent()
-            sm = agent._get_schema_manager(db_id)
-            if sm:
-                await asyncio.to_thread(sm.index_schema, schema_name=db_id, force=True)
-                logger.info("[index] background: done db_id=%s", db_id)
-            else:
-                logger.warning("[index] background: skipped db_id=%s — no schema manager", db_id)
+            logger.warning("[index] background: skipped db_id=%s — no schema manager", db_id)
     except Exception as e:
         logger.warning(
             "[index] background: failed db_id=%s — %s: %s",
@@ -1488,18 +1278,14 @@ def _normalize_db_id_for_redis(db_id: str) -> str:
     """Map frontend db_id to the same Redis namespace the indexer uses.
 
     The indexer writes status keys using get_index_namespace() which hashes
-    connection credentials for production DBs and returns the plain name
-    for playground DBs.  We must replicate that logic here so the status
-    check finds the correct keys.
+    connection credentials for production DBs.  We must replicate that logic
+    here so the status check finds the correct keys.
     """
-    if db_id in ("chinook_playground", "playground"):
-        return "playground"
     from ..core.schema import get_index_namespace
     config = get_config()
     try:
         db_config = config.get_database(db_id)
-        playground_dbs = getattr(config, "playground_databases", None)
-        return get_index_namespace(db_config, fallback=db_id, playground_databases=playground_dbs)
+        return get_index_namespace(db_config, fallback=db_id)
     except Exception:
         return db_id
 
@@ -1551,11 +1337,8 @@ def _get_schema_index_status(redis_key_id: str) -> dict:
 
 
 def _compute_ddl_hash_for_db(db_id: str) -> str | None:
-    """Compute current schema DDL hash for change detection. Playground: None (format differs)."""
+    """Compute current schema DDL hash for change detection."""
     import hashlib
-    redis_key_id = _normalize_db_id_for_redis(db_id)
-    if redis_key_id == "playground":
-        return None  # Playground hash requires index_db's SchemaManager; skip for now
     agent = get_agent()
     sm = agent._get_schema_manager(db_id)
     if not sm:
@@ -1606,17 +1389,7 @@ def _is_index_interrogation_query(query: str) -> bool:
 
 
 def _get_schema_manager_for_meta(agent: DaiBaiAgent, redis_key: str):
-    """Get SchemaManager for reading table list from Redis. Handles playground (not in config)."""
-    if redis_key == "playground":
-        try:
-            from ..core.cache import CacheManager
-            cache = CacheManager()
-            if cache._get_client():
-                from ..core.schema import SchemaManager
-                return SchemaManager(config=None, cache_manager=cache)
-        except Exception:
-            pass
-        return None
+    """Get SchemaManager for reading table list from Redis."""
     try:
         return agent._get_schema_manager(redis_key)
     except (ValueError, KeyError):
@@ -1651,7 +1424,6 @@ async def schema_index_status(
     """
     Return the schema-indexing status for a database connection.
 
-    Maps chinook_playground → playground for Redis keys.
     Includes ddl_changed when current schema hash can be computed.
     """
     redis_key_id = _normalize_db_id_for_redis(db_id)
@@ -1709,7 +1481,7 @@ async def ws_schema_progress(websocket: WebSocket):
     target_db = _normalize_db_id_for_redis(raw_db)
     from ..core.config import get_config_file_path
     config_path = get_config_file_path()
-    src = "data/playground.db (Chinook SQLite)" if target_db == "playground" else f"daibai.yaml at {config_path}" if config_path else "daibai.yaml"
+    src = f"daibai.yaml at {config_path}" if config_path else "daibai.yaml"
     logger.info(
         "[index] about to index db=%s because ws_schema_progress connect | source=%s",
         target_db, src,
@@ -1727,34 +1499,10 @@ async def ws_schema_progress(websocket: WebSocket):
         await websocket.close()
         return
 
-    # Playground uses index_db.index_playground (SQLite); others use SchemaManager.
-    is_playground = target_db == "playground"
-
     if is_startup_index:
-        # Index all databases (daibai.yaml + playground) at startup.
         from ..core.schema import index_all_startup
 
-        root = Path(__file__).resolve().parent.parent.parent
-        if str(root) not in sys.path:
-            sys.path.insert(0, str(root))
-
         def _get_schema_manager_for_startup(db_name: str):
-            from ..core.schema import SchemaManager
-            if db_name == "playground":
-                from scripts.index_db import _build_sqlite_execute_fn, _get_cache
-                _PLAY_DB = root / "data" / "playground.db"
-                _MASTER_DB = root / "data" / "chinook_master.db"
-                if not _PLAY_DB.exists() and _MASTER_DB.exists():
-                    import shutil
-                    shutil.copy2(_MASTER_DB, _PLAY_DB)
-                cache = _get_cache()
-                if cache is None:
-                    return None
-                return SchemaManager(
-                    config=None,
-                    execute_fn=_build_sqlite_execute_fn(_PLAY_DB),
-                    cache_manager=cache,
-                )
             return agent._get_schema_manager(db_name)
 
         loop = asyncio.get_running_loop()
@@ -1770,18 +1518,6 @@ async def ws_schema_progress(websocket: WebSocket):
         index_task = asyncio.ensure_future(
             asyncio.to_thread(index_all_startup, _get_schema_manager_for_startup, _progress_cb)
         )
-    elif is_playground:
-
-        def _run_index_playground() -> int:
-            import sys
-            root = Path(__file__).resolve().parent.parent.parent
-            if str(root) not in sys.path:
-                sys.path.insert(0, str(root))
-            from scripts.index_db import index_playground
-            return index_playground("playground", force=True)
-
-        await websocket.send_json({"type": "progress", "pct": 0, "status": "Indexing playground schema…", "eta": 15})
-        index_task = asyncio.ensure_future(asyncio.to_thread(_run_index_playground))
     else:
         sm = agent._get_schema_manager(target_db)
         if sm is None:
@@ -1806,19 +1542,16 @@ async def ws_schema_progress(websocket: WebSocket):
         )
 
     try:
-        if is_startup_index or (not is_playground):
-            # Drain the progress queue until the indexing task finishes.
-            while True:
-                try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=0.25)
-                    await websocket.send_json(msg)
-                except asyncio.TimeoutError:
-                    if index_task.done():
-                        break
-            while not queue.empty():
-                await websocket.send_json(queue.get_nowait())
-        else:
-            await index_task
+        # Drain the progress queue until the indexing task finishes.
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=0.25)
+                await websocket.send_json(msg)
+            except asyncio.TimeoutError:
+                if index_task.done():
+                    break
+        while not queue.empty():
+            await websocket.send_json(queue.get_nowait())
 
         if index_task.exception():
             err = str(index_task.exception())
@@ -1934,7 +1667,6 @@ async def websocket_chat(websocket: WebSocket):
             query         = data.get("query", "")
             conv_id       = data.get("conversation_id") or str(uuid.uuid4())
             execute       = data.get("execute", False)
-            is_playground = data.get("is_playground", False)
             verbose       = data.get("verbose", False)
             db_from_client = data.get("database") or None
 
@@ -1979,7 +1711,6 @@ async def websocket_chat(websocket: WebSocket):
             req_context: Dict[str, Any] = {
                 **log_context,
                 "conversation_id":   conv_id,
-                "is_playground":     is_playground,
                 "execute_requested": execute,
                 "query_length":      len(query),
             }
@@ -1991,30 +1722,6 @@ async def websocket_chat(websocket: WebSocket):
                 extra=req_context,
             )
             await _send_debug("1. Received query")
-
-            # ── Quota gate for anonymous playground users ──────────────────
-            if is_playground and ws_anonymous:
-                try:
-                    profile     = await store.get_user(oid=ws_uid) or {}
-                    quota_count = int(profile.get("playground_count", 0))
-                    if quota_count >= 20:
-                        logger.warning(
-                            "Playground quota exceeded — request blocked",
-                            extra={**req_context, "playground_count": quota_count},
-                        )
-                        await websocket.send_json({
-                            "type":            "error",
-                            "content":         "QUOTA_EXCEEDED",
-                            "conversation_id": conv_id,
-                        })
-                        continue
-                except Exception as qe:
-                    logger.error(
-                        f"Quota check failed: {qe}",
-                        extra=req_context,
-                        exc_info=True,
-                    )
-            await _send_debug("2. Quota check passed")
 
             try:
                 history = await store.get_history(conv_id)
@@ -2036,7 +1743,7 @@ async def websocket_chat(websocket: WebSocket):
                 # ── Meta-table query: answer table count/list from Redis (no DB hit) ──
                 if _is_meta_table_query(query):
                     await _send_debug("5. Meta-table query detected — checking Redis")
-                    db_id = "chinook_playground" if is_playground else agent._current_db
+                    db_id = agent._current_db
                     if db_id:
                         redis_key = _normalize_db_id_for_redis(db_id)
                         status = _get_schema_index_status(redis_key)
@@ -2076,7 +1783,7 @@ async def websocket_chat(websocket: WebSocket):
                 # ── Index interrogation: answer schema-status questions directly ──
                 if _is_index_interrogation_query(query):
                     await _send_debug("5. Index interrogation detected — answering directly")
-                    db_id = "chinook_playground" if is_playground else agent._current_db
+                    db_id = agent._current_db
                     if db_id:
                         status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
                         ddl_changed = None
@@ -2112,160 +1819,114 @@ async def websocket_chat(websocket: WebSocket):
                         await websocket.send_json({"type": "done", "conversation_id": conv_id})
                         continue
 
-                if is_playground:
-                    await _send_debug("5. Playground path: starting")
-                    db_id = "chinook_playground"
+                db_id = agent._current_db
+                if db_id:
                     status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
                     if not status["is_indexed"]:
-                        logger.info("[index] WS chat: forcing index before execution (db=%s, playground)", db_id)
+                        logger.info("[index] WS chat: forcing index before execution (db=%s)", db_id)
                         await websocket.send_json({
                             "type": "message",
                             "content": "Indexing database for AI search — one moment…",
                             "conversation_id": conv_id,
                         })
-                        await _trigger_index_background(db_id, reason="WS chat (playground) not_indexed")
+                        await _trigger_index_background(db_id, reason="WS chat not_indexed")
 
-                    # ── Playground path ──────────────────────────────────────
-                    await _send_debug("6. Playground: generating SQL via LLM...")
-                    llm_start               = time.perf_counter()
-                    sql, results, row_count = await _run_playground(
-                        agent, query, execute=execute, history=history, trace_callback=emit_trace
+                await _send_debug("5. Generating SQL via agent (schema pruning + LLM)...")
+                llm_start = time.perf_counter()
+                try:
+                    sql = await asyncio.wait_for(
+                        agent.generate_sql_async(
+                            query, history=history, trace_callback=emit_trace
+                        ),
+                        timeout=_LLM_TIMEOUT,
                     )
-                    req_context["llm_latency_sec"]      = round(time.perf_counter() - llm_start, 3)
-                    req_context["generated_sql_length"]  = len(sql) if sql else 0
-                    is_sql = _looks_like_sql(sql) if sql else False
-                    await _send_debug(f"7. Playground: response generated ({len(sql or '')} chars, is_sql={is_sql})")
+                except asyncio.TimeoutError:
+                    logger.warning("LLM timed out after %.0fs", _LLM_TIMEOUT)
+                    sql = f"-- Timed out after {_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
+                # Multi-pass recovery: check for missing tables immediately after generation
+                if sql and agent._last_allowed_tables is not None:
+                    attempted_tables = extract_tables_from_query(sql)
+                    allowed_lower = {t.lower() for t in agent._last_allowed_tables}
+                    missing_tables = {t for t in attempted_tables if t.lower() not in allowed_lower}
+                    if missing_tables:
+                        logger.info(
+                            "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
+                            sorted(missing_tables),
+                            extra=req_context,
+                        )
+                        if verbose:
+                            await _send_debug(f"Recovery pass triggered for missing tables: {missing_tables}")
+                        def _wrap_trace_for_recovery(emit_fn):
+                            async def wrapped(**kwargs):
+                                sid = kwargs.get("step_id")
+                                if sid and sid not in ("sql-execution",):
+                                    kwargs["step_id"] = f"{sid}-recovery"
+                                await emit_fn(**kwargs)
+                            return wrapped
 
-                    await websocket.send_json({
-                        "type":            "sql" if is_sql else "message",
-                        "content":         sql,
-                        "conversation_id": conv_id,
-                        "is_playground":   True,
-                    })
-                    if execute and sql and is_sql:
-                        await _send_debug("8. Playground: executing SQL...")
-                    if results is not None:
-                        cols = list(results[0].keys()) if results else []
+                        try:
+                            sql = await asyncio.wait_for(
+                                agent.generate_sql_async(
+                                    query,
+                                    history=history,
+                                    force_tables=missing_tables,
+                                    trace_callback=_wrap_trace_for_recovery(emit_trace),
+                                ),
+                                timeout=_LLM_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning("Recovery pass timed out", extra=req_context)
+                sanitized = getattr(agent, "_last_sanitized_query", None) or query
+                req_context["original_query"] = query
+                req_context["sanitized_query"] = sanitized
+                req_context["llm_latency_sec"]     = round(time.perf_counter() - llm_start, 3)
+                req_context["generated_sql_length"] = len(sql) if sql else 0
+                if sanitized != query:
+                    logger.info(
+                        "[request] WS chat | query sanitized | original=%r sanitized=%r",
+                        query[:80] + "…" if len(query) > 80 else query,
+                        sanitized[:80] + "…" if len(sanitized) > 80 else sanitized,
+                        extra=req_context,
+                    )
+                if verbose and sanitized != query:
+                    await _send_debug(f"Sanitized query: {sanitized}")
+                is_sql = _looks_like_sql(sql) if sql else False
+                await _send_debug(f"6. Response generated ({len(sql or '')} chars, is_sql={is_sql})")
+
+                await websocket.send_json({
+                    "type":            "sql" if is_sql else "message",
+                    "content":         sql,
+                    "conversation_id": conv_id,
+                })
+                results   = None
+                row_count = None
+                if execute and sql and is_sql:
+                    await _send_debug("7. Executing SQL...")
+                    await emit_trace("SQL Execution", status="running", step_id="sql-execution")
+                    exec_start = time.perf_counter()
+                    df = agent.run_sql(sql)
+                    exec_elapsed = time.perf_counter() - exec_start
+                    exec_ms = exec_elapsed * 1000
+                    req_context["exec_latency_sec"] = round(exec_elapsed, 3)
+                    await emit_trace(
+                        "SQL Execution",
+                        status="success",
+                        duration_ms=exec_ms,
+                        input_data=sql,
+                        output_data={"row_count": len(df) if df is not None else 0},
+                        step_id="sql-execution",
+                    )
+                    if df is not None:
+                        results   = _dataframe_to_json_safe(df)
+                        row_count = len(df)
                         req_context["result_row_count"] = row_count
                         await websocket.send_json({
                             "type":            "results",
                             "content":         results,
                             "row_count":       row_count,
-                            "columns":         cols,
+                            "columns":         list(df.columns),
                             "conversation_id": conv_id,
                         })
-
-                else:
-                    await _send_debug("5. Production path: starting")
-                    db_id = agent._current_db
-                    if db_id:
-                        status = _get_schema_index_status(_normalize_db_id_for_redis(db_id))
-                        if not status["is_indexed"]:
-                            logger.info("[index] WS chat: forcing index before execution (db=%s, production)", db_id)
-                            await websocket.send_json({
-                                "type": "message",
-                                "content": "Indexing database for AI search — one moment…",
-                                "conversation_id": conv_id,
-                            })
-                            await _trigger_index_background(db_id, reason="WS chat (production) not_indexed")
-
-                    # ── Production path ──────────────────────────────────────
-                    await _send_debug("6. Production: generating SQL via agent (schema pruning + LLM)...")
-                    llm_start = time.perf_counter()
-                    try:
-                        sql = await asyncio.wait_for(
-                            agent.generate_sql_async(
-                                query, history=history, trace_callback=emit_trace
-                            ),
-                            timeout=_PLAYGROUND_LLM_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Production LLM timed out after %.0fs", _PLAYGROUND_LLM_TIMEOUT)
-                        sql = f"-- Timed out after {_PLAYGROUND_LLM_TIMEOUT:.0f}s. Try a simpler question or check LLM connectivity."
-                    # Multi-pass recovery: check for missing tables immediately after generation
-                    if sql and agent._last_allowed_tables is not None:
-                        attempted_tables = extract_tables_from_query(sql)
-                        allowed_lower = {t.lower() for t in agent._last_allowed_tables}
-                        missing_tables = {t for t in attempted_tables if t.lower() not in allowed_lower}
-                        if missing_tables:
-                            logger.info(
-                                "[index] recovery: overzealous prune detected, retrying with missing tables: %s",
-                                sorted(missing_tables),
-                                extra=req_context,
-                            )
-                            if verbose:
-                                await _send_debug(f"Recovery pass triggered for missing tables: {missing_tables}")
-                            def _wrap_trace_for_recovery(emit_fn):
-                                async def wrapped(**kwargs):
-                                    sid = kwargs.get("step_id")
-                                    if sid and sid not in ("sql-execution",):
-                                        kwargs["step_id"] = f"{sid}-recovery"
-                                    await emit_fn(**kwargs)
-                                return wrapped
-
-                            try:
-                                sql = await asyncio.wait_for(
-                                    agent.generate_sql_async(
-                                        query,
-                                        history=history,
-                                        force_tables=missing_tables,
-                                        trace_callback=_wrap_trace_for_recovery(emit_trace),
-                                    ),
-                                    timeout=_PLAYGROUND_LLM_TIMEOUT,
-                                )
-                            except asyncio.TimeoutError:
-                                logger.warning("Recovery pass timed out", extra=req_context)
-                    sanitized = getattr(agent, "_last_sanitized_query", None) or query
-                    req_context["original_query"] = query
-                    req_context["sanitized_query"] = sanitized
-                    req_context["llm_latency_sec"]     = round(time.perf_counter() - llm_start, 3)
-                    req_context["generated_sql_length"] = len(sql) if sql else 0
-                    if sanitized != query:
-                        logger.info(
-                            "[request] WS chat | query sanitized | original=%r sanitized=%r",
-                            query[:80] + "…" if len(query) > 80 else query,
-                            sanitized[:80] + "…" if len(sanitized) > 80 else sanitized,
-                            extra=req_context,
-                        )
-                    if verbose and sanitized != query:
-                        await _send_debug(f"Sanitized query: {sanitized}")
-                    is_sql = _looks_like_sql(sql) if sql else False
-                    await _send_debug(f"7. Production: response generated ({len(sql or '')} chars, is_sql={is_sql})")
-
-                    await websocket.send_json({
-                        "type":            "sql" if is_sql else "message",
-                        "content":         sql,
-                        "conversation_id": conv_id,
-                    })
-                    results   = None
-                    row_count = None
-                    if execute and sql and is_sql:
-                        await _send_debug("8. Production: executing SQL...")
-                        await emit_trace("SQL Execution", status="running", step_id="sql-execution")
-                        exec_start = time.perf_counter()
-                        df = agent.run_sql(sql)
-                        exec_elapsed = time.perf_counter() - exec_start
-                        exec_ms = exec_elapsed * 1000
-                        req_context["exec_latency_sec"] = round(exec_elapsed, 3)
-                        await emit_trace(
-                            "SQL Execution",
-                            status="success",
-                            duration_ms=exec_ms,
-                            input_data=sql,
-                            output_data={"row_count": len(df) if df is not None else 0},
-                            step_id="sql-execution",
-                        )
-                        if df is not None:
-                            results   = _dataframe_to_json_safe(df)
-                            row_count = len(df)
-                            req_context["result_row_count"] = row_count
-                            await websocket.send_json({
-                                "type":            "results",
-                                "content":         results,
-                                "row_count":       row_count,
-                                "columns":         list(df.columns),
-                                "conversation_id": conv_id,
-                            })
 
                 await _send_debug("9. Saving conversation to Cosmos...")
                 assistant_msg = {
@@ -2279,18 +1940,6 @@ async def websocket_chat(websocket: WebSocket):
                     await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
                 except Exception as save_err:
                     logger.warning("[request] WS: Cosmos upsert_history failed (non-fatal): %s", save_err)
-
-                # Increment quota counter after a successful playground response.
-                if is_playground and ws_uid:
-                    try:
-                        profile   = await store.get_user(oid=ws_uid) or {}
-                        new_count = int(profile.get("playground_count", 0)) + 1
-                        await store.patch_user(ws_uid, {"playground_count": new_count})
-                    except Exception as exc:
-                        logger.error(
-                            f"Failed to increment playground count: {exc}",
-                            extra=req_context,
-                        )
 
                 req_context["total_latency_sec"] = round(time.perf_counter() - req_start, 3)
                 logger.info("Chat query processed successfully", extra=req_context)

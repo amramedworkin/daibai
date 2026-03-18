@@ -604,6 +604,7 @@ class DaiBaiApp {
     }
     
     async init() {
+        this._setLoadingStep('Initializing…');
         this.bindElements();
         this.loadPreferences();
         this.bindEvents();
@@ -614,18 +615,24 @@ class DaiBaiApp {
             // Don't dismiss the overlay here — onAuthStateChanged will either
             // call exitGuestMode() (which dismisses it) or dismiss it directly
             // once we know the user is truly a guest.
+            this._setLoadingStep('Checking authentication…');
             this.enterGuestMode();
             return;
         }
 
         // Start WebSocket immediately so it's ready when the user sends a query.
+        this._setLoadingStep('Connecting to backend…');
         this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
 
         // Authenticated: run one-time startup indexing (blocks until complete), then load UI.
+        this._setLoadingStep('Indexing databases…');
         await this.ensureDatabaseIndexed('all');
+        this._setLoadingStep('Loading settings…');
         await this.loadSettings();
+        this._setLoadingStep('Loading conversations…');
         await this.loadConversations();
 
+        this._setLoadingStep('Ready');
         this._dismissLoadingOverlay();
     }
     
@@ -665,19 +672,28 @@ class DaiBaiApp {
         this.promptInput.disabled = false;
         this.promptInput.placeholder = 'Ask me about your database…';
 
-        // Start WebSocket immediately so it's ready when the user sends a query.
-        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
-
         // Load the full feature set (startup indexing, then settings).
+        this._setLoadingStep('Connecting to backend…');
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
+        this._setLoadingStep('Indexing databases…');
         await this.ensureDatabaseIndexed('all');
+        this._setLoadingStep('Loading settings…');
         await this.loadSettings();
+        this._setLoadingStep('Loading conversations…');
         await this.loadConversations();
 
+        this._setLoadingStep('Ready');
         this._dismissLoadingOverlay();
         console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
 
     // ── Schema Index: Auto-index when not indexed, disable inputs until done ──
+
+    /** Update the loading overlay status text (e.g. "Indexing databases…"). */
+    _setLoadingStep(msg) {
+        const el = document.getElementById('appLoadingStatus');
+        if (el) el.textContent = msg;
+    }
 
     _dismissLoadingOverlay() {
         const overlay = document.getElementById('appLoadingOverlay');
@@ -748,7 +764,7 @@ class DaiBaiApp {
     }
 
     /**
-     * Force re-index whenever a database comes into focus (load, select, playground).
+     * Force re-index whenever a database comes into focus (load, select).
      * No status check — always indexes. UI disabled until complete.
      */
     async ensureDatabaseIndexed(dbId) {
@@ -812,6 +828,15 @@ class DaiBaiApp {
 
         return new Promise((resolve, reject) => {
             const ws = new WebSocket(wsUrl);
+            let completed = false;
+
+            const finish = (fn) => {
+                if (completed) return;
+                completed = true;
+                this._hideIndexingModal();
+                this._setInputsEnabledForIndexing(true);
+                fn();
+            };
 
             ws.onmessage = ({ data }) => {
                 let msg;
@@ -824,23 +849,21 @@ class DaiBaiApp {
                     if (isStartup) {
                         showStatusToast('success', 'Startup indexing complete. All databases ready.');
                     }
-                    setTimeout(() => {
-                        this._hideIndexingModal();
-                        this._setInputsEnabledForIndexing(true);
-                        resolve();
-                    }, 1400);
+                    setTimeout(() => finish(() => resolve()), 1400);
                 } else if (msg.type === 'error') {
-                    this._hideIndexingModal();
-                    reject(new Error(msg.message || 'Unknown error during indexing.'));
+                    finish(() => reject(new Error(msg.message || 'Unknown error during indexing.')));
                 }
             };
 
             ws.onerror = () => {
-                this._hideIndexingModal();
-                reject(new Error('WebSocket connection failed during indexing.'));
+                finish(() => reject(new Error('WebSocket connection failed during indexing.')));
             };
 
-            ws.onclose = () => resolve();
+            ws.onclose = () => {
+                if (!completed) {
+                    finish(() => reject(new Error('Indexing connection closed unexpectedly. Check server logs.')));
+                }
+            };
         });
     }
 
@@ -2743,7 +2766,7 @@ class DaiBaiApp {
                     <input type="checkbox" id="settingsLogClicks" ${(savedPrefs.logClicks !== false) ? 'checked' : ''}>
                 </div>
                 <div class="settings-field" style="margin-top:8px">
-                    <span class="hint">Log every click (chat, settings, playground, sign in, user menu, etc.) to the console. Helps diagnose UI lag (default: on).</span>
+                    <span class="hint">Log every click (chat, settings, sign in, user menu, etc.) to the console. Helps diagnose UI lag (default: on).</span>
                 </div>
             </div>
         `;
