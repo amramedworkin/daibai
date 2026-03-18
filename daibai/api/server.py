@@ -1924,6 +1924,12 @@ async def websocket_chat(websocket: WebSocket):
         while True:
             # ── Receive message ───────────────────────────────────────────────
             data          = await websocket.receive_json()
+
+            # Keepalive: respond to client pings immediately
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
             req_start     = time.perf_counter()
             query         = data.get("query", "")
             conv_id       = data.get("conversation_id") or str(uuid.uuid4())

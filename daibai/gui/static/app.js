@@ -589,6 +589,17 @@ class DaiBaiApp {
         this.attachedFiles = [];   // [{ id, name, size }] for file upload
         this.guestMode = !isAuthenticated();
 
+        if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
+            marked.setOptions({
+                highlight: (code, lang) => {
+                    if (lang && hljs.getLanguage(lang)) {
+                        return hljs.highlight(code, { language: lang }).value;
+                    }
+                    return hljs.highlightAuto(code).value;
+                },
+            });
+        }
+
         this.init();
     }
     
@@ -604,11 +615,13 @@ class DaiBaiApp {
             return;
         }
 
+        // Start WebSocket immediately so it's ready when the user sends a query.
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
+
         // Authenticated: run one-time startup indexing (blocks until complete), then load UI.
         await this.ensureDatabaseIndexed('all');
         await this.loadSettings();
         await this.loadConversations();
-        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
     }
     
     enterGuestMode() {
@@ -647,11 +660,13 @@ class DaiBaiApp {
         this.promptInput.disabled = false;
         this.promptInput.placeholder = 'Ask me about your database…';
 
+        // Start WebSocket immediately so it's ready when the user sends a query.
+        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
+
         // Load the full feature set (startup indexing, then settings).
         await this.ensureDatabaseIndexed('all');
         await this.loadSettings();
         await this.loadConversations();
-        this.connectWebSocket().catch(() => { /* WS will retry or show toast */ });
 
         console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
@@ -1558,6 +1573,10 @@ class DaiBaiApp {
             try { this.ws.close(); } catch (_) {}
             this.ws = null;
         }
+        if (this._wsKeepalive) {
+            clearInterval(this._wsKeepalive);
+            this._wsKeepalive = null;
+        }
         // Debounce reconnects: don't stack multiple reconnect timeouts
         if (this._wsReconnectTimer) {
             clearTimeout(this._wsReconnectTimer);
@@ -1585,6 +1604,17 @@ class DaiBaiApp {
                 console.log('[DaiBai] WebSocket connected');
                 this.ws.removeEventListener('open', onOpen);
                 this.ws.removeEventListener('error', onError);
+
+                // Keepalive: send a lightweight ping every 25s to prevent idle timeout
+                this._wsKeepalive = setInterval(() => {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({ type: 'ping' }));
+                    } else {
+                        clearInterval(this._wsKeepalive);
+                        this._wsKeepalive = null;
+                    }
+                }, 25000);
+
                 resolve();
             };
             const onError = (e) => {
@@ -1598,11 +1628,13 @@ class DaiBaiApp {
 
             this.ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                if (data.type === 'pong') return;
                 this.handleWebSocketMessage(data);
             };
 
             this.ws.onclose = () => {
                 this.ws = null;
+                if (this._wsKeepalive) { clearInterval(this._wsKeepalive); this._wsKeepalive = null; }
                 // Show toast on 3rd+ failure; cap at 30s between retries to reduce spam
                 const delay = Math.min(3000 * Math.min(attempt, 10), 30000);
                 if (attempt >= 3 && attempt <= 4) {
@@ -1773,8 +1805,17 @@ class DaiBaiApp {
         this.showLoadingIndicator('Thinking…');
         
         // Prefer WebSocket so Inspector Panel receives trace events.
-        // If WS is connecting, wait briefly before falling back to REST.
+        // If WS is dead, attempt a reconnect before falling back to REST.
         let useWs = this.ws && this.ws.readyState === WebSocket.OPEN;
+        if (!useWs && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) {
+            try {
+                await Promise.race([
+                    this.connectWebSocket(),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('ws-timeout')), 3000)),
+                ]);
+                useWs = this.ws && this.ws.readyState === WebSocket.OPEN;
+            } catch (_) {}
+        }
         if (!useWs && this.ws && this.ws.readyState === WebSocket.CONNECTING) {
             try {
                 await new Promise((resolve) => {
@@ -1946,6 +1987,7 @@ class DaiBaiApp {
         }
         
         this.messagesContainer.appendChild(messageEl);
+        if (typeof hljs !== 'undefined') hljs.highlightAll();
         if (msg.role === 'assistant') {
             const sqlBlock = messageEl.querySelector('.sql-block');
             if (sqlBlock) {
@@ -1980,6 +2022,7 @@ class DaiBaiApp {
         `;
         
         this.messagesContainer.appendChild(messageEl);
+        if (typeof hljs !== 'undefined') hljs.highlightAll();
         this.scrollToBottom();
         
         if (isSql) {
@@ -1998,6 +2041,10 @@ class DaiBaiApp {
     }
 
     renderTextBlock(text) {
+        if (typeof marked !== 'undefined') {
+            const html = marked.parse(text || '');
+            return `<div class="message-text markdown-body">${html}</div>`;
+        }
         const escaped = this.escapeHtml(text)
             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
             .replace(/\n/g, '<br>');
@@ -2025,7 +2072,7 @@ class DaiBaiApp {
                         <button class="run-btn">Run</button>
                     </div>
                 </div>
-                <pre class="sql-code">${safeSql}</pre>
+                <pre class="sql-code"><code class="language-sql">${safeSql}</code></pre>
             </div>
         `;
     }

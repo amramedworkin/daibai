@@ -1028,13 +1028,17 @@ Original SQL:
             return sql
 
     def _format_metadata_response(self, df: pd.DataFrame, sql: str) -> str:
-        """Formats the DB result for metadata questions, stripping narrative."""
+        """Formats the DB result with Markdown fences to trigger frontend highlighting."""
         if df is None or df.empty:
-            return "No data found."
+            return "No results found."
+
+        sql_markdown = f"```sql\n{sql}\n```"
+
         if df.shape == (1, 1):
-            val = str(df.iloc[0, 0])
-            return f"{val}\n\n-- Source Query: {sql}"
-        return f"{df.to_string(index=False)}\n\n-- Source Query: {sql}"
+            raw_val = str(df.iloc[0, 0])
+            return f"{raw_val}\n\n**Source Query:**\n{sql_markdown}"
+
+        return f"{df.to_string(index=False)}\n\n**Source Query:**\n{sql_markdown}"
 
     def _extract_sql(self, text: str) -> str:
         """Extract SQL from response text."""
