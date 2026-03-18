@@ -7,6 +7,7 @@ FastAPI backend providing REST and WebSocket endpoints for the GUI.
 import asyncio
 import json
 import logging
+import re
 import sys
 import logging.handlers
 import os
@@ -98,7 +99,6 @@ _patch_aiohttp_session_tracing()
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, UploadFile, File, Depends, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
 from ..core.config import load_config, Config
@@ -244,7 +244,7 @@ async def _run_playground(
         )
     results = None
     row_count = None
-    if execute and sql:
+    if execute and sql and _looks_like_sql(sql):
         if trace_callback:
             await trace_callback(step_name="SQL Execution", status="running", step_id="sql-execution")
         exec_start = time.perf_counter()
@@ -317,24 +317,46 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="DaiBai", description="AI Database Assistant API", lifespan=lifespan)
 
 
-class COOPMiddleware(BaseHTTPMiddleware):
-    """Required for FirebaseUI popup sign-in flows (Google, GitHub) to communicate
-    with the opener window without being blocked by cross-origin isolation."""
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
-        return response
+class COOPMiddleware:
+    """Raw ASGI middleware — sets Cross-Origin-Opener-Policy for HTTP responses
+    while passing WebSocket connections through untouched (BaseHTTPMiddleware
+    breaks WebSocket upgrades by wrapping them in an HTTP dispatch chain)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_coop(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"cross-origin-opener-policy", b"same-origin-allow-popups"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_coop)
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Log incoming chat requests for visibility when debugging hangs."""
-    async def dispatch(self, request, call_next):
-        if request.url.path == "/api/query":
-            logger.info("[request] POST /api/query received")
-        elif request.url.path.startswith("/ws/"):
-            logger.info("[request] WebSocket upgrade %s", request.url.path)
-        response = await call_next(request)
-        return response
+class RequestLoggingMiddleware:
+    """Raw ASGI middleware — logs incoming chat/query requests without
+    interfering with WebSocket upgrade handshakes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            if path == "/api/query":
+                logger.info("[request] POST /api/query received")
+        elif scope["type"] == "websocket":
+            path = scope.get("path", "")
+            if path.startswith("/ws/"):
+                logger.info("[request] WebSocket upgrade %s", path)
+        await self.app(scope, receive, send)
 
 
 app.add_middleware(COOPMiddleware)
@@ -1263,7 +1285,8 @@ async def query(
                 )
             results   = None
             row_count = None
-            if request.execute and sql:
+            is_sql = _looks_like_sql(sql) if sql else False
+            if request.execute and sql and is_sql:
                 df = agent.run_sql(sql)
                 if df is not None:
                     results   = _dataframe_to_json_safe(df)
@@ -1272,7 +1295,7 @@ async def query(
         assistant_msg = {
             "role": "assistant",
             "content": sql or "Could not generate SQL",
-            "sql": sql,
+            "sql": sql if is_sql else None,
             "results": results,
             "timestamp": datetime.now().isoformat(),
         }
@@ -1296,8 +1319,8 @@ async def query(
 
         track_passed("Chat request", "success")
         return QueryResponse(
-            sql=sql,
-            explanation="Chinook playground query" if request.is_playground else "Generated SQL query",
+            sql=sql if is_sql else None,
+            explanation=sql if not is_sql else ("Chinook playground query" if request.is_playground else "Generated SQL query"),
             results=results,
             row_count=row_count,
             conversation_id=conv_id,
@@ -1545,6 +1568,20 @@ def _compute_ddl_hash_for_db(db_id: str) -> str | None:
         return hashlib.sha256(ddl_str.encode()).hexdigest()
     except Exception:
         return None
+
+
+_SQL_KEYWORD_RE = re.compile(
+    r"^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH|SHOW|DESCRIBE|"
+    r"EXPLAIN|SET|USE|GRANT|REVOKE|TRUNCATE|MERGE|REPLACE|CALL|EXEC)\b",
+    re.IGNORECASE,
+)
+
+def _looks_like_sql(text: str) -> bool:
+    """Return True if text starts with a SQL keyword (after stripping comments)."""
+    if not text:
+        return False
+    stripped = re.sub(r"^--.*$", "", text.strip(), flags=re.MULTILINE).strip()
+    return bool(_SQL_KEYWORD_RE.match(stripped))
 
 
 def _is_index_interrogation_query(query: str) -> bool:
@@ -2090,15 +2127,16 @@ async def websocket_chat(websocket: WebSocket):
                     )
                     req_context["llm_latency_sec"]      = round(time.perf_counter() - llm_start, 3)
                     req_context["generated_sql_length"]  = len(sql) if sql else 0
-                    await _send_debug(f"7. Playground: SQL generated ({len(sql or '')} chars)")
+                    is_sql = _looks_like_sql(sql) if sql else False
+                    await _send_debug(f"7. Playground: response generated ({len(sql or '')} chars, is_sql={is_sql})")
 
                     await websocket.send_json({
-                        "type":            "sql",
+                        "type":            "sql" if is_sql else "message",
                         "content":         sql,
                         "conversation_id": conv_id,
                         "is_playground":   True,
                     })
-                    if execute and sql:
+                    if execute and sql and is_sql:
                         await _send_debug("8. Playground: executing SQL...")
                     if results is not None:
                         cols = list(results[0].keys()) if results else []
@@ -2185,16 +2223,17 @@ async def websocket_chat(websocket: WebSocket):
                         )
                     if verbose and sanitized != query:
                         await _send_debug(f"Sanitized query: {sanitized}")
-                    await _send_debug(f"7. Production: SQL generated ({len(sql or '')} chars)")
+                    is_sql = _looks_like_sql(sql) if sql else False
+                    await _send_debug(f"7. Production: response generated ({len(sql or '')} chars, is_sql={is_sql})")
 
                     await websocket.send_json({
-                        "type":            "sql",
+                        "type":            "sql" if is_sql else "message",
                         "content":         sql,
                         "conversation_id": conv_id,
                     })
                     results   = None
                     row_count = None
-                    if execute and sql:
+                    if execute and sql and is_sql:
                         await _send_debug("8. Production: executing SQL...")
                         await emit_trace("SQL Execution", status="running", step_id="sql-execution")
                         exec_start = time.perf_counter()
@@ -2226,7 +2265,7 @@ async def websocket_chat(websocket: WebSocket):
                 assistant_msg = {
                     "role":      "assistant",
                     "content":   sql or "Could not generate SQL",
-                    "sql":       sql,
+                    "sql":       sql if is_sql else None,
                     "results":   results,
                     "timestamp": datetime.now().isoformat(),
                 }

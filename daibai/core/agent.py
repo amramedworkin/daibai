@@ -651,7 +651,9 @@ class DaiBaiAgent:
         system_prompt = (
             "You are an intent classification router. Read the user's prompt and categorize it "
             "into EXACTLY ONE of these four buckets: READ_DATA (Selects/Reads), WRITE_DATA (Inserts/Updates/Deletes), "
-            "MODIFY_SCHEMA (DDL/Creates/Alters), or GENERAL_QUESTION (Questions about the schema, table counts, or database knowledge). "
+            "MODIFY_SCHEMA (DDL/Creates/Alters), or GENERAL_QUESTION (Questions about table counts, column lists, "
+            "database internal structure, or general database knowledge that require SQL against system catalogs "
+            "like information_schema or sqlite_master). "
             "Reply with ONLY the exact bucket name."
         )
         try:
@@ -667,7 +669,9 @@ class DaiBaiAgent:
         system_prompt = (
             "You are an intent classification router. Read the user's prompt and categorize it "
             "into EXACTLY ONE of these four buckets: READ_DATA (Selects/Reads), WRITE_DATA (Inserts/Updates/Deletes), "
-            "MODIFY_SCHEMA (DDL/Creates/Alters), or GENERAL_QUESTION (Questions about the schema, table counts, or database knowledge). "
+            "MODIFY_SCHEMA (DDL/Creates/Alters), or GENERAL_QUESTION (Questions about table counts, column lists, "
+            "database internal structure, or general database knowledge that require SQL against system catalogs "
+            "like information_schema or sqlite_master). "
             "Reply with ONLY the exact bucket name."
         )
         try:
@@ -772,9 +776,12 @@ Please return the SQL wrapped in a ```sql code block."""
                 "Use this for counting tables or identifying schema scope. "
             )
         system_prompt += (
-            "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs."
+            "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs. "
+            "STRICT RULE: If the user asks for a specific count or item (e.g., 'How many tables'), "
+            "you must generate a query against information_schema.tables (MySQL) or sqlite_master (SQLite). "
+            "Return ONLY the raw result value. No narrative, no markdown, no 'Here is the count'. Just the value."
         )
-        if allowed_tables:
+        if allowed_tables and intent != "GENERAL_QUESTION":
             system_prompt += f" Please restrict your query to these tables: {', '.join(sorted(allowed_tables))}."
 
         namespace = self._get_db_namespace(db_name)
@@ -786,9 +793,22 @@ Please return the SQL wrapped in a ```sql code block."""
         }
 
         if intent == "GENERAL_QUESTION":
-            enhanced_prompt = f"Database: {db_name}\n\nRequest: {sanitized}\n\nPlease answer the user's question conversationally based on the provided database schema context. Do not write SQL."
+            enhanced_prompt = (
+                f"Please provide a SELECT query against information_schema (MySQL) or sqlite_master (SQLite) "
+                f"to answer this question.\n"
+                f"Database: {db_name}\n\n"
+                f"Request: {sanitized}\n\n"
+                f"Please return the SQL wrapped in a ```sql code block."
+            )
             response = self.generate(enhanced_prompt, context)
-            return response.text.strip()
+            meta_sql = response.sql or self._extract_sql(response.text)
+            if meta_sql:
+                try:
+                    df = self.run_sql(meta_sql)
+                    return self._format_metadata_response(df, meta_sql)
+                except Exception as e:
+                    logger.warning("[agent] GENERAL_QUESTION SQL execution failed: %s", e)
+            return meta_sql or response.text.strip()
         response = self.generate(enhanced_prompt, context)
         return response.sql or self._extract_sql(response.text)
     
@@ -887,9 +907,12 @@ Please return the SQL wrapped in a ```sql code block."""
                 "Use this for counting tables or identifying schema scope. "
             )
         system_prompt += (
-            "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs."
+            "You may query information_schema or pg_catalog if you need deeper metadata than the provided DDLs. "
+            "STRICT RULE: If the user asks for a specific count or item (e.g., 'How many tables'), "
+            "you must generate a query against information_schema.tables (MySQL) or sqlite_master (SQLite). "
+            "Return ONLY the raw result value. No narrative, no markdown, no 'Here is the count'. Just the value."
         )
-        if allowed_tables:
+        if allowed_tables and intent != "GENERAL_QUESTION":
             system_prompt += f" Please restrict your query to these tables: {', '.join(sorted(allowed_tables))}."
 
         namespace = self._get_db_namespace(db_name)
@@ -914,9 +937,24 @@ Please return the SQL wrapped in a ```sql code block."""
             )
         gen_start = time.perf_counter()
         if intent == "GENERAL_QUESTION":
-            enhanced_prompt = f"Database: {db_name}\n\nRequest: {sanitized}\n\nPlease answer the user's question conversationally based on the provided database schema context. Do not write SQL."
+            enhanced_prompt = (
+                f"Please provide a SELECT query against information_schema (MySQL) or sqlite_master (SQLite) "
+                f"to answer this question.\n"
+                f"Database: {db_name}\n\n"
+                f"Request: {sanitized}\n\n"
+                f"Please return the SQL wrapped in a ```sql code block."
+            )
             response = await self.generate_async(enhanced_prompt, context)
-            sql_result = response.text.strip()
+            meta_sql = response.sql or self._extract_sql(response.text)
+            if meta_sql:
+                try:
+                    df = await asyncio.to_thread(self.run_sql, meta_sql)
+                    sql_result = self._format_metadata_response(df, meta_sql)
+                except Exception as e:
+                    logger.warning("[agent] GENERAL_QUESTION SQL execution failed: %s", e)
+                    sql_result = meta_sql
+            else:
+                sql_result = response.text.strip()
         else:
             response = await self.generate_async(enhanced_prompt, context)
             sql_result = response.sql or self._extract_sql(response.text)
@@ -988,6 +1026,15 @@ Original SQL:
         except Exception as e:
             logging.getLogger(__name__).error("SQL rewrite failed: %s", e)
             return sql
+
+    def _format_metadata_response(self, df: pd.DataFrame, sql: str) -> str:
+        """Formats the DB result for metadata questions, stripping narrative."""
+        if df is None or df.empty:
+            return "No data found."
+        if df.shape == (1, 1):
+            val = str(df.iloc[0, 0])
+            return f"{val}\n\n-- Source Query: {sql}"
+        return f"{df.to_string(index=False)}\n\n-- Source Query: {sql}"
 
     def _extract_sql(self, text: str) -> str:
         """Extract SQL from response text."""
