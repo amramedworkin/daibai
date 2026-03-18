@@ -1,5 +1,49 @@
 /* DaiBai GUI - Modern AI Chat Interface */
 
+/* ── App Loading Overlay ─────────────────────────────────────────────── */
+.app-loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d0d;
+    transition: opacity 0.4s ease;
+}
+
+.app-loading-overlay.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.app-loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    color: #a1a1a1;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+}
+
+.app-loading-content img {
+    opacity: 0.9;
+}
+
+.app-loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid #2e2e2e;
+    border-top-color: #10a37f;
+    border-radius: 50%;
+    animation: app-spin 0.8s linear infinite;
+}
+
+@keyframes app-spin {
+    to { transform: rotate(360deg); }
+}
+
 :root {
     /* Colors - Dark Theme */
     --bg-primary: #0d0d0d;

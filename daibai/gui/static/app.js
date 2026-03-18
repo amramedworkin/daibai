@@ -611,6 +611,9 @@ class DaiBaiApp {
 
         if (this.guestMode) {
             // Restricted mode: show the UI immediately, defer all backend calls.
+            // Don't dismiss the overlay here — onAuthStateChanged will either
+            // call exitGuestMode() (which dismisses it) or dismiss it directly
+            // once we know the user is truly a guest.
             this.enterGuestMode();
             return;
         }
@@ -622,6 +625,8 @@ class DaiBaiApp {
         await this.ensureDatabaseIndexed('all');
         await this.loadSettings();
         await this.loadConversations();
+
+        this._dismissLoadingOverlay();
     }
     
     enterGuestMode() {
@@ -668,10 +673,18 @@ class DaiBaiApp {
         await this.loadSettings();
         await this.loadConversations();
 
+        this._dismissLoadingOverlay();
         console.log('[AUTH] Guest mode exited — full feature set loaded.');
     }
 
     // ── Schema Index: Auto-index when not indexed, disable inputs until done ──
+
+    _dismissLoadingOverlay() {
+        const overlay = document.getElementById('appLoadingOverlay');
+        if (!overlay) return;
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.remove(), 400);
+    }
 
     /** Disable or re-enable all interactive inputs (during indexing). */
     _setInputsEnabledForIndexing(enabled) {
@@ -3261,6 +3274,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 fbKeys.length ? fbKeys : '(none — session was never saved or was cleared)');
             console.groupEnd();
             _currentUser = null;
+            // Auth resolved — user is truly a guest, dismiss the loading overlay.
+            window.app?._dismissLoadingOverlay();
         }
         } finally {
             updateAuthButtons();

@@ -348,10 +348,16 @@ class SQLValidator:
         funcs = _extract_functions_from_parsed(parsed) | _extract_functions_from_query(sql)
         blocked = funcs & _BLOCKED_FUNCTIONS
         if blocked:
-            raise SecurityViolation(
-                f"Forbidden function(s): {sorted(blocked)}",
-                "lexical",
-            )
+            # Allow DATABASE() / CURRENT_DATABASE() when querying information_schema —
+            # they are the standard way to scope metadata queries to the current DB.
+            sql_lower = sql.lower()
+            if "information_schema" in sql_lower or "sqlite_master" in sql_lower:
+                blocked -= {"database", "current_database"}
+            if blocked:
+                raise SecurityViolation(
+                    f"Forbidden function(s): {sorted(blocked)}",
+                    "lexical",
+                )
 
         if execution_mode != "god_mode":
             # Layer 1c: Tautology detection (OR 1=1 injection)

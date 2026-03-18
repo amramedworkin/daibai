@@ -6,6 +6,8 @@ Orchestrates LLM providers and database connections for natural language SQL gen
 
 import logging
 import os
+
+logger = logging.getLogger(__name__)
 import re
 import json
 import time
@@ -1024,7 +1026,7 @@ Original SQL:
 
             return rewritten.strip()
         except Exception as e:
-            logging.getLogger(__name__).error("SQL rewrite failed: %s", e)
+            logger.error("SQL rewrite failed: %s", e)
             return sql
 
     def _format_metadata_response(self, df: pd.DataFrame, sql: str) -> str:
