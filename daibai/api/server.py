@@ -1031,7 +1031,11 @@ async def list_conversations(
     store: CosmosConversationStore = Depends(get_store),
 ):
     """List all conversations."""
-    items = await store.list_conversations()
+    try:
+        items = await store.list_conversations()
+    except Exception as e:
+        logger.warning("[conversations] Cosmos list_conversations failed: %s", e)
+        items = []
     return [ConversationSummary(**item) for item in items]
 
 
@@ -1042,7 +1046,11 @@ async def get_conversation(
     store: CosmosConversationStore = Depends(get_store),
 ):
     """Get a specific conversation. Returns empty messages if not yet created."""
-    messages = await store.get_history(conversation_id)
+    try:
+        messages = await store.get_history(conversation_id)
+    except Exception as e:
+        logger.warning("[conversations] Cosmos get_history failed: %s", e)
+        messages = []
     return {"id": conversation_id, "messages": messages}
 
 
@@ -1060,7 +1068,10 @@ async def delete_conversation(
     store: CosmosConversationStore = Depends(get_store),
 ):
     """Delete a conversation."""
-    await store.delete_conversation(conversation_id)
+    try:
+        await store.delete_conversation(conversation_id)
+    except Exception as e:
+        logger.warning("[conversations] Cosmos delete_conversation failed: %s", e)
     return {"status": "ok"}
 
 
@@ -1104,7 +1115,11 @@ async def query(
         except Exception:
             pass  # non-fatal — allow request if Cosmos is unreachable
 
-    history = await store.get_history(conv_id)
+    try:
+        history = await store.get_history(conv_id)
+    except Exception as hist_err:
+        logger.warning("[request] REST: Cosmos get_history failed (proceeding without history): %s", hist_err)
+        history = []
     track_underway("Chat request", f"history loaded ({len(history)} msgs)")
 
     user_msg = {
@@ -1138,7 +1153,10 @@ async def query(
                                     "sql": None,
                                     "timestamp": datetime.now().isoformat(),
                                 }
-                                await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                                try:
+                                    await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                                except Exception:
+                                    pass
                                 track_passed("Chat request", "meta-table query (direct from Redis)")
                                 return QueryResponse(
                                     sql=None,
@@ -1175,7 +1193,10 @@ async def query(
                     "sql": None,
                     "timestamp": datetime.now().isoformat(),
                 }
-                await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                try:
+                    await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                except Exception:
+                    pass
                 track_passed("Chat request", "index interrogation (direct answer)")
                 return QueryResponse(
                     sql=None,
@@ -1256,7 +1277,10 @@ async def query(
             "timestamp": datetime.now().isoformat(),
         }
         updated = history + [user_msg, assistant_msg]
-        await store.upsert_history(conv_id, updated)
+        try:
+            await store.upsert_history(conv_id, updated)
+        except Exception as save_err:
+            logger.warning("[request] REST: Cosmos upsert_history failed (non-fatal): %s", save_err)
 
         # Increment playground quota counter *after* a successful response.
         if request.is_playground and uid:
@@ -1283,14 +1307,20 @@ async def query(
         track_failed("Chat request", str(e))
         error_msg = str(e)
         updated = history + [user_msg, {"role": "assistant", "content": f"Playground error: {error_msg}", "timestamp": datetime.now().isoformat()}]
-        await store.upsert_history(conv_id, updated)
+        try:
+            await store.upsert_history(conv_id, updated)
+        except Exception:
+            pass
         raise HTTPException(status_code=422, detail=error_msg)
 
     except Exception as e:
         track_failed("Chat request", str(e))
         error_msg = str(e)
         updated = history + [user_msg, {"role": "assistant", "content": f"Error: {error_msg}", "timestamp": datetime.now().isoformat()}]
-        await store.upsert_history(conv_id, updated)
+        try:
+            await store.upsert_history(conv_id, updated)
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=error_msg)
 
 
@@ -1432,10 +1462,23 @@ async def _trigger_index_background(db_id: str, reason: str = "background") -> N
 
 
 def _normalize_db_id_for_redis(db_id: str) -> str:
-    """Map frontend db_id to Redis key suffix (e.g. chinook_playground → playground)."""
+    """Map frontend db_id to the same Redis namespace the indexer uses.
+
+    The indexer writes status keys using get_index_namespace() which hashes
+    connection credentials for production DBs and returns the plain name
+    for playground DBs.  We must replicate that logic here so the status
+    check finds the correct keys.
+    """
     if db_id in ("chinook_playground", "playground"):
         return "playground"
-    return db_id
+    from ..core.schema import get_index_namespace
+    config = get_config()
+    try:
+        db_config = config.get_database(db_id)
+        playground_dbs = getattr(config, "playground_databases", None)
+        return get_index_namespace(db_config, fallback=db_id, playground_databases=playground_dbs)
+    except Exception:
+        return db_id
 
 
 def _get_schema_index_status(redis_key_id: str) -> dict:
@@ -1930,7 +1973,11 @@ async def websocket_chat(websocket: WebSocket):
                     )
             await _send_debug("2. Quota check passed")
 
-            history = await store.get_history(conv_id)
+            try:
+                history = await store.get_history(conv_id)
+            except Exception as hist_err:
+                logger.warning("[request] WS: Cosmos get_history failed (proceeding without history): %s", hist_err)
+                history = []
             req_context["history_length"] = len(history)
             await _send_debug(f"3. Loaded history ({len(history)} messages)")
 
@@ -1974,7 +2021,10 @@ async def websocket_chat(websocket: WebSocket):
                                             "results": None,
                                             "timestamp": datetime.now().isoformat(),
                                         }
-                                        await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                                        try:
+                                            await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                                        except Exception:
+                                            pass
                                         await websocket.send_json({"type": "done", "conversation_id": conv_id})
                                         continue
                                 except Exception as e:
@@ -2012,7 +2062,10 @@ async def websocket_chat(websocket: WebSocket):
                             "results": None,
                             "timestamp": datetime.now().isoformat(),
                         }
-                        await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                        try:
+                            await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                        except Exception:
+                            pass
                         await websocket.send_json({"type": "done", "conversation_id": conv_id})
                         continue
 
@@ -2177,7 +2230,10 @@ async def websocket_chat(websocket: WebSocket):
                     "results":   results,
                     "timestamp": datetime.now().isoformat(),
                 }
-                await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                try:
+                    await store.upsert_history(conv_id, history + [user_msg, assistant_msg])
+                except Exception as save_err:
+                    logger.warning("[request] WS: Cosmos upsert_history failed (non-fatal): %s", save_err)
 
                 # Increment quota counter after a successful playground response.
                 if is_playground and ws_uid:
@@ -2204,11 +2260,14 @@ async def websocket_chat(websocket: WebSocket):
                     exc_info=True,   # full traceback forwarded to Application Insights
                 )
                 err_msg = str(exc)
-                await store.upsert_history(conv_id, history + [{
-                    "role":      "assistant",
-                    "content":   err_msg,
-                    "timestamp": datetime.now().isoformat(),
-                }])
+                try:
+                    await store.upsert_history(conv_id, history + [{
+                        "role":      "assistant",
+                        "content":   err_msg,
+                        "timestamp": datetime.now().isoformat(),
+                    }])
+                except Exception as save_err:
+                    logger.warning("[request] WS: Cosmos upsert_history (error path) failed: %s", save_err)
                 await websocket.send_json({
                     "type":            "error",
                     "content":         err_msg,

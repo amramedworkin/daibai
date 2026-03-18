@@ -725,10 +725,36 @@ class DaiBaiApp {
      */
     async ensureDatabaseIndexed(dbId) {
         if (!dbId || !isAuthenticated()) return;
-        if (this._indexingInProgress) return; // avoid concurrent index runs
-        this._indexingInProgress = true;
+        if (this._indexingInProgress) return;
 
-        console.log('[DaiBai UI] db=', dbId, '— forced auto-indexing triggered');
+        // Skip if already indexed (check via settings API)
+        if (dbId !== 'all' && dbId !== 'startup') {
+            try {
+                const resp = await apiFetch('/api/settings');
+                if (resp.ok) {
+                    const settings = await resp.json();
+                    if (settings.is_indexed === true) {
+                        console.log('[DaiBai UI] db=', dbId, '— already indexed, skipping');
+                        return;
+                    }
+                }
+            } catch (_) { /* proceed to index */ }
+        } else {
+            // For "all" startup: check index status for the default DB
+            try {
+                const resp = await apiFetch('/api/settings');
+                if (resp.ok) {
+                    const settings = await resp.json();
+                    if (settings.is_indexed === true) {
+                        console.log('[DaiBai UI] startup — default DB already indexed, skipping bulk re-index');
+                        return;
+                    }
+                }
+            } catch (_) { /* proceed to index */ }
+        }
+
+        this._indexingInProgress = true;
+        console.log('[DaiBai UI] db=', dbId, '— auto-indexing triggered');
         this._setInputsEnabledForIndexing(false);
         try {
             await this._runSchemaIndexing(dbId);
@@ -841,7 +867,7 @@ class DaiBaiApp {
         this.autoCsvCheckbox.checked = prefs.autoCsv === true;
         
         // Execute checkbox
-        this.executeCheckbox.checked = prefs.autoExecute === true;
+        this.executeCheckbox.checked = prefs.autoExecute !== false;
 
         // Verbose mode (console logging)
         this.verboseMode = prefs.verbose === true;

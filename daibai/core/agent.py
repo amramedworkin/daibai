@@ -682,14 +682,9 @@ class DaiBaiAgent:
         """Generate LLM response for a prompt."""
         provider = self._get_provider()
         
-        # Build context with schema if not provided
         if context is None:
             context = {}
-        if "schema" not in context and self._current_db:
-            try:
-                context["schema"] = self.get_schema()
-            except Exception:
-                pass
+
         # Isolate semantic cache by connection credentials
         if "namespace" not in context and self._current_db:
             context["namespace"] = self._get_db_namespace(self._current_db)
@@ -702,11 +697,7 @@ class DaiBaiAgent:
         
         if context is None:
             context = {}
-        if "schema" not in context and self._current_db:
-            try:
-                context["schema"] = self.get_schema()
-            except Exception:
-                pass
+
         # Isolate semantic cache by connection credentials
         if "namespace" not in context and self._current_db:
             context["namespace"] = self._get_db_namespace(self._current_db)

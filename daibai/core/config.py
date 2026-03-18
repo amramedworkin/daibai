@@ -269,12 +269,15 @@ class Config:
 
 
 def _resolve_env_vars(value: Any) -> Any:
-    """Resolve ${VAR} placeholders from environment."""
+    """Resolve ${VAR} and ${VAR:-default} placeholders from environment."""
     if isinstance(value, str):
         pattern = r'\$\{([^}]+)\}'
         def replacer(match):
-            var_name = match.group(1)
-            return os.environ.get(var_name, match.group(0))
+            expr = match.group(1)
+            if ':-' in expr:
+                var_name, default = expr.split(':-', 1)
+                return os.environ.get(var_name, default)
+            return os.environ.get(expr, match.group(0))
         return re.sub(pattern, replacer, value)
     elif isinstance(value, dict):
         return {k: _resolve_env_vars(v) for k, v in value.items()}

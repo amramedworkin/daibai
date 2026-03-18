@@ -14,6 +14,8 @@ services:
       # Force local Redis in Docker (overrides .env Azure URL)
       REDIS_URL: redis://daibai-redis:6379
       AZURE_REDIS_CONNECTION_STRING: ""
+      # Route localhost DB connections through Docker's host gateway
+      DB_SOURCE_HOST: host.docker.internal
     volumes:
       # Mount the local directory into the container so code changes reflect instantly
       - .:/app
@@ -21,6 +23,8 @@ services:
       daibai-redis:
         condition: service_healthy
     # Force uvicorn to reload on code changes in dev mode
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["uvicorn", "daibai.api.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   daibai-redis:
