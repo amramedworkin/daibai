@@ -109,6 +109,24 @@ databases:
     user: root
     password: ${DB_DEV_PASSWORD}
 
+  # SuiteCRM example — domain_rules teach DaiBai about application-layer
+  # relationships where physical foreign keys do not exist.
+  # Each database can have its own rules (or none at all).
+  # suitecrm:
+  #   host: ${DB_CRM_HOST}
+  #   port: 3306
+  #   name: suitecrm
+  #   user: ${DB_CRM_USER}
+  #   password: ${DB_CRM_PASSWORD}
+  #   domain_rules: |
+  #     SUITECRM SCHEMA RULES:
+  #     1. Base tables (e.g., accounts, contacts) rarely join directly.
+  #        Use junction tables (e.g., accounts_contacts).
+  #     2. Custom fields are in tables ending in '_cstm'.
+  #        Join using: base_table.id = custom_table.id_c.
+  #     3. Always include 'deleted = 0' for base tables to filter soft-deleted records.
+  #     4. The 'id' column is a CHAR(36) UUID, not an integer.
+
   # MySQL sample databases (load via scripts/mysql_load_sample.py)
   chinook:
     host: ${DB_RUNTIME_HOST:-localhost}

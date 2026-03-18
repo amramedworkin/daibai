@@ -178,6 +178,7 @@ class DatabaseConfig:
     password: str
     ssl: bool = False
     type: str = "mysql"  # "mysql" or "sqlite"
+    domain_rules: str = ""
 
     def _sqlite_path(self) -> Path:
         """Secure path to SQLite file. Sanitizes database name."""
@@ -222,7 +223,7 @@ class Config:
     
     llm_providers: Dict[str, LLMProviderConfig] = field(default_factory=dict)
     default_llm: Optional[str] = None
-    
+
     # User preferences
     clipboard: bool = True
     exports_dir: Path = field(default_factory=lambda: Path.home() / ".daibai" / "exports")
@@ -322,6 +323,7 @@ def _parse_database_config(name: str, data: Dict[str, Any]) -> DatabaseConfig:
         password=data.get("password", ""),
         ssl=data.get("ssl", False),
         type=db_type,
+        domain_rules=(data.get("domain_rules") or "").strip(),
     )
 
 
