@@ -142,6 +142,24 @@ databases:
     user: ${DB_RUNTIME_USER:-root}
     password: ${DB_RUNTIME_PASSWORD}
 
+# ==========================================
+# DOMAIN SPECIFIC RULES (Optional)
+# ==========================================
+# Use this to teach DaiBai about application-layer relationships (e.g., SuiteCRM, SAP)
+# where physical database foreign keys do not exist.
+#
+# domain_rules: |
+#   SUITECRM SCHEMA RULES:
+#   1. Base tables (e.g., accounts, contacts) rarely join directly.
+#      Use junction tables.
+#      Junction tables show joins in their name (example: account_contacts)
+#      Preference named junction tables (<primary_table>_<secondary_table>) for joins
+#   2. Custom fields are in tables ending in '_cstm'.
+#      Join using: base_table.id = custom_table.id_c.
+#      <pre>_c fields are custom fields (always).
+#   3. Always include 'deleted = 0' for base tables to filter soft-deleted records.
+#   4. The 'id' column is a CHAR(36) UUID, not an integer.
+
 # Optional settings
 clipboard: true
 # Paths support ~ for home directory (e.g. ~/.daibai/exports)

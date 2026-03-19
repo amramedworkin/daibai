@@ -585,6 +585,7 @@ class DaiBaiApp {
         this.isLoading = false;
         this.lastGeneratedSql = null;
         this.resultsCache = {};  // resultsId -> results for Export CSV
+        this.databaseRules = {};
         this.sessionMessages = [];  // messages in current conversation for prompts list
         this.attachedFiles = [];   // [{ id, name, size }] for file upload
         this.guestMode = !isAuthenticated();
@@ -1048,6 +1049,10 @@ class DaiBaiApp {
         this.schemaModal = document.getElementById('schemaModal');
         this.schemaModalClose = document.getElementById('schemaModalClose');
         this.schemaContent = document.getElementById('schemaContent');
+        this.domainRulesBtn = document.getElementById('domainRulesBtn');
+        this.domainRulesModal = document.getElementById('domainRulesModal');
+        this.domainRulesModalClose = document.getElementById('domainRulesModalClose');
+        this.domainRulesContent = document.getElementById('domainRulesContent');
         this.settingsBtn = document.getElementById('settingsBtn');
         this.settingsModal = document.getElementById('settingsModal');
         this.settingsModalClose = document.getElementById('settingsModalClose');
@@ -1304,6 +1309,7 @@ class DaiBaiApp {
         this.databaseSelect.addEventListener('change', () => {
             this.updateSettings();
             this.savePreferences();
+            this.updateDomainRulesVisibility();
         });
         this.llmSelect.addEventListener('change', () => {
             this.updateSettings();
@@ -1354,6 +1360,25 @@ class DaiBaiApp {
                 this.schemaModal.classList.remove('active');
             }
         });
+
+        // Domain Rules modal
+        if (this.domainRulesBtn) {
+            this.domainRulesBtn.addEventListener('click', () => {
+                if (this.domainRulesModal) this.domainRulesModal.classList.add('active');
+            });
+        }
+        if (this.domainRulesModalClose) {
+            this.domainRulesModalClose.addEventListener('click', () => {
+                this.domainRulesModal.classList.remove('active');
+            });
+        }
+        if (this.domainRulesModal) {
+            this.domainRulesModal.addEventListener('click', (e) => {
+                if (e.target === this.domainRulesModal) {
+                    this.domainRulesModal.classList.remove('active');
+                }
+            });
+        }
 
         // Test Database modal (Admin)
         document.getElementById('dropdownTestDatabase')?.addEventListener('click', () => {
@@ -1457,6 +1482,7 @@ class DaiBaiApp {
         try {
             const response = await apiFetch('/api/settings');
             const settings = await response.json();
+            this.databaseRules = settings.database_rules || {};
             const prefs = JSON.parse(localStorage.getItem('daibai_preferences') || '{}');
             
             // Populate database dropdown
@@ -1476,6 +1502,7 @@ class DaiBaiApp {
             
             // Always sync settings to server to ensure database/LLM is correct
             await this.updateSettings();
+            this.updateDomainRulesVisibility();
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
@@ -2417,6 +2444,19 @@ class DaiBaiApp {
             .test(sql || '');
     }
     
+    updateDomainRulesVisibility() {
+        if (!this.domainRulesBtn || !this.domainRulesContent) return;
+        const db = this.databaseSelect?.value;
+        const rules = this.databaseRules?.[db];
+        if (rules && rules.trim().length > 0) {
+            this.domainRulesBtn.style.display = '';
+            this.domainRulesContent.textContent = rules;
+        } else {
+            this.domainRulesBtn.style.display = 'none';
+            this.domainRulesContent.textContent = 'No rules defined.';
+        }
+    }
+
     async showSchema() {
         this.schemaModal.classList.add('active');
         this.schemaContent.textContent = 'Loading schema...';

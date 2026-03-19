@@ -11,7 +11,7 @@
     <link type="text/css" rel="stylesheet" href="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth.css"/>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <link href="https://unpkg.com/gridjs/dist/theme/mermaid.min.css" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=7">
+    <link rel="stylesheet" href="/static/styles.css?v=8">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
@@ -180,6 +180,9 @@
                     </div>
                 </div>
 
+                <button class="icon-btn" id="domainRulesBtn" title="View Domain Rules" style="display: none;">
+                    <i data-lucide="book-open-check"></i>
+                </button>
                 <button class="icon-btn" id="schemaBtn" title="View Schema">
                     <i data-lucide="table-2"></i>
                 </button>
@@ -331,6 +334,21 @@
                 </div>
                 <div class="modal-body" id="healthResultsContent">
                     <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Domain Rules Modal -->
+        <div class="modal" id="domainRulesModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Domain Rules</h2>
+                    <button class="modal-close" id="domainRulesModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="domainRulesContent" style="white-space: pre-wrap; font-family: var(--font-mono); font-size: 13px; line-height: 1.5; color: var(--text-primary); background: var(--bg-tertiary); padding: 16px; border-radius: 6px; border: 1px solid var(--border);">
+                        No rules defined.
+                    </div>
                 </div>
             </div>
         </div>
@@ -559,6 +577,6 @@
     <script src="https://www.gstatic.com/firebasejs/ui/6.1.0/firebase-ui-auth.js"></script>
     <!-- Lucide icons (UMD build — no build step required) -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-    <script src="/static/app.js?v=6"></script>
+    <script src="/static/app.js?v=8"></script>
 </body>
 </html>

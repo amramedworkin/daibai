@@ -792,13 +792,15 @@ Please return the SQL wrapped in a ```sql code block."""
             "You are a helpful SQL assistant. Please generate clean, efficient SQL. "
         )
         system_prompt += dialect_rules + "\n\n"
+        if hasattr(self.config, 'domain_rules') and self.config.domain_rules:
+            system_prompt += f"CRITICAL DOMAIN RULES:\n{self.config.domain_rules}\n\n"
         try:
             _db_rules = self.config.get_database(db_name).domain_rules
         except (ValueError, AttributeError):
             _db_rules = ""
         if _db_rules:
             logger.info("[domain_rules] Injecting %d chars of domain rules for db=%s", len(_db_rules), db_name)
-            system_prompt += f"CRITICAL DOMAIN RULES:\n{_db_rules}\n\n"
+            system_prompt += f"CRITICAL DOMAIN RULES (DATABASE-SPECIFIC):\n{_db_rules}\n\n"
         if table_list_str:
             system_prompt += (
                 f"The active database contains the following tables: {table_list_str}. "
@@ -949,13 +951,15 @@ Please return the SQL wrapped in a ```sql code block."""
             "You are a helpful SQL assistant. Please generate clean, efficient SQL. "
         )
         system_prompt += dialect_rules + "\n\n"
+        if hasattr(self.config, 'domain_rules') and self.config.domain_rules:
+            system_prompt += f"CRITICAL DOMAIN RULES:\n{self.config.domain_rules}\n\n"
         try:
             _db_rules = self.config.get_database(db_name).domain_rules
         except (ValueError, AttributeError):
             _db_rules = ""
         if _db_rules:
             logger.info("[domain_rules] Injecting %d chars of domain rules for db=%s", len(_db_rules), db_name)
-            system_prompt += f"CRITICAL DOMAIN RULES:\n{_db_rules}\n\n"
+            system_prompt += f"CRITICAL DOMAIN RULES (DATABASE-SPECIFIC):\n{_db_rules}\n\n"
         if table_list_str:
             system_prompt += (
                 f"The active database contains the following tables: {table_list_str}. "
@@ -1135,12 +1139,14 @@ Original SQL:
                     "Fix the SQL based on the exact error message. "
                     "Return ONLY the corrected SQL code. No markdown fences, no narrative, no explanation."
                 )
+                if hasattr(self.config, 'domain_rules') and self.config.domain_rules:
+                    repair_system += f"\n\nCRITICAL DOMAIN RULES:\n{self.config.domain_rules}"
                 try:
                     _db_rules = self.config.get_database(db_name).domain_rules
                 except (ValueError, AttributeError):
                     _db_rules = ""
                 if _db_rules:
-                    repair_system += f"\n\nCRITICAL DOMAIN RULES:\n{_db_rules}"
+                    repair_system += f"\n\nCRITICAL DOMAIN RULES (DATABASE-SPECIFIC):\n{_db_rules}"
                 repair_prompt = (
                     f"You previously generated SQL that resulted in an error.\n"
                     f"Original User Request: {original_prompt}\n\n"

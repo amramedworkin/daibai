@@ -284,6 +284,7 @@ class SettingsResponse(BaseModel):
     # Index status for current_database — enables auto-index when not_indexed
     is_indexed: Optional[bool] = None
     last_indexed_at: Optional[str] = None
+    database_rules: Optional[Dict[str, str]] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -547,6 +548,11 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             databases, llm_providers, current_db, current_llm_val, agent is not None, is_indexed_val,
         )
 
+        db_rules = {}
+        for db_key, db_cfg in config.databases.items():
+            if getattr(db_cfg, 'domain_rules', None):
+                db_rules[db_key] = db_cfg.domain_rules.strip()
+
         return SettingsResponse(
             databases=databases,
             llm_providers=llm_providers,
@@ -555,6 +561,7 @@ async def get_settings(_user: Dict[str, Any] = Depends(get_current_user)):
             current_llm=current_llm_val,
             is_indexed=is_indexed_val,
             last_indexed_at=last_indexed_at_val,
+            database_rules=db_rules,
         )
     except HTTPException:
         raise

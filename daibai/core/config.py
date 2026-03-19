@@ -224,6 +224,8 @@ class Config:
     llm_providers: Dict[str, LLMProviderConfig] = field(default_factory=dict)
     default_llm: Optional[str] = None
 
+    domain_rules: str = ""
+
     # User preferences
     clipboard: bool = True
     exports_dir: Path = field(default_factory=lambda: Path.home() / ".daibai" / "exports")
@@ -560,6 +562,7 @@ def load_config(config_path: Optional[Path] = None, env_path: Optional[Path] = N
         default_database=default_database,
         llm_providers=llm_providers,
         default_llm=default_llm,
+        domain_rules=config_data.get("domain_rules", "").strip(),
         clipboard=config_data.get("clipboard", True),
         exports_dir=exports_dir,
         memory_dir=memory_dir,
